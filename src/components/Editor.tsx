@@ -9,13 +9,21 @@ import type {
   Lead,
   StyleId,
   NarrativeVariant,
+  LandingPage,
+  PageLocale,
 } from '@/lib/types';
 import { STYLE_PRESETS } from '@/lib/styles';
 import { auditProject } from '@/lib/linter';
+import { nativeLabel, PAGE_LOCALES } from '@/lib/i18n-detect';
 import PageRenderer from './PageRenderer';
 import ModuleEditor from './ModuleEditor';
 
-type Props = { locale: string; initialProject: Project; initialLeads: Lead[] };
+type Props = {
+  locale: string;
+  initialProject: Project;
+  initialLeads: Lead[];
+  initialPage?: LandingPage; // v2 LandingPage for locale tab support
+};
 
 const TONES: ToneKey[] = [
   'professional',
@@ -39,9 +47,13 @@ const ALL_TYPES: ModuleType[] = [
   'form',
 ];
 
-export default function Editor({ locale, initialProject, initialLeads }: Props) {
+export default function Editor({ locale, initialProject, initialLeads, initialPage }: Props) {
   const t = useTranslations();
   const [project, setProject] = useState<Project>(initialProject);
+  const [page, setPage] = useState<LandingPage | undefined>(initialPage);
+  const [editingLocale, setEditingLocale] = useState<PageLocale>(
+    (initialPage?.defaultLocale ?? initialProject.inputs.locale) as PageLocale,
+  );
   const [leads] = useState<Lead[]>(initialLeads);
   const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
   const [tab, setTab] = useState<'content' | 'leads' | 'settings'>('content');
@@ -50,6 +62,7 @@ export default function Editor({ locale, initialProject, initialLeads }: Props) 
     project.modules[0]?.id ?? null,
   );
   const [copied, setCopied] = useState(false);
+  const [addingLocale, setAddingLocale] = useState(false);
 
   const selected = useMemo(
     () => project.modules.find((m) => m.id === selectedModuleId) ?? null,
@@ -61,20 +74,40 @@ export default function Editor({ locale, initialProject, initialLeads }: Props) 
   useEffect(() => {
     if (status !== 'saving') return;
     const timer = setTimeout(async () => {
-      await fetch(`/api/projects/${project.id}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          modules: project.modules,
-          tone: project.tone,
-          theme: project.theme,
-        }),
-      });
+      // If v2 page available, save modules to exact (variant, locale) cell
+      if (page) {
+        await fetch(`/api/pages/${page.id}/modules`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            variant: project.activeVariant ?? 'A',
+            locale: editingLocale,
+            modules: project.modules,
+          }),
+        });
+        // Mirror tone/theme on page too
+        await fetch(`/api/pages/${page.id}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ tone: project.tone, theme: project.theme }),
+        });
+      } else {
+        // Fallback to legacy compat (shouldn't happen post-migration)
+        await fetch(`/api/projects/${project.id}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            modules: project.modules,
+            tone: project.tone,
+            theme: project.theme,
+          }),
+        });
+      }
       setStatus('saved');
       setTimeout(() => setStatus('idle'), 1200);
     }, 400);
     return () => clearTimeout(timer);
-  }, [status, project]);
+  }, [status, project, page, editingLocale]);
 
   const touch = () => setStatus('saving');
 
@@ -140,15 +173,27 @@ export default function Editor({ locale, initialProject, initialLeads }: Props) 
   };
 
   const switchVariant = async (variant: NarrativeVariant) => {
-    const res = await fetch(`/api/projects/${project.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ switchVariant: variant }),
-    });
-    const data = await res.json();
-    if (data?.project) {
-      setProject(data.project);
-      setSelectedModuleId(data.project.modules[0]?.id ?? null);
+    // Server: record activeVariant on LandingPage
+    if (page) {
+      await fetch(`/api/pages/${page.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ switchVariant: variant }),
+      });
+      const nextModules = page.variants[variant][editingLocale] ?? [];
+      setProject((p) => ({ ...p, activeVariant: variant, modules: nextModules }));
+      setSelectedModuleId(nextModules[0]?.id ?? null);
+    } else {
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ switchVariant: variant }),
+      });
+      const data = await res.json();
+      if (data?.project) {
+        setProject(data.project);
+        setSelectedModuleId(data.project.modules[0]?.id ?? null);
+      }
     }
   };
 
@@ -159,6 +204,56 @@ export default function Editor({ locale, initialProject, initialLeads }: Props) 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ newStyleId: styleId }),
     });
+  };
+
+  // Switch the locale tab: load modules for (activeVariant, targetLocale)
+  // from the local `page` state without a network round-trip.
+  const switchLocaleTab = (targetLocale: PageLocale) => {
+    if (!page) return;
+    if (!page.availableLocales.includes(targetLocale)) return;
+    const v = project.activeVariant ?? 'A';
+    const nextModules = page.variants[v][targetLocale] ?? [];
+    setEditingLocale(targetLocale);
+    setProject((p) => ({
+      ...p,
+      modules: nextModules,
+      inputs: { ...p.inputs, locale: targetLocale as any },
+    }));
+    setSelectedModuleId(nextModules[0]?.id ?? null);
+  };
+
+  // Add a new locale to this page — uses current strategy + inputs,
+  // only swaps the L[locale] templates (per user's Q4 answer).
+  const addLocale = async (newLocale: PageLocale) => {
+    if (!page) return;
+    setAddingLocale(true);
+    try {
+      const res = await fetch(`/api/pages/${page.id}/locales`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ locale: newLocale }),
+      });
+      const data = await res.json();
+      if (data?.page) {
+        setPage(data.page);
+        switchLocaleTabInternal(data.page, newLocale);
+      }
+    } finally {
+      setAddingLocale(false);
+    }
+  };
+
+  // Helper used by addLocale — takes fresh page directly (avoid stale state)
+  const switchLocaleTabInternal = (freshPage: LandingPage, targetLocale: PageLocale) => {
+    const v = project.activeVariant ?? 'A';
+    const nextModules = freshPage.variants[v][targetLocale] ?? [];
+    setEditingLocale(targetLocale);
+    setProject((p) => ({
+      ...p,
+      modules: nextModules,
+      inputs: { ...p.inputs, locale: targetLocale as any },
+    }));
+    setSelectedModuleId(nextModules[0]?.id ?? null);
   };
 
   const togglePublish = async () => {
@@ -465,6 +560,51 @@ export default function Editor({ locale, initialProject, initialLeads }: Props) 
 
       {/* Middle: preview */}
       <section className="col-span-12 bg-ink-100/30 p-4 md:col-span-6 lg:col-span-6">
+        {/* Locale tabs (Phase D) */}
+        {page && (
+          <div className="mb-2 flex items-center gap-1 flex-wrap">
+            {page.availableLocales.map((l) => (
+              <button
+                key={l}
+                onClick={() => switchLocaleTab(l)}
+                className={`rounded-t-lg border-b-2 px-3 py-1.5 text-xs transition ${
+                  editingLocale === l
+                    ? 'border-brand-600 bg-white font-medium text-ink-900'
+                    : 'border-transparent text-ink-500 hover:text-ink-900'
+                }`}
+              >
+                {nativeLabel(l)}
+                {l === page.defaultLocale && <span className="ml-1 text-brand-600">★</span>}
+              </button>
+            ))}
+            {/* Add-locale button: only shows locales not yet generated */}
+            {PAGE_LOCALES.filter((l) => !page.availableLocales.includes(l)).length > 0 && (
+              <div className="relative">
+                <details className="group">
+                  <summary className="cursor-pointer rounded-t-lg border-b-2 border-transparent px-3 py-1.5 text-xs text-brand-700 hover:bg-brand-50 list-none">
+                    {addingLocale ? '生成中…' : '+ 加语言'}
+                  </summary>
+                  <div className="absolute left-0 top-full z-10 mt-1 w-36 rounded-xl border border-ink-100 bg-white shadow-soft">
+                    {PAGE_LOCALES.filter((l) => !page.availableLocales.includes(l)).map((l) => (
+                      <button
+                        key={l}
+                        disabled={addingLocale}
+                        onClick={(e) => {
+                          (e.currentTarget.closest('details') as HTMLDetailsElement).open = false;
+                          addLocale(l);
+                        }}
+                        className="block w-full px-3 py-2 text-left text-sm hover:bg-ink-100/50"
+                      >
+                        {nativeLabel(l)}
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="mb-3 flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 rounded-xl border border-ink-100 bg-white p-1 text-xs">
