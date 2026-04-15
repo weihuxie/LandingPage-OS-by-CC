@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { readProjects, readEvents, readLeads } from '@/lib/storage';
 
+// Force dynamic — this route reads live state. Without this Next.js
+// static-prerenders the response at build time (empty KV) and serves
+// that snapshot forever. Bit me during e2e.
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 /**
  * Analytics aggregator for the A9 growth dashboard (PRD §7).
  * Returns: global KPIs, per-project comparison, locale/market breakdown,
