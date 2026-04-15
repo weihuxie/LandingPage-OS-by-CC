@@ -1,4 +1,4 @@
-import { getTranslations } from 'next-intl/server';
+import { getTranslations, unstable_setRequestLocale } from 'next-intl/server';
 import Link from 'next/link';
 
 export default async function HomePage({
@@ -6,6 +6,7 @@ export default async function HomePage({
 }: {
   params: { locale: string };
 }) {
+  unstable_setRequestLocale(locale);
   const t = await getTranslations();
   return (
     <div className="gradient-hero">

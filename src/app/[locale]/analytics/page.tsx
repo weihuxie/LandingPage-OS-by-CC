@@ -1,9 +1,11 @@
 import Link from 'next/link';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
+import { unstable_setRequestLocale } from 'next-intl/server';
 
 export const dynamic = 'force-dynamic';
 
 export default function AnalyticsPage({ params }: { params: { locale: string } }) {
+  unstable_setRequestLocale(params.locale);
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
       <div className="mb-6 flex items-center justify-between">

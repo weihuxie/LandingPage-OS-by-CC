@@ -1,5 +1,5 @@
 import { NextIntlClientProvider } from 'next-intl';
-import { getMessages, getTranslations } from 'next-intl/server';
+import { getMessages, getTranslations, unstable_setRequestLocale } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import { locales } from '@/i18n';
 import Link from 'next/link';
@@ -17,6 +17,9 @@ export default async function LocaleLayout({
   params: { locale: string };
 }) {
   if (!locales.includes(locale as (typeof locales)[number])) notFound();
+  // Tell next-intl the locale up-front so it doesn't reach for headers() and
+  // force all pages into dynamic rendering (fails build prerender on Vercel).
+  unstable_setRequestLocale(locale);
   const messages = await getMessages();
   const t = await getTranslations();
 

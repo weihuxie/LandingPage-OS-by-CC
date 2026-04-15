@@ -1,4 +1,4 @@
-import { getTranslations } from 'next-intl/server';
+import { getTranslations, unstable_setRequestLocale } from 'next-intl/server';
 import Link from 'next/link';
 import { readProjects } from '@/lib/storage';
 
@@ -9,6 +9,7 @@ export default async function Dashboard({
 }: {
   params: { locale: string };
 }) {
+  unstable_setRequestLocale(locale);
   const t = await getTranslations();
   const projects = await readProjects();
 

@@ -1,9 +1,15 @@
 import AssetLibraryPanel from '@/components/AssetLibraryPanel';
 import { readAssets } from '@/lib/storage';
+import { unstable_setRequestLocale } from 'next-intl/server';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AssetsPage() {
+export default async function AssetsPage({
+  params: { locale },
+}: {
+  params: { locale: string };
+}) {
+  unstable_setRequestLocale(locale);
   const assets = await readAssets();
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
