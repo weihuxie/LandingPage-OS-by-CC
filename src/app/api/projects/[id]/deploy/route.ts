@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getProject, saveProject } from '@/lib/storage';
+import { getLandingPage, getProduct, saveLandingPage, getProjectCompat } from '@/lib/storage';
 import { renderProjectHtml } from '@/lib/render-html';
 import { deployToVercel } from '@/lib/deploy';
+
+export const dynamic = 'force-dynamic';
 
 /**
  * Deploy a project to Vercel as a static page (PRD v5.1 §6).
@@ -9,29 +11,26 @@ import { deployToVercel } from '@/lib/deploy';
  * Falls back to mock URL for local/dev when token is absent.
  */
 export async function POST(_: NextRequest, { params }: { params: { id: string } }) {
-  const project = await getProject(params.id);
-  if (!project) {
-    return NextResponse.json({ error: 'not found' }, { status: 404 });
-  }
+  const page = await getLandingPage(params.id);
+  if (!page) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  const product = await getProduct(page.productId);
+  if (!product) return NextResponse.json({ error: 'product not found' }, { status: 404 });
 
-  const html = renderProjectHtml(project);
-  const result = await deployToVercel({
-    slug: project.slug,
-    html,
-  });
+  const projectView = await getProjectCompat(params.id);
+  if (!projectView) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
-  project.deploy = result;
-  if (result.status === 'ready' || result.status === 'building') {
-    // deployment kicked off successfully → ensure the project is marked published
-    project.published = true;
-  }
-  await saveProject(project);
+  const html = renderProjectHtml(projectView);
+  const result = await deployToVercel({ slug: page.slug, html });
 
-  return NextResponse.json({ deploy: result, project });
+  page.deploy = result;
+  if (result.status === 'ready' || result.status === 'building') page.published = true;
+  await saveLandingPage(page);
+
+  return NextResponse.json({ deploy: result, project: { ...projectView, deploy: result, published: page.published } });
 }
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
-  const project = await getProject(params.id);
-  if (!project) return NextResponse.json({ error: 'not found' }, { status: 404 });
-  return NextResponse.json({ deploy: project.deploy ?? null });
+  const page = await getLandingPage(params.id);
+  if (!page) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  return NextResponse.json({ deploy: page.deploy ?? null });
 }

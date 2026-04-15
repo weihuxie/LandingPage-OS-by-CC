@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { extractBrand } from '@/lib/brand';
+import { readBrand, writeBrand } from '@/lib/storage';
+import type { Brand } from '@/lib/types';
 
-export async function POST(req: NextRequest) {
-  const { url } = await req.json();
-  if (!url || typeof url !== 'string') {
-    return NextResponse.json({ error: 'url required' }, { status: 400 });
-  }
-  try {
-    const normalized = url.startsWith('http') ? url : `https://${url}`;
-    const result = await extractBrand(normalized);
-    return NextResponse.json(result);
-  } catch (e) {
-    return NextResponse.json({ candidates: [], source: 'none' });
-  }
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+export async function GET() {
+  const brand = await readBrand();
+  return NextResponse.json({ brand });
+}
+
+export async function PUT(req: NextRequest) {
+  const body = (await req.json()) as Partial<Brand>;
+  const current = await readBrand();
+  const next: Brand = { ...current, ...body };
+  await writeBrand(next);
+  return NextResponse.json({ brand: next });
 }

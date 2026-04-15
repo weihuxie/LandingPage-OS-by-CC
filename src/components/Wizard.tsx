@@ -86,7 +86,7 @@ export default function Wizard({ locale }: Props) {
     if (!brandProbe) {
       setBrandProbing(true);
       try {
-        const res = await fetch('/api/brand', {
+        const res = await fetch('/api/brand/extract', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ url: u }),

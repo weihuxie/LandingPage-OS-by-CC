@@ -1,4 +1,6 @@
 export type LocaleCode = 'en' | 'zh-CN' | 'zh-TW' | 'ja';
+export type PageLocale = LocaleCode;
+export const PAGE_LOCALES: PageLocale[] = ['zh-CN', 'zh-TW', 'ja', 'en'];
 
 export type MarketCode = 'CN' | 'TW' | 'JP' | 'US' | 'EU' | 'GLOBAL';
 
@@ -268,6 +270,109 @@ export interface StylePreset {
 export type NarrativeVariant = 'A' | 'B';
 
 export interface ProjectVariants {
-  A: PageModule[]; // Pain-Agitate-Solve
+  A: PageModule[]; // Pain-Agitate-Solve  (legacy shape, v1)
   B: PageModule[]; // Benefit-Focused
+}
+
+// --- v2: Product / Brand / LandingPage 三层模型 ------------------------
+
+// Single Brand per user (per user's Q1 answer)
+export interface Brand {
+  ownerId: string;
+  updatedAt: number;
+  companyName: string;
+  logos: string[];
+  primaryColor: string;
+  secondaryColor?: string;
+  fontStack?: string;
+  certifications: CertificationAsset[]; // 跨产品共享的认证
+  press: PressAsset[];                  // 跨产品共享的媒体背书
+  sharedCases: CaseStudyAsset[];        // 公司级标杆客户
+}
+
+// Product = 品牌下的一个具体产品，归属一个用户
+export interface Product {
+  id: string;
+  ownerId: string;
+  createdAt: number;
+  updatedAt: number;
+
+  name: string;
+  tagline: string;
+  category: string;
+  value: string;                // 核心价值主张（跨语言语义不变）
+  website?: string;             // 可选（Q2: 落地页可先于官网）
+
+  theme: {
+    primary: string;
+    styleId: StyleId;
+    fontStack?: string;
+    logoUrl?: string;
+  };
+
+  // 产品级资产（不跨产品复用）
+  assets: {
+    testimonials: TestimonialAsset[];
+    cases: CaseStudyAsset[];
+    heroMedia: string[];
+  };
+
+  landingPageIds: string[];
+}
+
+// LocalizedContent: 每个 variant 存 N 个语言各一套模块
+export type LocalizedContent = Partial<Record<PageLocale, PageModule[]>>;
+
+// LandingPage = 一个具体的页面（产品主站 / 某活动 / 某市场切片）
+export interface LandingPage {
+  id: string;
+  productId: string;
+  slug: string;
+  createdAt: number;
+  updatedAt: number;
+
+  purpose: 'main' | 'campaign' | 'event' | 'ab-experiment';
+  name: string;                 // "主站" / "Q4 Webinar"
+  targetMarket: MarketCode;
+
+  defaultLocale: PageLocale;
+  availableLocales: PageLocale[];
+
+  // Per-page marketing inputs（audience 分层，strategy 粒度到 page）
+  cta: CTAGoal;
+  audience: {
+    industry: string;
+    companySize: string;
+    role: string;
+    source: TrafficSource;
+  };
+
+  strategy: StrategySummary;
+  tone: ToneKey;
+
+  variants: {
+    A: LocalizedContent;
+    B: LocalizedContent;
+  };
+  activeVariant: NarrativeVariant;
+  publishMode: 'single' | 'ab-split';
+
+  theme: {
+    primary?: string;          // 可覆盖 Product.theme.primary
+    styleId?: StyleId;
+  };
+
+  published: boolean;
+  publishedAt?: number;
+  deploy?: DeployRecord | null;
+
+  stats: {
+    views: number;
+    leads: number;
+    byLocale: Partial<Record<PageLocale, { views: number; leads: number }>>;
+    byVariantLocale: Partial<
+      Record<NarrativeVariant, Partial<Record<PageLocale, { views: number; leads: number }>>>
+    >;
+    abStats: { A: { views: number; leads: number }; B: { views: number; leads: number } };
+  };
 }

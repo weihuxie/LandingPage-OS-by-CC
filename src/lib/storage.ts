@@ -11,16 +11,20 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { kv } from '@vercel/kv';
-import type { Project, Lead, AssetLibrary } from './types';
+import type { Project, Lead, AssetLibrary, Product, LandingPage, Brand } from './types';
+import { migrateProjectToV2, projectViewFromV2 } from './migrate-v2';
 
 const USE_KV = !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
 
 // --- Keys (shared between KV and FS layouts) ---------------------------
 
-const KEY_PROJECTS = 'lp:projects';
+const KEY_PROJECTS = 'lp:projects';       // legacy v1
 const KEY_LEADS = 'lp:leads';
-const KEY_ASSETS = 'lp:assets';
+const KEY_ASSETS = 'lp:assets';            // legacy v1 asset library
 const KEY_EVENTS = 'lp:events';
+const KEY_PRODUCTS = 'lp:v2:products';     // v2
+const KEY_PAGES = 'lp:v2:pages';           // v2
+const KEY_BRAND = 'lp:v2:brand';           // v2 (single brand per user in MVP)
 
 const DEFAULT_ASSETS: AssetLibrary = {
   brand: null,
@@ -210,4 +214,165 @@ function migrate(p: any): Project {
 
 export function storageBackend(): 'kv' | 'fs' {
   return USE_KV ? 'kv' : 'fs';
+}
+
+// --- v2: Product / LandingPage / Brand -------------------------------
+
+export async function readProducts(): Promise<Product[]> {
+  const list = (await readRaw<Product[]>(KEY_PRODUCTS, [])) ?? [];
+  return list;
+}
+
+export async function writeProducts(list: Product[]): Promise<void> {
+  await writeRaw(KEY_PRODUCTS, list);
+}
+
+export async function getProduct(id: string): Promise<Product | null> {
+  const list = await readProducts();
+  return list.find((p) => p.id === id) ?? null;
+}
+
+export async function saveProduct(product: Product): Promise<Product> {
+  const list = await readProducts();
+  const idx = list.findIndex((p) => p.id === product.id);
+  product.updatedAt = Date.now();
+  if (idx === -1) list.unshift(product);
+  else list[idx] = product;
+  await writeProducts(list);
+  return product;
+}
+
+export async function deleteProductAndPages(id: string): Promise<void> {
+  const products = await readProducts();
+  const pages = await readLandingPages();
+  await writeProducts(products.filter((p) => p.id !== id));
+  await writeLandingPages(pages.filter((pg) => pg.productId !== id));
+}
+
+export async function readLandingPages(productId?: string): Promise<LandingPage[]> {
+  const list = (await readRaw<LandingPage[]>(KEY_PAGES, [])) ?? [];
+  return productId ? list.filter((p) => p.productId === productId) : list;
+}
+
+export async function writeLandingPages(list: LandingPage[]): Promise<void> {
+  await writeRaw(KEY_PAGES, list);
+}
+
+export async function getLandingPage(id: string): Promise<LandingPage | null> {
+  const list = await readLandingPages();
+  return list.find((p) => p.id === id) ?? null;
+}
+
+export async function getLandingPageBySlug(slug: string): Promise<LandingPage | null> {
+  const list = await readLandingPages();
+  return list.find((p) => p.slug === slug) ?? null;
+}
+
+export async function saveLandingPage(page: LandingPage): Promise<LandingPage> {
+  const list = await readLandingPages();
+  const idx = list.findIndex((p) => p.id === page.id);
+  page.updatedAt = Date.now();
+  if (idx === -1) list.unshift(page);
+  else list[idx] = page;
+  await writeLandingPages(list);
+  return page;
+}
+
+export async function deleteLandingPage(id: string): Promise<void> {
+  const pages = await readLandingPages();
+  await writeLandingPages(pages.filter((p) => p.id !== id));
+}
+
+const DEFAULT_BRAND: Brand = {
+  ownerId: 'default',
+  updatedAt: 0,
+  companyName: '',
+  logos: [],
+  primaryColor: '#4861ff',
+  certifications: [],
+  press: [],
+  sharedCases: [],
+};
+
+export async function readBrand(): Promise<Brand> {
+  return (await readRaw<Brand>(KEY_BRAND, DEFAULT_BRAND)) ?? DEFAULT_BRAND;
+}
+
+export async function writeBrand(brand: Brand): Promise<void> {
+  brand.updatedAt = Date.now();
+  await writeRaw(KEY_BRAND, brand);
+}
+
+// --- v1 -> v2 lazy migration on read ----------------------------------
+
+/**
+ * Ensure any legacy Project records have been split into Product+LandingPage.
+ * Idempotent: if all legacy projects have a corresponding v2 page, no-op.
+ * Run on-demand when a v2 read happens and no records are found.
+ */
+async function ensureV2MigrationRun(): Promise<void> {
+  const [products, pages, legacy] = await Promise.all([
+    readProducts(),
+    readLandingPages(),
+    readRaw<any[]>(KEY_PROJECTS, []),
+  ]);
+
+  const existingPageIds = new Set(pages.map((p) => p.id));
+  const toMigrate = (legacy ?? []).filter((p) => !existingPageIds.has(p.id));
+  if (toMigrate.length === 0) return;
+
+  const newProducts = [...products];
+  const newPages = [...pages];
+  for (const old of toMigrate) {
+    const { product, page } = migrateProjectToV2(old);
+    newProducts.unshift(product);
+    newPages.unshift(page);
+  }
+  await Promise.all([writeProducts(newProducts), writeLandingPages(newPages)]);
+}
+
+// Call this lazily on any v2 read. Safe to call many times.
+export async function ensureMigrated(): Promise<void> {
+  try {
+    await ensureV2MigrationRun();
+  } catch {
+    // Non-fatal — v2 reads will just return empty until next retry.
+  }
+}
+
+// --- Compat shim: old /api/projects/... API -------------------------
+
+/**
+ * Read a "project-shaped" object from v2 storage.
+ * Used by legacy /api/projects/:id endpoints so the old editor keeps
+ * working on new data without duplicate writes.
+ */
+export async function getProjectCompat(id: string): Promise<Project | null> {
+  await ensureMigrated();
+  const page = await getLandingPage(id);
+  if (!page) return null;
+  const product = await getProduct(page.productId);
+  if (!product) return null;
+  return projectViewFromV2(page, product);
+}
+
+export async function getProjectBySlugCompat(slug: string): Promise<Project | null> {
+  await ensureMigrated();
+  const page = await getLandingPageBySlug(slug);
+  if (!page) return null;
+  const product = await getProduct(page.productId);
+  if (!product) return null;
+  return projectViewFromV2(page, product);
+}
+
+export async function listProjectsCompat(): Promise<Project[]> {
+  await ensureMigrated();
+  const [pages, products] = await Promise.all([readLandingPages(), readProducts()]);
+  const byId = new Map(products.map((p) => [p.id, p]));
+  return pages
+    .map((pg) => {
+      const pr = byId.get(pg.productId);
+      return pr ? projectViewFromV2(pg, pr) : null;
+    })
+    .filter((p): p is Project => !!p);
 }
