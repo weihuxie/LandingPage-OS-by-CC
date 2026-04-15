@@ -42,16 +42,16 @@ export default async function LocaleLayout({
               href={`/${locale}/dashboard`}
               className="btn btn-ghost hidden sm:inline-flex"
             >
-              {t('nav.dashboard')}
+              我的产品
             </Link>
             <Link href={`/${locale}/assets`} className="btn btn-ghost hidden sm:inline-flex">
-              资产库
+              品牌资产
             </Link>
             <Link href={`/${locale}/analytics`} className="btn btn-ghost hidden sm:inline-flex">
               增长看板
             </Link>
             <Link href={`/${locale}/new`} className="btn btn-primary">
-              {t('nav.newProject')}
+              + 新建
             </Link>
           </nav>
         </div>

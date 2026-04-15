@@ -1,6 +1,6 @@
-import { getTranslations, unstable_setRequestLocale } from 'next-intl/server';
+import { unstable_setRequestLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
-import { readProjects } from '@/lib/storage';
+import { readProducts, readLandingPages, ensureMigrated } from '@/lib/storage';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,69 +10,75 @@ export default async function Dashboard({
   params: { locale: string };
 }) {
   unstable_setRequestLocale(locale);
-  const t = await getTranslations();
-  const projects = await readProjects();
+  await ensureMigrated();
+  const [products, pages] = await Promise.all([readProducts(), readLandingPages()]);
+
+  // Group pages by product
+  const pagesByProduct = new Map<string, typeof pages>();
+  for (const pg of pages) {
+    const arr = pagesByProduct.get(pg.productId) ?? [];
+    arr.push(pg);
+    pagesByProduct.set(pg.productId, arr);
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{t('dashboard.title')}</h1>
+        <h1 className="text-2xl font-semibold">我的产品</h1>
         <Link href={`/${locale}/new`} className="btn btn-primary">
-          + {t('dashboard.new')}
+          + 新建产品
         </Link>
       </div>
 
-      {projects.length === 0 ? (
+      {products.length === 0 ? (
         <div className="card mt-8 p-10 text-center text-ink-500">
-          {t('dashboard.empty')}
+          还没有产品。点右上角创建你的第一个产品。
         </div>
       ) : (
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {projects.map((p) => (
-            <div key={p.id} className="card p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="text-sm text-ink-500">{p.inputs.category || ' '}</div>
-                  <h3 className="mt-1 text-lg font-semibold">{p.inputs.name}</h3>
+          {products.map((p) => {
+            const myPages = pagesByProduct.get(p.id) ?? [];
+            const published = myPages.filter((pg) => pg.published);
+            const totalViews = myPages.reduce((s, pg) => s + (pg.stats?.views ?? 0), 0);
+            const totalLeads = myPages.reduce((s, pg) => s + (pg.stats?.leads ?? 0), 0);
+            const locales = Array.from(
+              new Set(myPages.flatMap((pg) => pg.availableLocales)),
+            );
+            return (
+              <Link
+                key={p.id}
+                href={`/${locale}/products/${p.id}`}
+                className="card block p-5 transition hover:border-brand-200 hover:shadow-soft"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-sm text-ink-500">{p.category || ' '}</div>
+                    <h3 className="mt-1 text-lg font-semibold">{p.name}</h3>
+                  </div>
+                  <div
+                    className="h-6 w-6 rounded-md"
+                    style={{ background: p.theme.primary }}
+                    aria-hidden
+                  />
                 </div>
-                <span
-                  className={`pill ${
-                    p.published ? 'border-brand-200 bg-brand-50 text-brand-700' : ''
-                  }`}
-                >
-                  {p.published ? t('dashboard.status.published') : t('dashboard.status.draft')}
-                </span>
-              </div>
-              <p className="mt-2 line-clamp-2 text-sm text-ink-500">{p.inputs.tagline}</p>
-              <div className="mt-4 flex flex-wrap gap-1.5 text-xs">
-                <span className="pill">{t('dashboard.locale')}: {p.inputs.locale}</span>
-                <span className="pill">{t('dashboard.market')}: {p.inputs.market}</span>
-                <span className="pill">Leads: {p.leadCount ?? 0}</span>
-              </div>
-              <div className="mt-5 flex items-center justify-between">
-                <div className="text-xs text-ink-500">
-                  {t('dashboard.createdAt')} {new Date(p.createdAt).toLocaleDateString()}
-                </div>
-                <div className="flex gap-2">
-                  {p.published && (
-                    <Link
-                      href={`/p/${p.slug}`}
-                      className="btn btn-secondary px-3 py-1.5 text-xs"
-                      target="_blank"
-                    >
-                      {t('dashboard.viewLive')}
-                    </Link>
+                <p className="mt-2 line-clamp-2 text-sm text-ink-500">{p.tagline}</p>
+                <div className="mt-4 flex flex-wrap gap-1.5 text-xs">
+                  <span className="pill">
+                    📄 {myPages.length} 页面 · {published.length} 已发布
+                  </span>
+                  {locales.length > 0 && (
+                    <span className="pill">🌐 {locales.join(' · ')}</span>
                   )}
-                  <Link
-                    href={`/${locale}/projects/${p.id}`}
-                    className="btn btn-primary px-3 py-1.5 text-xs"
-                  >
-                    {t('dashboard.openEditor')}
-                  </Link>
                 </div>
-              </div>
-            </div>
-          ))}
+                <div className="mt-4 flex items-center justify-between text-xs text-ink-500">
+                  <span>
+                    📊 {totalViews.toLocaleString()} UV · {totalLeads.toLocaleString()} leads
+                  </span>
+                  <span className="text-brand-700">打开产品 →</span>
+                </div>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>
