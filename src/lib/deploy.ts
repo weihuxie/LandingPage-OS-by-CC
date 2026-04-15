@@ -20,8 +20,10 @@ export interface DeployInput {
 export interface DeployResult extends DeployRecord {}
 
 export async function deployToVercel(input: DeployInput): Promise<DeployResult> {
-  const token = process.env.VERCEL_TOKEN;
-  const teamId = input.teamId ?? process.env.VERCEL_TEAM_ID;
+  // Note: Vercel reserves the VERCEL_* env var prefix for system variables,
+  // so we use VC_API_TOKEN / VC_TEAM_ID for our platform-owned credentials.
+  const token = process.env.VC_API_TOKEN;
+  const teamId = input.teamId ?? process.env.VC_TEAM_ID;
 
   // Mock mode (no token) — returns a deterministic stub URL so the UX works
   // end-to-end without real credentials. Real production drops in a token.

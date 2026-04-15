@@ -66,8 +66,8 @@ EOF
 | `ANTHROPIC_API_KEY` | Claude 3.5 Sonnet — 文案生成 | 走确定性模板（功能不坏） |
 | `GOOGLE_API_KEY` | Gemini 1.5 Pro — 长文档摄取 | 同上 |
 | `OPENAI_API_KEY` | GPT-4o — 多语言本地化 | 同上 |
-| `VERCEL_TOKEN` | 产品功能「部署到 Vercel」用 | 返回 mock URL（可演示，不真上线） |
-| `VERCEL_TEAM_ID` | 部署到指定 Team 而不是个人 | 部署到你的个人 scope |
+| `VC_API_TOKEN` | 产品功能「部署到 Vercel」用 | 返回 mock URL（可演示，不真上线） |
+| `VC_TEAM_ID` | 部署到指定 Team 而不是个人 | 部署到你的个人 scope |
 
 **拿 Vercel Token（关键）：**
 
@@ -75,7 +75,7 @@ EOF
 2. 左侧 **Tokens** → **Create Token**
 3. 名字随便，Scope 选 **Full Access**，过期时间自选
 4. 生成后立刻复制（只显示一次）
-5. 粘贴到上面那个 `VERCEL_TOKEN` 字段
+5. 粘贴到上面那个 `VC_API_TOKEN` 字段
 
 **（可选）Team ID：** 如果你想让用户的落地页部署到某个 Team：
 - Team Settings → General → 页面最下面的 **Team ID**（`team_xxxxx`）
@@ -98,10 +98,10 @@ Vercel 项目页面 → **Settings** → **Domains** → **Add**
 
 这一步是让**你的用户**在编辑器里点一下，就把他们的落地页部署到 Vercel。
 
-### 2.1 确认 `VERCEL_TOKEN` 已配
+### 2.1 确认 `VC_API_TOKEN` 已配
 
 在 Vercel 项目的 **Settings → Environment Variables** 里检查：
-- `VERCEL_TOKEN`：有值 ✅
+- `VC_API_TOKEN`：有值 ✅
 
 ### 2.2 测试部署流程
 
@@ -119,7 +119,7 @@ Vercel 项目页面 → **Settings** → **Domains** → **Add**
  → POST /api/projects/:id/deploy
  → renderProjectHtml(project)  # 拼自包含 HTML
  → POST https://api.vercel.com/v13/deployments
-       Authorization: Bearer $VERCEL_TOKEN
+       Authorization: Bearer $VC_API_TOKEN
        body: { name: 'lp-<slug>', files: [{file: 'index.html', data: html}] }
  → 回写 project.deploy = { url, deploymentId, status, ... }
  → 编辑器刷新出「Vercel 地址」按钮
@@ -129,9 +129,9 @@ Vercel 项目页面 → **Settings** → **Domains** → **Add**
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
-| 返回 `mock-vercel.app` 地址 | `VERCEL_TOKEN` 没配 | 在 Vercel 的环境变量里加上，**Redeploy** 后重试 |
+| 返回 `mock-vercel.app` 地址 | `VC_API_TOKEN` 没配 | 在 Vercel 的环境变量里加上，**Redeploy** 后重试 |
 | `401 Unauthorized` | Token 过期或权限不足 | 重新生成 Full Access Token |
-| `403 Forbidden` | Token 绑了 Team，但 `VERCEL_TEAM_ID` 没传 | 配上 `VERCEL_TEAM_ID` |
+| `403 Forbidden` | Token 绑了 Team，但 `VC_TEAM_ID` 没传 | 配上 `VC_TEAM_ID` |
 | 按钮转圈不停 | 构建队列积压 | Vercel Dashboard 查 deployment 状态 |
 | 部署成功但页面 404 | 静态文件没上传 | 看 Vercel deployment 详情里 Files 是否有 `index.html` |
 
@@ -183,7 +183,7 @@ PRD v5.1 §2 的规划就是这个。步骤：
 部署前最后看一眼：
 
 - [ ] `.gitignore` 有 `.env` `.data` `node_modules` `.next`
-- [ ] `VERCEL_TOKEN` 有配，且是 Full Access
+- [ ] `VC_API_TOKEN` 有配，且是 Full Access
 - [ ] 数据存储从文件切到 Supabase / KV / 其他
 - [ ] 至少一个 LLM Key（没有也能跑，但体验是模板的）
 - [ ] 自定义域名 DNS 已生效（`dig lp.yourcompany.com` 能拿到 Vercel IP）
