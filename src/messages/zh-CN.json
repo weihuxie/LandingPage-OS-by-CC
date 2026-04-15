@@ -1,0 +1,178 @@
+{
+  "meta": {
+    "appName": "LandingPage OS by CC",
+    "tagline": "AI 驱动的多产品落地页生成器"
+  },
+  "nav": {
+    "dashboard": "控制台",
+    "newProject": "新建项目",
+    "docs": "文档"
+  },
+  "home": {
+    "headline": "把产品信息变成高转化落地页",
+    "sub": "上传资料、填写受众、一键生成四语言落地页。支持实时编辑、留资收集与 AI 优化。",
+    "cta": "开始创建",
+    "viewProjects": "查看我的项目",
+    "feature1Title": "多产品并行",
+    "feature1Body": "每个产品独立项目，独立策略、模块、版本与线索。",
+    "feature2Title": "四语言本地化",
+    "feature2Body": "简体、繁体、日文、英文同步输出，针对市场调整语气。",
+    "feature3Title": "AI 策略先行",
+    "feature3Body": "先出受众诊断与转化策略，再生成页面内容。"
+  },
+  "dashboard": {
+    "title": "我的项目",
+    "empty": "还没有项目，点击右上角创建第一个。",
+    "new": "新建项目",
+    "openEditor": "打开编辑器",
+    "viewLive": "查看已发布",
+    "status": {
+      "draft": "草稿",
+      "published": "已发布"
+    },
+    "createdAt": "创建于",
+    "locale": "语言",
+    "market": "市场"
+  },
+  "wizard": {
+    "title": "创建落地页项目",
+    "step": "第 {current} / {total} 步",
+    "next": "下一步",
+    "back": "上一步",
+    "finish": "生成页面",
+    "step1": {
+      "title": "基础信息",
+      "name": "产品名称",
+      "namePh": "例如：Acme CRM",
+      "tagline": "一句话介绍",
+      "taglinePh": "让潜在客户 3 秒看懂你卖什么",
+      "category": "产品类别",
+      "value": "核心价值主张",
+      "valuePh": "你帮客户解决什么痛？",
+      "cta": "转化目标",
+      "ctaOptions": {
+        "demo": "预约演示",
+        "trial": "开始试用",
+        "download": "下载资料",
+        "contact": "联系销售",
+        "quote": "获取报价"
+      }
+    },
+    "step2": {
+      "title": "目标受众",
+      "market": "目标市场",
+      "language": "落地页语言",
+      "industry": "行业",
+      "size": "公司规模",
+      "role": "目标角色",
+      "source": "主要流量来源",
+      "sourceOptions": {
+        "ads": "广告投放",
+        "seo": "SEO 搜索",
+        "sales": "销售外呼",
+        "event": "展会活动",
+        "referral": "客户转介绍",
+        "social": "社交媒体"
+      }
+    },
+    "step3": {
+      "title": "产品资料",
+      "desc": "粘贴介绍、贴入网址、或上传文件 — 让生成结果贴合真实产品。",
+      "paste": "粘贴产品介绍 / 销售文案 / FAQ",
+      "pastePh": "越详细，AI 生成越贴合。",
+      "url": "参考网址（官网、定价页、博客）",
+      "urlPh": "https://",
+      "file": "上传材料",
+      "fileHint": "PDF / DOCX / PPTX / TXT / MD / 图片"
+    },
+    "step4": {
+      "title": "AI 策略摘要",
+      "desc": "生成前先确认策略，避免跑偏。",
+      "audience": "受众诊断",
+      "goal": "转化目标",
+      "narrative": "叙事策略",
+      "local": "本地化策略",
+      "regenerate": "重新生成策略"
+    }
+  },
+  "editor": {
+    "strategyPanel": "AI 策略",
+    "modules": "页面模块",
+    "preview": "预览",
+    "desktop": "桌面",
+    "mobile": "手机",
+    "publish": "发布",
+    "published": "已发布",
+    "copyLink": "复制链接",
+    "copied": "已复制",
+    "viewLive": "查看页面",
+    "addModule": "添加模块",
+    "deleteModule": "删除模块",
+    "moveUp": "上移",
+    "moveDown": "下移",
+    "moduleTypes": {
+      "hero": "Hero 首屏",
+      "socialProof": "客户背书",
+      "pain": "痛点区",
+      "solution": "解决方案",
+      "benefits": "核心收益",
+      "useCase": "使用场景",
+      "testimonial": "客户评价",
+      "faq": "常见问题",
+      "cta": "最终 CTA",
+      "form": "留资表单"
+    },
+    "regenerateCopy": "重新生成文案",
+    "tone": "语气风格",
+    "tones": {
+      "professional": "保守专业",
+      "executive": "高管风格",
+      "sales": "销售导向",
+      "friendly": "友好自然",
+      "saas": "高级 SaaS",
+      "japanese": "日本商务风"
+    },
+    "saved": "已保存",
+    "saving": "保存中…",
+    "deleteConfirm": "删除这个模块？该模块负责 {role}，可能降低转化。",
+    "leadsTab": "线索",
+    "settingsTab": "设置",
+    "contentTab": "内容",
+    "moduleRoles": {
+      "hero": "首屏注意力与一级价值主张",
+      "socialProof": "建立初始信任",
+      "pain": "激发共鸣",
+      "solution": "展示答案",
+      "benefits": "放大收益",
+      "useCase": "让用户代入",
+      "testimonial": "社会证明",
+      "faq": "消除异议",
+      "cta": "最终转化",
+      "form": "收集线索"
+    }
+  },
+  "leads": {
+    "title": "线索",
+    "empty": "还没有线索。发布页面后，提交将显示在这里。",
+    "name": "姓名",
+    "email": "邮箱",
+    "company": "公司",
+    "phone": "电话",
+    "message": "留言",
+    "at": "提交时间"
+  },
+  "form": {
+    "submit": "立即提交",
+    "name": "姓名",
+    "email": "工作邮箱",
+    "company": "公司",
+    "phone": "电话",
+    "message": "想了解什么？",
+    "consent": "我已阅读并同意隐私政策",
+    "success": "已收到，我们会尽快联系你。",
+    "required": "必填"
+  },
+  "langSwitch": {
+    "label": "语言"
+  }
+}

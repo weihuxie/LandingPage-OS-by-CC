@@ -1,0 +1,178 @@
+{
+  "meta": {
+    "appName": "LandingPage OS by CC",
+    "tagline": "AI を活用したマルチプロダクト・ランディングページジェネレーター"
+  },
+  "nav": {
+    "dashboard": "ダッシュボード",
+    "newProject": "新規プロジェクト",
+    "docs": "ドキュメント"
+  },
+  "home": {
+    "headline": "製品情報を高成約ランディングページへ",
+    "sub": "資料のアップロード、ターゲットの入力、ワンクリックで 4 言語のページを生成。リアルタイム編集、リード獲得、AI 最適化に対応。",
+    "cta": "作成をはじめる",
+    "viewProjects": "プロジェクト一覧",
+    "feature1Title": "複数製品を並行管理",
+    "feature1Body": "製品ごとにプロジェクト、戦略、モジュール、バージョン、リードを独立管理。",
+    "feature2Title": "4 言語ローカライズ",
+    "feature2Body": "簡体字、繁体字、日本語、英語を同時出力。市場ごとに語調を調整。",
+    "feature3Title": "戦略ファーストの AI",
+    "feature3Body": "ターゲット診断と成約戦略を先に出し、その後ページを生成。"
+  },
+  "dashboard": {
+    "title": "マイプロジェクト",
+    "empty": "プロジェクトがまだありません。右上から最初の一件を作成してください。",
+    "new": "新規プロジェクト",
+    "openEditor": "エディタを開く",
+    "viewLive": "公開ページを見る",
+    "status": {
+      "draft": "下書き",
+      "published": "公開中"
+    },
+    "createdAt": "作成日",
+    "locale": "言語",
+    "market": "市場"
+  },
+  "wizard": {
+    "title": "ランディングページ・プロジェクト作成",
+    "step": "ステップ {current} / {total}",
+    "next": "次へ",
+    "back": "戻る",
+    "finish": "ページを生成",
+    "step1": {
+      "title": "基本情報",
+      "name": "製品名",
+      "namePh": "例:Acme CRM",
+      "tagline": "一言紹介",
+      "taglinePh": "3 秒で伝わる製品説明",
+      "category": "製品カテゴリ",
+      "value": "コアバリュー",
+      "valuePh": "顧客のどんな課題を解決しますか?",
+      "cta": "コンバージョン目標",
+      "ctaOptions": {
+        "demo": "デモを予約",
+        "trial": "無料で試す",
+        "download": "資料をダウンロード",
+        "contact": "営業に問い合わせ",
+        "quote": "見積もりを取得"
+      }
+    },
+    "step2": {
+      "title": "ターゲット",
+      "market": "対象市場",
+      "language": "ページ言語",
+      "industry": "業界",
+      "size": "企業規模",
+      "role": "対象ロール",
+      "source": "主な流入経路",
+      "sourceOptions": {
+        "ads": "広告",
+        "seo": "SEO 検索",
+        "sales": "アウトバウンド営業",
+        "event": "展示会・イベント",
+        "referral": "顧客紹介",
+        "social": "ソーシャル"
+      }
+    },
+    "step3": {
+      "title": "製品資料",
+      "desc": "紹介文を貼り付け、URL を追加、ファイルをアップロード — 実際の製品に沿った生成を。",
+      "paste": "製品紹介 / セールスコピー / FAQ を貼り付け",
+      "pastePh": "詳細なほど AI 生成が正確になります。",
+      "url": "参考 URL(公式サイト、料金ページ、ブログ)",
+      "urlPh": "https://",
+      "file": "資料をアップロード",
+      "fileHint": "PDF / DOCX / PPTX / TXT / MD / 画像"
+    },
+    "step4": {
+      "title": "AI 戦略サマリー",
+      "desc": "生成前に戦略を確認し、方向性を固めます。",
+      "audience": "ターゲット診断",
+      "goal": "コンバージョン目標",
+      "narrative": "ナラティブ戦略",
+      "local": "ローカライズ戦略",
+      "regenerate": "戦略を再生成"
+    }
+  },
+  "editor": {
+    "strategyPanel": "AI 戦略",
+    "modules": "ページモジュール",
+    "preview": "プレビュー",
+    "desktop": "デスクトップ",
+    "mobile": "モバイル",
+    "publish": "公開",
+    "published": "公開中",
+    "copyLink": "リンクをコピー",
+    "copied": "コピー済み",
+    "viewLive": "ページを見る",
+    "addModule": "モジュール追加",
+    "deleteModule": "モジュール削除",
+    "moveUp": "上へ",
+    "moveDown": "下へ",
+    "moduleTypes": {
+      "hero": "Hero ファーストビュー",
+      "socialProof": "ロゴ・信頼",
+      "pain": "課題提起",
+      "solution": "ソリューション",
+      "benefits": "コアベネフィット",
+      "useCase": "ユースケース",
+      "testimonial": "お客様の声",
+      "faq": "よくある質問",
+      "cta": "最終 CTA",
+      "form": "問い合わせフォーム"
+    },
+    "regenerateCopy": "コピーを再生成",
+    "tone": "トーン",
+    "tones": {
+      "professional": "フォーマル",
+      "executive": "エグゼクティブ",
+      "sales": "セールス強め",
+      "friendly": "フレンドリー",
+      "saas": "高級 SaaS",
+      "japanese": "日本のビジネス"
+    },
+    "saved": "保存済み",
+    "saving": "保存中…",
+    "deleteConfirm": "このモジュールを削除しますか?{role} を担っているため、コンバージョンが下がる可能性があります。",
+    "leadsTab": "リード",
+    "settingsTab": "設定",
+    "contentTab": "コンテンツ",
+    "moduleRoles": {
+      "hero": "初見の注意と一次バリュー",
+      "socialProof": "初期信頼の確立",
+      "pain": "共感の喚起",
+      "solution": "解答の提示",
+      "benefits": "ベネフィットの増幅",
+      "useCase": "利用シーンへの投影",
+      "testimonial": "社会的証明",
+      "faq": "異議の解消",
+      "cta": "最終コンバージョン",
+      "form": "リード獲得"
+    }
+  },
+  "leads": {
+    "title": "リード",
+    "empty": "まだリードがありません。公開後、送信がここに表示されます。",
+    "name": "氏名",
+    "email": "メール",
+    "company": "会社",
+    "phone": "電話",
+    "message": "メッセージ",
+    "at": "送信日時"
+  },
+  "form": {
+    "submit": "送信する",
+    "name": "氏名",
+    "email": "ビジネスメール",
+    "company": "会社名",
+    "phone": "電話番号",
+    "message": "ご相談内容",
+    "consent": "プライバシーポリシーに同意します",
+    "success": "送信を受け付けました。担当よりご連絡します。",
+    "required": "必須"
+  },
+  "langSwitch": {
+    "label": "言語"
+  }
+}

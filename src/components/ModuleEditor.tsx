@@ -1,0 +1,256 @@
+'use client';
+import { useTranslations } from 'next-intl';
+import type {
+  PageModule,
+  HeroContent,
+  SocialProofContent,
+  PainContent,
+  SolutionContent,
+  BenefitsContent,
+  UseCaseContent,
+  TestimonialContent,
+  FAQContent,
+  CTAContent,
+  FormContent,
+} from '@/lib/types';
+
+type Props = {
+  module: PageModule;
+  onChange: (patch: Partial<PageModule>) => void;
+  onRegenerate: () => void;
+};
+
+export default function ModuleEditor({ module, onChange, onRegenerate }: Props) {
+  const t = useTranslations();
+
+  const setContent = (c: any) => onChange({ content: c });
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="label">Module</div>
+        <div className="mt-1 text-sm font-semibold">
+          {t(`editor.moduleTypes.${module.type}`)}
+        </div>
+        <div className="mt-0.5 text-xs text-ink-500">
+          {t(`editor.moduleRoles.${module.type}`)}
+        </div>
+      </div>
+      <button
+        className="btn btn-secondary w-full text-xs"
+        onClick={onRegenerate}
+      >
+        ↻ {t('editor.regenerateCopy')}
+      </button>
+
+      <div className="space-y-3">
+        {module.type === 'hero' && <HeroEditor c={module.content as HeroContent} setC={setContent} />}
+        {module.type === 'socialProof' && <SocialProofEditor c={module.content as SocialProofContent} setC={setContent} />}
+        {module.type === 'pain' && <ListItemsEditor c={module.content as PainContent} setC={setContent} itemFields={['title', 'body']} />}
+        {module.type === 'solution' && <SolutionEditor c={module.content as SolutionContent} setC={setContent} />}
+        {module.type === 'benefits' && <ListItemsEditor c={module.content as BenefitsContent} setC={setContent} itemFields={['title', 'body']} />}
+        {module.type === 'useCase' && <ListItemsEditor c={module.content as UseCaseContent} setC={setContent} itemFields={['role', 'scenario']} />}
+        {module.type === 'testimonial' && <ListItemsEditor c={module.content as TestimonialContent} setC={setContent} itemFields={['quote', 'author', 'company']} />}
+        {module.type === 'faq' && <ListItemsEditor c={module.content as FAQContent} setC={setContent} itemFields={['q', 'a']} />}
+        {module.type === 'cta' && <CTAEditor c={module.content as CTAContent} setC={setContent} />}
+        {module.type === 'form' && <FormEditor c={module.content as FormContent} setC={setContent} />}
+      </div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  multiline,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  multiline?: boolean;
+}) {
+  return (
+    <label className="block">
+      <span className="label">{label}</span>
+      {multiline ? (
+        <textarea
+          className="input mt-1 min-h-[72px]"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      ) : (
+        <input
+          className="input mt-1"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </label>
+  );
+}
+
+function HeroEditor({ c, setC }: { c: HeroContent; setC: (c: HeroContent) => void }) {
+  return (
+    <>
+      <Field label="Eyebrow" value={c.eyebrow} onChange={(v) => setC({ ...c, eyebrow: v })} />
+      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline />
+      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} multiline />
+      <Field label="Primary CTA" value={c.primaryCta} onChange={(v) => setC({ ...c, primaryCta: v })} />
+      <Field label="Bullets (one per line)" value={c.bullets.join('\n')} onChange={(v) => setC({ ...c, bullets: v.split('\n').filter(Boolean) })} multiline />
+    </>
+  );
+}
+
+function SocialProofEditor({ c, setC }: { c: SocialProofContent; setC: (c: SocialProofContent) => void }) {
+  return (
+    <>
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label="Logos (comma separated)" value={c.logos.join(', ')} onChange={(v) => setC({ ...c, logos: v.split(',').map((s) => s.trim()).filter(Boolean) })} multiline />
+      <div>
+        <div className="label mb-1">Stats</div>
+        <div className="space-y-1.5">
+          {c.stats.map((s, i) => (
+            <div key={i} className="flex gap-1.5">
+              <input
+                className="input"
+                placeholder="Value"
+                value={s.value}
+                onChange={(e) => {
+                  const next = [...c.stats];
+                  next[i] = { ...s, value: e.target.value };
+                  setC({ ...c, stats: next });
+                }}
+              />
+              <input
+                className="input"
+                placeholder="Label"
+                value={s.label}
+                onChange={(e) => {
+                  const next = [...c.stats];
+                  next[i] = { ...s, label: e.target.value };
+                  setC({ ...c, stats: next });
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function SolutionEditor({ c, setC }: { c: SolutionContent; setC: (c: SolutionContent) => void }) {
+  return (
+    <>
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label="Subtitle" value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} />
+      <Field label="Body" value={c.body} onChange={(v) => setC({ ...c, body: v })} multiline />
+    </>
+  );
+}
+
+function CTAEditor({ c, setC }: { c: CTAContent; setC: (c: CTAContent) => void }) {
+  return (
+    <>
+      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} />
+      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} />
+      <Field label="Button" value={c.button} onChange={(v) => setC({ ...c, button: v })} />
+    </>
+  );
+}
+
+function FormEditor({ c, setC }: { c: FormContent; setC: (c: FormContent) => void }) {
+  const toggle = (f: FormContent['fields'][number]) => {
+    const has = c.fields.includes(f);
+    setC({ ...c, fields: has ? c.fields.filter((x) => x !== f) : [...c.fields, f] });
+  };
+  const all: FormContent['fields'] = ['name', 'email', 'company', 'phone', 'message'];
+  return (
+    <>
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label="Subtitle" value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} />
+      <Field label="Submit Label" value={c.submitLabel} onChange={(v) => setC({ ...c, submitLabel: v })} />
+      <div>
+        <div className="label mb-1.5">Fields</div>
+        <div className="flex flex-wrap gap-1.5">
+          {all.map((f) => (
+            <button
+              key={f}
+              onClick={() => toggle(f)}
+              className={`pill ${c.fields.includes(f) ? 'border-brand-200 bg-brand-50 text-brand-700' : ''}`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ListItemsEditor({
+  c,
+  setC,
+  itemFields,
+}: {
+  c: any;
+  setC: (c: any) => void;
+  itemFields: string[];
+}) {
+  return (
+    <>
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      {'subtitle' in c && (
+        <Field
+          label="Subtitle"
+          value={c.subtitle ?? ''}
+          onChange={(v) => setC({ ...c, subtitle: v })}
+        />
+      )}
+      <div className="label">Items</div>
+      <div className="space-y-3">
+        {c.items.map((it: any, i: number) => (
+          <div key={i} className="rounded-xl border border-ink-100 p-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <div className="text-xs text-ink-500">#{i + 1}</div>
+              <button
+                onClick={() => {
+                  const next = c.items.filter((_: any, j: number) => j !== i);
+                  setC({ ...c, items: next });
+                }}
+                className="text-xs text-ink-500 hover:text-red-600"
+              >
+                remove
+              </button>
+            </div>
+            {itemFields.map((f) => (
+              <div key={f} className="mt-1.5">
+                <Field
+                  label={f}
+                  value={it[f] ?? ''}
+                  onChange={(v) => {
+                    const next = [...c.items];
+                    next[i] = { ...it, [f]: v };
+                    setC({ ...c, items: next });
+                  }}
+                  multiline={f === 'body' || f === 'a' || f === 'quote' || f === 'scenario'}
+                />
+              </div>
+            ))}
+          </div>
+        ))}
+        <button
+          onClick={() => {
+            const empty: any = {};
+            itemFields.forEach((f) => (empty[f] = ''));
+            setC({ ...c, items: [...c.items, empty] });
+          }}
+          className="btn btn-secondary w-full text-xs"
+        >
+          + Add item
+        </button>
+      </div>
+    </>
+  );
+}

@@ -1,0 +1,178 @@
+{
+  "meta": {
+    "appName": "LandingPage OS by CC",
+    "tagline": "AI-driven multi-product landing page generator"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "newProject": "New Project",
+    "docs": "Docs"
+  },
+  "home": {
+    "headline": "Turn product info into high-converting landing pages",
+    "sub": "Upload materials, define your audience, and generate localized landing pages in four languages. Live editor, lead capture, and AI-powered optimization included.",
+    "cta": "Get Started",
+    "viewProjects": "View My Projects",
+    "feature1Title": "Parallel products",
+    "feature1Body": "Each product gets its own project, strategy, modules, versions, and leads.",
+    "feature2Title": "Four-language localization",
+    "feature2Body": "Simplified, Traditional, Japanese, and English — with market-aware tone.",
+    "feature3Title": "Strategy-first AI",
+    "feature3Body": "Audience diagnosis and conversion strategy come first. Page content second."
+  },
+  "dashboard": {
+    "title": "My Projects",
+    "empty": "No projects yet. Create your first one from the top right.",
+    "new": "New Project",
+    "openEditor": "Open Editor",
+    "viewLive": "View Live",
+    "status": {
+      "draft": "Draft",
+      "published": "Published"
+    },
+    "createdAt": "Created",
+    "locale": "Language",
+    "market": "Market"
+  },
+  "wizard": {
+    "title": "Create Landing Page Project",
+    "step": "Step {current} of {total}",
+    "next": "Next",
+    "back": "Back",
+    "finish": "Generate Page",
+    "step1": {
+      "title": "Basics",
+      "name": "Product Name",
+      "namePh": "e.g. Acme CRM",
+      "tagline": "One-line Pitch",
+      "taglinePh": "What you sell, in 3 seconds",
+      "category": "Category",
+      "value": "Core Value Proposition",
+      "valuePh": "What pain do you solve?",
+      "cta": "Conversion Goal",
+      "ctaOptions": {
+        "demo": "Book a Demo",
+        "trial": "Start Free Trial",
+        "download": "Download Resource",
+        "contact": "Contact Sales",
+        "quote": "Get a Quote"
+      }
+    },
+    "step2": {
+      "title": "Target Audience",
+      "market": "Target Market",
+      "language": "Page Language",
+      "industry": "Industry",
+      "size": "Company Size",
+      "role": "Target Role",
+      "source": "Primary Traffic Source",
+      "sourceOptions": {
+        "ads": "Paid Ads",
+        "seo": "SEO",
+        "sales": "Outbound Sales",
+        "event": "Events",
+        "referral": "Referrals",
+        "social": "Social"
+      }
+    },
+    "step3": {
+      "title": "Product Materials",
+      "desc": "Paste content, add URLs, or upload files — grounds the output in your real product.",
+      "paste": "Paste product intro / sales copy / FAQ",
+      "pastePh": "The more detail, the closer the AI output.",
+      "url": "Reference URL (homepage, pricing, blog)",
+      "urlPh": "https://",
+      "file": "Upload Materials",
+      "fileHint": "PDF / DOCX / PPTX / TXT / MD / images"
+    },
+    "step4": {
+      "title": "AI Strategy Summary",
+      "desc": "Confirm the strategy before generating to stay on track.",
+      "audience": "Audience Diagnosis",
+      "goal": "Conversion Goal",
+      "narrative": "Narrative Strategy",
+      "local": "Localization Strategy",
+      "regenerate": "Regenerate Strategy"
+    }
+  },
+  "editor": {
+    "strategyPanel": "AI Strategy",
+    "modules": "Page Modules",
+    "preview": "Preview",
+    "desktop": "Desktop",
+    "mobile": "Mobile",
+    "publish": "Publish",
+    "published": "Published",
+    "copyLink": "Copy Link",
+    "copied": "Copied",
+    "viewLive": "View Live",
+    "addModule": "Add Module",
+    "deleteModule": "Delete",
+    "moveUp": "Up",
+    "moveDown": "Down",
+    "moduleTypes": {
+      "hero": "Hero",
+      "socialProof": "Social Proof",
+      "pain": "Pain Points",
+      "solution": "Solution",
+      "benefits": "Key Benefits",
+      "useCase": "Use Cases",
+      "testimonial": "Testimonials",
+      "faq": "FAQ",
+      "cta": "Final CTA",
+      "form": "Lead Form"
+    },
+    "regenerateCopy": "Regenerate Copy",
+    "tone": "Tone",
+    "tones": {
+      "professional": "Professional",
+      "executive": "Executive",
+      "sales": "Sales-driven",
+      "friendly": "Friendly",
+      "saas": "Premium SaaS",
+      "japanese": "Japanese Business"
+    },
+    "saved": "Saved",
+    "saving": "Saving…",
+    "deleteConfirm": "Delete this module? It handles {role}, removing it may hurt conversion.",
+    "leadsTab": "Leads",
+    "settingsTab": "Settings",
+    "contentTab": "Content",
+    "moduleRoles": {
+      "hero": "first-screen attention and primary value",
+      "socialProof": "initial trust signal",
+      "pain": "emotional resonance",
+      "solution": "showing the answer",
+      "benefits": "amplifying value",
+      "useCase": "helping users self-project",
+      "testimonial": "social proof",
+      "faq": "removing objections",
+      "cta": "final conversion",
+      "form": "lead capture"
+    }
+  },
+  "leads": {
+    "title": "Leads",
+    "empty": "No leads yet. Once the page is live, submissions show up here.",
+    "name": "Name",
+    "email": "Email",
+    "company": "Company",
+    "phone": "Phone",
+    "message": "Message",
+    "at": "Submitted"
+  },
+  "form": {
+    "submit": "Submit",
+    "name": "Name",
+    "email": "Work Email",
+    "company": "Company",
+    "phone": "Phone",
+    "message": "What do you want to learn?",
+    "consent": "I've read and agree to the privacy policy",
+    "success": "Got it — we'll be in touch shortly.",
+    "required": "Required"
+  },
+  "langSwitch": {
+    "label": "Language"
+  }
+}

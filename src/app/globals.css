@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: #f7f8fb;
+  color: #0b1020;
+  -webkit-font-smoothing: antialiased;
+}
+
+.gradient-hero {
+  background:
+    radial-gradient(80% 60% at 10% 10%, rgba(72, 97, 255, 0.18), transparent 60%),
+    radial-gradient(60% 60% at 90% 20%, rgba(47, 61, 245, 0.14), transparent 60%),
+    linear-gradient(180deg, #ffffff 0%, #eef2ff 100%);
+}
+
+.card {
+  @apply rounded-2xl bg-white shadow-soft border border-ink-100;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium transition;
+}
+.btn-primary {
+  @apply bg-brand-600 text-white hover:bg-brand-700;
+}
+.btn-secondary {
+  @apply bg-white text-ink-900 border border-ink-100 hover:border-ink-300;
+}
+.btn-ghost {
+  @apply text-ink-700 hover:text-ink-900;
+}
+
+.input {
+  @apply w-full rounded-xl border border-ink-100 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-brand-400 focus:ring-4 focus:ring-brand-100 transition;
+}
+.label {
+  @apply text-xs font-medium text-ink-500 uppercase tracking-wider;
+}
+
+.pill {
+  @apply inline-flex items-center gap-1 rounded-full border border-ink-100 bg-white px-2.5 py-0.5 text-xs text-ink-700;
+}
+
+.preview-frame {
+  @apply bg-white rounded-2xl shadow-soft border border-ink-100 overflow-hidden;
+}

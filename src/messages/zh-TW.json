@@ -1,0 +1,178 @@
+{
+  "meta": {
+    "appName": "LandingPage OS by CC",
+    "tagline": "AI 驅動的多產品落地頁產生器"
+  },
+  "nav": {
+    "dashboard": "控制台",
+    "newProject": "新建專案",
+    "docs": "文件"
+  },
+  "home": {
+    "headline": "把產品資訊變成高轉化落地頁",
+    "sub": "上傳資料、填寫受眾、一鍵產生四語言落地頁。支援即時編輯、名單收集與 AI 優化。",
+    "cta": "開始建立",
+    "viewProjects": "查看我的專案",
+    "feature1Title": "多產品並行",
+    "feature1Body": "每個產品獨立專案,各自的策略、模組、版本與名單。",
+    "feature2Title": "四語言在地化",
+    "feature2Body": "簡體、繁體、日文、英文同步輸出,針對市場調整語氣。",
+    "feature3Title": "AI 策略先行",
+    "feature3Body": "先產出受眾診斷與轉化策略,再產生頁面內容。"
+  },
+  "dashboard": {
+    "title": "我的專案",
+    "empty": "尚未建立專案,點擊右上角建立第一個。",
+    "new": "新建專案",
+    "openEditor": "開啟編輯器",
+    "viewLive": "查看已發布",
+    "status": {
+      "draft": "草稿",
+      "published": "已發布"
+    },
+    "createdAt": "建立於",
+    "locale": "語言",
+    "market": "市場"
+  },
+  "wizard": {
+    "title": "建立落地頁專案",
+    "step": "第 {current} / {total} 步",
+    "next": "下一步",
+    "back": "上一步",
+    "finish": "產生頁面",
+    "step1": {
+      "title": "基本資訊",
+      "name": "產品名稱",
+      "namePh": "例如:Acme CRM",
+      "tagline": "一句話介紹",
+      "taglinePh": "讓潛在客戶 3 秒理解你在賣什麼",
+      "category": "產品類別",
+      "value": "核心價值主張",
+      "valuePh": "你幫客戶解決什麼痛點?",
+      "cta": "轉化目標",
+      "ctaOptions": {
+        "demo": "預約演示",
+        "trial": "開始試用",
+        "download": "下載資料",
+        "contact": "聯絡銷售",
+        "quote": "獲取報價"
+      }
+    },
+    "step2": {
+      "title": "目標受眾",
+      "market": "目標市場",
+      "language": "落地頁語言",
+      "industry": "產業",
+      "size": "公司規模",
+      "role": "目標角色",
+      "source": "主要流量來源",
+      "sourceOptions": {
+        "ads": "廣告投放",
+        "seo": "SEO 搜尋",
+        "sales": "銷售外呼",
+        "event": "展會活動",
+        "referral": "客戶推薦",
+        "social": "社群媒體"
+      }
+    },
+    "step3": {
+      "title": "產品資料",
+      "desc": "貼上介紹、網址或上傳檔案,讓產生結果貼合真實產品。",
+      "paste": "貼上產品介紹 / 銷售文案 / FAQ",
+      "pastePh": "越詳細,AI 產生越貼合。",
+      "url": "參考網址(官網、定價頁、部落格)",
+      "urlPh": "https://",
+      "file": "上傳材料",
+      "fileHint": "PDF / DOCX / PPTX / TXT / MD / 圖片"
+    },
+    "step4": {
+      "title": "AI 策略摘要",
+      "desc": "產生前先確認策略,避免偏離方向。",
+      "audience": "受眾診斷",
+      "goal": "轉化目標",
+      "narrative": "敘事策略",
+      "local": "在地化策略",
+      "regenerate": "重新產生策略"
+    }
+  },
+  "editor": {
+    "strategyPanel": "AI 策略",
+    "modules": "頁面模組",
+    "preview": "預覽",
+    "desktop": "桌面",
+    "mobile": "手機",
+    "publish": "發布",
+    "published": "已發布",
+    "copyLink": "複製連結",
+    "copied": "已複製",
+    "viewLive": "查看頁面",
+    "addModule": "新增模組",
+    "deleteModule": "刪除模組",
+    "moveUp": "上移",
+    "moveDown": "下移",
+    "moduleTypes": {
+      "hero": "Hero 首屏",
+      "socialProof": "客戶背書",
+      "pain": "痛點區",
+      "solution": "解決方案",
+      "benefits": "核心收益",
+      "useCase": "使用場景",
+      "testimonial": "客戶評價",
+      "faq": "常見問題",
+      "cta": "最終 CTA",
+      "form": "名單表單"
+    },
+    "regenerateCopy": "重新產生文案",
+    "tone": "語氣風格",
+    "tones": {
+      "professional": "保守專業",
+      "executive": "高管風格",
+      "sales": "銷售導向",
+      "friendly": "友善自然",
+      "saas": "高階 SaaS",
+      "japanese": "日本商務風"
+    },
+    "saved": "已儲存",
+    "saving": "儲存中…",
+    "deleteConfirm": "刪除這個模組?該模組負責 {role},可能降低轉化。",
+    "leadsTab": "名單",
+    "settingsTab": "設定",
+    "contentTab": "內容",
+    "moduleRoles": {
+      "hero": "首屏注意力與一級價值主張",
+      "socialProof": "建立初始信任",
+      "pain": "激發共鳴",
+      "solution": "展示答案",
+      "benefits": "放大收益",
+      "useCase": "讓用戶代入",
+      "testimonial": "社會證明",
+      "faq": "消除異議",
+      "cta": "最終轉化",
+      "form": "收集名單"
+    }
+  },
+  "leads": {
+    "title": "名單",
+    "empty": "尚無名單。頁面發布後,提交將顯示於此。",
+    "name": "姓名",
+    "email": "信箱",
+    "company": "公司",
+    "phone": "電話",
+    "message": "留言",
+    "at": "提交時間"
+  },
+  "form": {
+    "submit": "立即提交",
+    "name": "姓名",
+    "email": "工作信箱",
+    "company": "公司",
+    "phone": "電話",
+    "message": "想了解什麼?",
+    "consent": "我已閱讀並同意隱私政策",
+    "success": "已收到,我們會盡快聯絡您。",
+    "required": "必填"
+  },
+  "langSwitch": {
+    "label": "語言"
+  }
+}

@@ -1,0 +1,135 @@
+import type { Project } from './types';
+import { STYLE_PRESETS, cssVarsForStyle } from './styles';
+
+/**
+ * Serialize a Project to a self-contained static HTML document.
+ * Used by: GET /api/projects/:id/export (download), and Vercel deploy.
+ */
+export function renderProjectHtml(project: Project): string {
+  const primary = project.theme.primary || '#4861ff';
+  const preset =
+    STYLE_PRESETS[project.theme.styleId ?? 'saas-modern'] ??
+    STYLE_PRESETS['saas-modern'];
+  const vars = cssVarsForStyle(preset, primary);
+  const cssVarBlock = Object.entries(vars)
+    .map(([k, v]) => `  ${k}: ${v};`)
+    .join('\n');
+
+  const modulesHtml = project.modules.map((m) => serializeModule(m)).join('\n');
+
+  return `<!doctype html>
+<html lang="${project.inputs.locale}">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>${escapeHtml(project.inputs.name)} — ${escapeHtml(project.inputs.tagline)}</title>
+<meta name="description" content="${escapeHtml(project.inputs.value || project.inputs.tagline)}" />
+<meta property="og:title" content="${escapeHtml(project.inputs.name)}" />
+<meta property="og:description" content="${escapeHtml(project.inputs.tagline)}" />
+<style>
+:root {
+${cssVarBlock}
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; font-family: ${preset.fontStack}; color: #0b1020; background: #fff; line-height: 1.7; }
+.wrap { max-width: 1152px; margin: 0 auto; padding: 0 24px; }
+h1, h2, h3 { line-height: 1.25; margin: 0; font-weight: var(--heading-weight); }
+.hero { padding: 96px 0; background: radial-gradient(80% 60% at 10% 10%, color-mix(in oklch, var(--brand) 22%, transparent), transparent 60%), linear-gradient(180deg, #fff, #f6f8ff); }
+.eyebrow { display: inline-block; padding: 4px 12px; border: 1px solid color-mix(in oklch, var(--brand) 30%, white); border-radius: var(--radius); color: var(--brand); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.h1 { font-size: 56px; margin-top: 16px; letter-spacing: -.01em; }
+.sub { margin-top: 16px; color: #5b6478; max-width: 720px; font-size: 18px; }
+.cta { display: inline-block; margin-top: 24px; padding: 14px 22px; border-radius: var(--radius); background: var(--brand); color: #fff; font-weight: 500; text-decoration: none; }
+.section { padding: var(--density-y, 56px) 0; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.card { border: 1px solid #e6e9f0; border-radius: var(--radius); padding: 20px; background: #fff; }
+.muted { color: #5b6478; font-size: 14px; margin-top: 4px; }
+@media (max-width: 720px) {
+  .hero { padding: 56px 0; }
+  .h1 { font-size: 32px; }
+  .grid3 { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+${modulesHtml}
+<footer style="border-top:1px solid #e6e9f0;padding:24px 0;text-align:center;color:#aab1c0;font-size:12px;">© ${new Date().getFullYear()} ${escapeHtml(project.inputs.name)} · Built with LandingPage OS by CC</footer>
+</body>
+</html>`;
+}
+
+function escapeHtml(s: string): string {
+  return (s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function serializeModule(m: any): string {
+  const c = m.content;
+  switch (m.type) {
+    case 'hero':
+      return `<section class="hero"><div class="wrap">
+        <span class="eyebrow">${escapeHtml(c.eyebrow)}</span>
+        <h1 class="h1">${escapeHtml(c.headline)}</h1>
+        <p class="sub">${escapeHtml(c.subhead)}</p>
+        <a class="cta" href="#contact">${escapeHtml(c.primaryCta)}</a>
+      </div></section>`;
+    case 'socialProof':
+      return `<section class="section"><div class="wrap">
+        <div style="text-align:center;color:#5b6478;font-size:12px;text-transform:uppercase;letter-spacing:.08em">${escapeHtml(c.title)}</div>
+        <div class="grid3" style="margin-top:24px">${(c.logos ?? [])
+          .map((l: string) => `<div class="card" style="text-align:center">${escapeHtml(l)}</div>`)
+          .join('')}</div>
+      </div></section>`;
+    case 'pain':
+      return `<section class="section"><div class="wrap">
+        <h2>${escapeHtml(c.title)}</h2>
+        <div class="grid3" style="margin-top:24px">${(c.items ?? [])
+          .map(
+            (it: any) =>
+              `<div class="card"><h3>${escapeHtml(it.title)}</h3><p class="muted">${escapeHtml(it.body)}</p></div>`,
+          )
+          .join('')}</div>
+      </div></section>`;
+    case 'solution':
+      return `<section class="section"><div class="wrap card"><h2>${escapeHtml(c.title)}</h2><p class="muted" style="max-width:720px;margin-top:8px">${escapeHtml(c.body)}</p></div></section>`;
+    case 'benefits':
+      return `<section class="section"><div class="wrap">
+        <h2>${escapeHtml(c.title)}</h2>
+        <div class="grid3" style="margin-top:24px">${(c.items ?? [])
+          .map(
+            (it: any) =>
+              `<div class="card"><h3>${escapeHtml(it.title)}</h3><p class="muted">${escapeHtml(it.body)}</p></div>`,
+          )
+          .join('')}</div>
+      </div></section>`;
+    case 'useCase':
+      return `<section class="section"><div class="wrap"><h2>${escapeHtml(c.title)}</h2><div style="margin-top:24px">${(c.items ?? [])
+        .map(
+          (it: any) =>
+            `<div class="card" style="margin-top:8px"><strong>${escapeHtml(it.role)}</strong><div class="muted">${escapeHtml(it.scenario)}</div></div>`,
+        )
+        .join('')}</div></div></section>`;
+    case 'testimonial':
+      return `<section class="section"><div class="wrap"><h2>${escapeHtml(c.title)}</h2><div class="grid3" style="margin-top:24px">${(c.items ?? [])
+        .map(
+          (it: any) =>
+            `<div class="card"><p>"${escapeHtml(it.quote)}"</p><p class="muted">— ${escapeHtml(it.author)}, ${escapeHtml(it.company)}</p></div>`,
+        )
+        .join('')}</div></div></section>`;
+    case 'faq':
+      return `<section class="section"><div class="wrap" style="max-width:720px"><h2>${escapeHtml(c.title)}</h2>${(c.items ?? [])
+        .map(
+          (it: any) =>
+            `<div class="card" style="margin-top:8px"><strong>${escapeHtml(it.q)}</strong><p class="muted">${escapeHtml(it.a)}</p></div>`,
+        )
+        .join('')}</div></section>`;
+    case 'cta':
+      return `<section class="section"><div class="wrap"><div style="background:linear-gradient(135deg,var(--brand),color-mix(in oklch,var(--brand) 60%,#0b1020));color:#fff;padding:56px;border-radius:calc(var(--radius,16px) * 1.5);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><h3 style="font-size:28px">${escapeHtml(c.headline)}</h3><p style="opacity:.8;margin-top:8px">${escapeHtml(c.subhead)}</p></div><a href="#contact" style="background:#fff;color:#0b1020;padding:14px 22px;border-radius:var(--radius);text-decoration:none;font-weight:500">${escapeHtml(c.button)}</a></div></div></section>`;
+    case 'form':
+      return `<section class="section" id="contact"><div class="wrap" style="max-width:720px"><div class="card" style="padding:40px"><h3>${escapeHtml(c.title)}</h3><p class="muted">${escapeHtml(c.subtitle)}</p><p class="muted" style="margin-top:16px">(此导出版为静态 HTML。实际提交请接入你的表单服务或改用托管发布。)</p></div></div></section>`;
+    default:
+      return '';
+  }
+}
