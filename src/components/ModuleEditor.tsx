@@ -12,7 +12,11 @@ import type {
   FAQContent,
   CTAContent,
   FormContent,
+  ProductShowcaseContent,
+  VideoEmbedContent,
+  MediaRef,
 } from '@/lib/types';
+import MediaField from './MediaField';
 
 type Props = {
   module: PageModule;
@@ -45,6 +49,12 @@ export default function ModuleEditor({ module, onChange, onRegenerate }: Props) 
 
       <div className="space-y-3">
         {module.type === 'hero' && <HeroEditor c={module.content as HeroContent} setC={setContent} />}
+        {module.type === 'productShowcase' && (
+          <ProductShowcaseEditor c={module.content as ProductShowcaseContent} setC={setContent} />
+        )}
+        {module.type === 'videoEmbed' && (
+          <VideoEmbedEditor c={module.content as VideoEmbedContent} setC={setContent} />
+        )}
         {module.type === 'socialProof' && <SocialProofEditor c={module.content as SocialProofContent} setC={setContent} />}
         {module.type === 'pain' && <ListItemsEditor c={module.content as PainContent} setC={setContent} itemFields={['title', 'body']} />}
         {module.type === 'solution' && <SolutionEditor c={module.content as SolutionContent} setC={setContent} />}
@@ -98,6 +108,121 @@ function HeroEditor({ c, setC }: { c: HeroContent; setC: (c: HeroContent) => voi
       <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} multiline />
       <Field label="Primary CTA" value={c.primaryCta} onChange={(v) => setC({ ...c, primaryCta: v })} />
       <Field label="Bullets (one per line)" value={c.bullets.join('\n')} onChange={(v) => setC({ ...c, bullets: v.split('\n').filter(Boolean) })} multiline />
+      <MediaField
+        label="Hero 主视觉 (可选 · 图片或视频)"
+        value={c.media}
+        onChange={(m) => setC({ ...c, media: m })}
+      />
+    </>
+  );
+}
+
+function ProductShowcaseEditor({
+  c,
+  setC,
+}: {
+  c: ProductShowcaseContent;
+  setC: (c: ProductShowcaseContent) => void;
+}) {
+  return (
+    <>
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label="Subtitle" value={c.subtitle ?? ''} onChange={(v) => setC({ ...c, subtitle: v })} />
+      <div className="label">Items (交替左右排版)</div>
+      <div className="space-y-3">
+        {c.items.map((it, i) => (
+          <div key={i} className="rounded-xl border border-ink-100 p-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <div className="text-xs text-ink-500">#{i + 1}</div>
+              <button
+                onClick={() => setC({ ...c, items: c.items.filter((_, j) => j !== i) })}
+                className="text-xs text-ink-500 hover:text-red-600"
+              >
+                remove
+              </button>
+            </div>
+            <Field
+              label="标题"
+              value={it.title}
+              onChange={(v) => {
+                const next = [...c.items];
+                next[i] = { ...it, title: v };
+                setC({ ...c, items: next });
+              }}
+            />
+            <Field
+              label="描述"
+              value={it.body}
+              onChange={(v) => {
+                const next = [...c.items];
+                next[i] = { ...it, body: v };
+                setC({ ...c, items: next });
+              }}
+              multiline
+            />
+            <Field
+              label="要点 (每行一条)"
+              value={(it.bullets ?? []).join('\n')}
+              onChange={(v) => {
+                const next = [...c.items];
+                next[i] = { ...it, bullets: v.split('\n').filter(Boolean) };
+                setC({ ...c, items: next });
+              }}
+              multiline
+            />
+            <div className="mt-2">
+              <MediaField
+                label="配图 (可选)"
+                value={it.media}
+                onChange={(m) => {
+                  const next = [...c.items];
+                  next[i] = { ...it, media: m };
+                  setC({ ...c, items: next });
+                }}
+              />
+            </div>
+          </div>
+        ))}
+        <button
+          onClick={() =>
+            setC({
+              ...c,
+              items: [
+                ...c.items,
+                { title: '', body: '', bullets: [], media: undefined },
+              ],
+            })
+          }
+          className="btn btn-secondary w-full text-xs"
+        >
+          + 添加分块
+        </button>
+      </div>
+    </>
+  );
+}
+
+function VideoEmbedEditor({
+  c,
+  setC,
+}: {
+  c: VideoEmbedContent;
+  setC: (c: VideoEmbedContent) => void;
+}) {
+  return (
+    <>
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field
+        label="Subtitle"
+        value={c.subtitle ?? ''}
+        onChange={(v) => setC({ ...c, subtitle: v })}
+      />
+      <MediaField
+        label="视频 (YouTube / Vimeo / Loom / MP4)"
+        value={c.media}
+        onChange={(m) => setC({ ...c, media: m ?? { id: '', kind: 'video', url: '' } })}
+        defaultKind="video"
+      />
     </>
   );
 }

@@ -26,7 +26,35 @@ export type ModuleType =
   | 'testimonial'
   | 'faq'
   | 'cta'
-  | 'form';
+  | 'form'
+  | 'productShowcase'   // 视觉 · 功能分块截图（alternating text + image）
+  | 'videoEmbed';       // 视觉 · 视频嵌入（YouTube / Vimeo / Loom / 直链 MP4）
+
+// --- Media references with localization ---------------------------------
+
+export type MediaKind = 'image' | 'video' | 'logo' | 'gif';
+
+/**
+ * A reference to an image / video / logo. Supports:
+ *   - default URL (used as fallback for any locale)
+ *   - per-locale URL overrides (for UI screenshots that are language-specific)
+ *   - per-market scope (e.g. ISMS cert only shown in market=JP)
+ *
+ * Resolution order at render time: scopedToMarkets filter → localizedUrls[locale] → url
+ */
+export interface MediaRef {
+  id: string;
+  kind: MediaKind;
+  url: string;                    // default (fallback)
+  alt?: string;
+  poster?: string;                // video only
+  localizedUrls?: Partial<Record<PageLocale, string>>;
+  localizedAlts?: Partial<Record<PageLocale, string>>;
+  scopedToMarkets?: MarketCode[];
+  tags?: string[];                // for AI matching (pain-cost, feature-X, etc.)
+  // free-form label for the user — "Dashboard 主截图"
+  label?: string;
+}
 
 export interface ProductInputs {
   name: string;
@@ -59,6 +87,24 @@ export interface HeroContent {
   primaryCta: string;
   secondaryCta?: string;
   bullets: string[];
+  media?: MediaRef; // optional visual — product screenshot or demo video
+}
+
+export interface ProductShowcaseContent {
+  title: string;
+  subtitle?: string;
+  items: Array<{
+    title: string;
+    body: string;
+    bullets?: string[];
+    media?: MediaRef; // each item has its own screenshot/video
+  }>;
+}
+
+export interface VideoEmbedContent {
+  title: string;
+  subtitle?: string;
+  media: MediaRef; // kind='video'
 }
 
 export interface SocialProofContent {
@@ -122,7 +168,9 @@ export type ModuleContent =
   | TestimonialContent
   | FAQContent
   | CTAContent
-  | FormContent;
+  | FormContent
+  | ProductShowcaseContent
+  | VideoEmbedContent;
 
 export interface PageModule<T extends ModuleContent = ModuleContent> {
   id: string;
@@ -201,8 +249,22 @@ export interface TestimonialAsset {
   role: string;
   company: string;
   quote: string;
+  /**
+   * The language the customer actually said this in. Preserved for
+   * authenticity weighting — original language > translation.
+   */
+  primaryLocale?: PageLocale;
+  /**
+   * Optional translations. When shown to a locale that isn't primaryLocale,
+   * fall back to localizedQuotes[locale] before showing the original quote.
+   * If flagged as AI-generated, UI surfaces a "AI 翻译，请校对" badge.
+   */
+  localizedQuotes?: Partial<
+    Record<PageLocale, { quote: string; role?: string; aiGenerated?: boolean }>
+  >;
+  preferredMarkets?: MarketCode[];
   industry?: string;
-  tags: string[]; // e.g. ['pain-cost', 'benefit-roi']
+  tags: string[];
 }
 
 export interface CertificationAsset {
@@ -240,6 +302,8 @@ export interface AssetLibrary {
   certifications: CertificationAsset[];
   cases: CaseStudyAsset[];
   press: PressAsset[];
+  /** Media refs (screenshots / videos / logos) — added in Phase F */
+  media?: MediaRef[];
 }
 
 // --- Style presets (PRD §5 — reduce AI味) ------------------------------
@@ -314,7 +378,11 @@ export interface Product {
   assets: {
     testimonials: TestimonialAsset[];
     cases: CaseStudyAsset[];
-    heroMedia: string[];
+    /**
+     * Product-level media library. Each MediaRef can be localized & market-scoped.
+     * Drives the module-editor's "select from library" picker.
+     */
+    media: MediaRef[];
   };
 
   landingPageIds: string[];

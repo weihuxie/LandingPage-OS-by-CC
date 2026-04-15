@@ -681,6 +681,60 @@ export function generateModules(
   return modules;
 }
 
+// --- Seed templates for visual modules (new in Phase F) ---------------
+
+export function seedProductShowcase(inputs: ProductInputs) {
+  const L = {
+    en: {
+      title: 'See it in action',
+      subtitle: 'Three ways teams use it every day',
+      items: [
+        { title: 'Unified inbox', body: 'Every conversation lands in one place — assigned, tagged, and routed.', bullets: ['SLA timers', 'Auto-triage', 'Context from CRM'] },
+        { title: 'Live collaboration', body: 'Your team works the same ticket without stepping on each other.', bullets: ['Realtime presence', 'Private notes', 'One-click handoff'] },
+        { title: 'Report that actually ships', body: 'Weekly summaries posted to Slack without you lifting a finger.', bullets: ['Auto-digest', 'Custom cohorts', 'Exportable'] },
+      ],
+    },
+    'zh-CN': {
+      title: '看看它怎么用',
+      subtitle: '团队每天在这里做的三件事',
+      items: [
+        { title: '统一收件箱', body: '所有对话汇到一处 — 已分配、已打标、已路由。', bullets: ['SLA 倒计时', '自动分流', '从 CRM 带上下文'] },
+        { title: '多人协作不打架', body: '同一个工单，团队同步操作互不覆盖。', bullets: ['实时在线提示', '私密备注', '一键移交'] },
+        { title: '报表会自己发', body: '周度摘要自动发到 Slack，你不用动手。', bullets: ['自动摘要', '自定义分组', '可导出'] },
+      ],
+    },
+    'zh-TW': {
+      title: '看看它怎麼用',
+      subtitle: '團隊每天在這裡做的三件事',
+      items: [
+        { title: '統一收件匣', body: '所有對話匯到一處 — 已分配、已打標、已路由。', bullets: ['SLA 倒計時', '自動分流', '從 CRM 帶上下文'] },
+        { title: '多人協作不打架', body: '同一個工單,團隊同步操作互不覆蓋。', bullets: ['即時在線提示', '私密備注', '一鍵移交'] },
+        { title: '報表會自己發', body: '週度摘要自動發到 Slack,你不用動手。', bullets: ['自動摘要', '自訂分組', '可匯出'] },
+      ],
+    },
+    ja: {
+      title: '実際の動きを見る',
+      subtitle: 'チームが毎日使う 3 つの場面',
+      items: [
+        { title: '統合受信箱', body: 'すべての会話を一箇所に。割り当て、タグ、ルーティングまで。', bullets: ['SLA タイマー', '自動振り分け', 'CRM からの文脈'] },
+        { title: 'リアルタイム協調', body: '同じチケットをチームで衝突なく扱う。', bullets: ['在席表示', 'プライベートメモ', 'ワンクリック引き継ぎ'] },
+        { title: '勝手に届くレポート', body: '週次サマリーは Slack に自動投稿。手を動かす必要なし。', bullets: ['自動ダイジェスト', 'カスタム集計', 'エクスポート可'] },
+      ],
+    },
+  } as const;
+  return (L as any)[inputs.locale] ?? L.en;
+}
+
+export function seedVideoEmbed(inputs: ProductInputs) {
+  const L = {
+    en: { title: 'Watch a 90-second demo', subtitle: 'Shorter than making coffee.' },
+    'zh-CN': { title: '看 90 秒产品演示', subtitle: '比泡一杯咖啡还短。' },
+    'zh-TW': { title: '看 90 秒產品演示', subtitle: '比泡一杯咖啡還短。' },
+    ja: { title: '90 秒のデモを見る', subtitle: 'コーヒーを淹れるより早い。' },
+  } as const;
+  return (L as any)[inputs.locale] ?? L.en;
+}
+
 // --- Regenerate copy (per-module) --------------------------------------
 
 export function regenerateModule(

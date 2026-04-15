@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
         primary: body.primary ?? '#4861ff',
         styleId: defaultStyleForMarket(body.inputs.market),
       },
-      assets: { testimonials: [], cases: [], heroMedia: [] },
+      assets: { testimonials: [], cases: [], media: [] },
       landingPageIds: [],
     } as Product;
   }

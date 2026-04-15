@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     assets: {
       testimonials: [],
       cases: [],
-      heroMedia: [],
+      media: [],
     },
     landingPageIds: [],
   };

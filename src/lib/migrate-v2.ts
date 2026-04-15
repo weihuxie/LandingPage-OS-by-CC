@@ -51,7 +51,7 @@ export function migrateProjectToV2(
     assets: {
       testimonials: [],
       cases: [],
-      heroMedia: [],
+      media: [],
     },
 
     landingPageIds: [],

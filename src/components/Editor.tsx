@@ -237,10 +237,49 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
       if (data?.page) {
         setPage(data.page);
         switchLocaleTabInternal(data.page, newLocale);
+
+        // Compute media assets that haven't been localized to the new locale.
+        // Gives the user a heads-up to go fill in language-specific screenshots
+        // (per Q4 design: text is auto-localized; media needs a human pass).
+        const gaps = findMediaLocaleGaps(data.page, newLocale);
+        if (gaps.length > 0) {
+          alert(
+            `已添加 ${nativeLabel(newLocale)}。有 ${gaps.length} 个资产没有这个语言的版本——切到这个 tab 后，有配图/视频的模块会自动回落到默认版本。\n\n待补语言版本：\n${gaps.slice(0, 5).join('\n')}${gaps.length > 5 ? `\n...还有 ${gaps.length - 5} 个` : ''}`,
+          );
+        }
       }
     } finally {
       setAddingLocale(false);
     }
+  };
+
+  // Walk through all modules of both variants and report media refs that
+  // are missing an override for the newly-added locale.
+  const findMediaLocaleGaps = (
+    page: LandingPage,
+    newLocale: PageLocale,
+  ): string[] => {
+    const out: string[] = [];
+    const check = (m: any, path: string) => {
+      if (!m) return;
+      if (m.url && !m.localizedUrls?.[newLocale]) {
+        out.push(`${path}: ${m.label ?? m.alt ?? m.kind ?? 'media'}`);
+      }
+    };
+    for (const v of ['A', 'B'] as const) {
+      const mods = page.variants[v]?.[newLocale] ?? [];
+      for (const mod of mods) {
+        const c = mod.content as any;
+        if (mod.type === 'hero' && c.media) check(c.media, `方案${v} · Hero`);
+        if (mod.type === 'videoEmbed' && c.media) check(c.media, `方案${v} · 视频`);
+        if (mod.type === 'productShowcase' && Array.isArray(c.items)) {
+          c.items.forEach((it: any, i: number) => {
+            if (it.media) check(it.media, `方案${v} · 功能${i + 1}`);
+          });
+        }
+      }
+    }
+    return out;
   };
 
   // Helper used by addLocale — takes fresh page directly (avoid stale state)

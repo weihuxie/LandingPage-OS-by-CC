@@ -120,7 +120,9 @@
       "testimonial": "客户评价",
       "faq": "常见问题",
       "cta": "最终 CTA",
-      "form": "留资表单"
+      "form": "留资表单",
+      "productShowcase": "功能截图",
+      "videoEmbed": "Demo 视频"
     },
     "regenerateCopy": "重新生成文案",
     "tone": "语气风格",
@@ -148,7 +150,9 @@
       "testimonial": "社会证明",
       "faq": "消除异议",
       "cta": "最终转化",
-      "form": "收集线索"
+      "form": "收集线索",
+      "productShowcase": "功能可视化",
+      "videoEmbed": "演示视频承载"
     }
   },
   "leads": {

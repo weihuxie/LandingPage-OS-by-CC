@@ -12,8 +12,20 @@ import type {
   FAQContent,
   CTAContent,
   FormContent,
+  ProductShowcaseContent,
+  VideoEmbedContent,
+  MediaRef,
+  PageLocale,
+  MarketCode,
 } from '@/lib/types';
 import { STYLE_PRESETS, cssVarsForStyle } from '@/lib/styles';
+import {
+  resolveMedia,
+  detectVideoHost,
+  youtubeEmbedUrl,
+  vimeoEmbedUrl,
+  loomEmbedUrl,
+} from '@/lib/media';
 
 type Props = {
   project: Project;
@@ -82,9 +94,35 @@ function ModuleBody({
   locale?: string;
   variant?: 'A' | 'B';
 }) {
+  const pageLocale = (locale ?? project.inputs.locale) as PageLocale;
+  const market = project.inputs.market as MarketCode;
+
   switch (module.type) {
     case 'hero':
-      return <Hero content={module.content as HeroContent} device={device} />;
+      return (
+        <Hero
+          content={module.content as HeroContent}
+          device={device}
+          locale={pageLocale}
+          market={market}
+        />
+      );
+    case 'productShowcase':
+      return (
+        <ProductShowcase
+          content={module.content as ProductShowcaseContent}
+          locale={pageLocale}
+          market={market}
+        />
+      );
+    case 'videoEmbed':
+      return (
+        <VideoEmbed
+          content={module.content as VideoEmbedContent}
+          locale={pageLocale}
+          market={market}
+        />
+      );
     case 'socialProof':
       return <SocialProof content={module.content as SocialProofContent} />;
     case 'pain':
@@ -118,33 +156,52 @@ function ModuleBody({
 
 // --- Blocks -------------------------------------------------------------
 
-function Hero({ content, device }: { content: HeroContent; device: 'desktop' | 'mobile' }) {
-  // Style-aware background
+function Hero({
+  content,
+  device,
+  locale,
+  market,
+}: {
+  content: HeroContent;
+  device: 'desktop' | 'mobile';
+  locale: PageLocale;
+  market: MarketCode;
+}) {
   const bg = `
     var(--hero-bg-layer-1, radial-gradient(80% 60% at 10% 10%, color-mix(in oklch, var(--brand) 22%, transparent), transparent 60%)),
     var(--hero-bg-layer-2, linear-gradient(180deg, #ffffff, #f6f8ff))
   `;
+  const media = resolveMedia(content.media, locale, market);
+  const hasMedia = !!media;
+
   return (
     <div className="relative overflow-hidden" style={{ background: bg }}>
-      <div className={`mx-auto px-6 ${device === 'mobile' ? 'py-12' : 'max-w-6xl py-20'}`}>
-        {content.eyebrow && (
-          <div
-            className="inline-block border px-3 py-1 text-[11px] font-medium uppercase tracking-wider"
-            style={{
-              color: 'var(--brand)',
-              borderColor: 'color-mix(in oklch, var(--brand) 30%, white)',
-              borderRadius: 'var(--radius, 16px)',
-            }}
+      <div
+        className={`mx-auto px-6 ${device === 'mobile' ? 'py-12' : 'max-w-6xl py-20'} ${
+          hasMedia && device !== 'mobile' ? 'grid grid-cols-2 items-center gap-10' : ''
+        }`}
+      >
+        <div>
+          {content.eyebrow && (
+            <div
+              className="inline-block border px-3 py-1 text-[11px] font-medium uppercase tracking-wider"
+              style={{
+                color: 'var(--brand)',
+                borderColor: 'color-mix(in oklch, var(--brand) 30%, white)',
+                borderRadius: 'var(--radius, 16px)',
+              }}
+            >
+              {content.eyebrow}
+            </div>
+          )}
+          <h1
+            className={`mt-4 tracking-tight text-ink-900 ${
+              device === 'mobile' ? 'text-3xl' : hasMedia ? 'text-4xl md:text-5xl' : 'text-5xl md:text-6xl'
+            }`}
+            style={{ fontWeight: 'var(--heading-weight, 600)' as any, lineHeight: 1.2 }}
           >
-            {content.eyebrow}
-          </div>
-        )}
-        <h1
-          className={`mt-4 tracking-tight text-ink-900 ${device === 'mobile' ? 'text-3xl' : 'text-5xl md:text-6xl'}`}
-          style={{ fontWeight: 'var(--heading-weight, 600)' as any, lineHeight: 1.2 }}
-        >
-          {content.headline}
-        </h1>
+            {content.headline}
+          </h1>
         <p className={`mt-4 max-w-2xl text-ink-500 ${device === 'mobile' ? 'text-base' : 'text-lg'}`}>
           {content.subhead}
         </p>
@@ -162,7 +219,11 @@ function Hero({ content, device }: { content: HeroContent; device: 'desktop' | '
           )}
         </div>
         {content.bullets?.length > 0 && (
-          <ul className={`mt-6 grid gap-2 text-sm text-ink-700 ${device === 'mobile' ? 'grid-cols-1' : 'grid-cols-3 max-w-3xl'}`}>
+          <ul
+            className={`mt-6 grid gap-2 text-sm text-ink-700 ${
+              device === 'mobile' || hasMedia ? 'grid-cols-1' : 'grid-cols-3 max-w-3xl'
+            }`}
+          >
             {content.bullets.map((b, i) => (
               <li key={i} className="flex items-center gap-2">
                 <span
@@ -176,8 +237,70 @@ function Hero({ content, device }: { content: HeroContent; device: 'desktop' | '
             ))}
           </ul>
         )}
+        </div>
+        {hasMedia && (
+          <div className="relative">
+            <HeroMedia media={content.media!} resolved={media!} device={device} />
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+function HeroMedia({
+  media,
+  resolved,
+  device,
+}: {
+  media: MediaRef;
+  resolved: { url: string; alt?: string };
+  device: 'desktop' | 'mobile';
+}) {
+  if (media.kind === 'video') {
+    const host = detectVideoHost(resolved.url);
+    if (host === 'mp4') {
+      return (
+        <video
+          className="w-full rounded-2xl border border-ink-100 shadow-soft"
+          src={resolved.url}
+          poster={media.poster}
+          muted
+          autoPlay
+          loop
+          playsInline
+        />
+      );
+    }
+    const src =
+      host === 'youtube'
+        ? youtubeEmbedUrl(resolved.url)
+        : host === 'vimeo'
+          ? vimeoEmbedUrl(resolved.url)
+          : host === 'loom'
+            ? loomEmbedUrl(resolved.url)
+            : resolved.url;
+    return (
+      <div className="aspect-video overflow-hidden rounded-2xl border border-ink-100 shadow-soft">
+        <iframe
+          className="h-full w-full"
+          src={src}
+          title={resolved.alt ?? 'Demo video'}
+          allow="autoplay; fullscreen; picture-in-picture"
+          allowFullScreen
+          loading="lazy"
+        />
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={resolved.url}
+      alt={resolved.alt ?? ''}
+      className="w-full rounded-2xl border border-ink-100 shadow-soft"
+      loading="lazy"
+    />
   );
 }
 
@@ -333,6 +456,116 @@ function CTA({ content }: { content: CTAContent }) {
         <button className="rounded-xl bg-white px-5 py-3 text-sm font-medium text-ink-900 hover:bg-ink-100">
           {content.button}
         </button>
+      </div>
+    </div>
+  );
+}
+
+function ProductShowcase({
+  content,
+  locale,
+  market,
+}: {
+  content: ProductShowcaseContent;
+  locale: PageLocale;
+  market: MarketCode;
+}) {
+  return (
+    <div className="mx-auto max-w-6xl px-6 py-14">
+      <div className="max-w-3xl">
+        <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+        {content.subtitle && <p className="mt-2 text-ink-500">{content.subtitle}</p>}
+      </div>
+      <div className="mt-10 space-y-14">
+        {content.items.map((it, i) => {
+          const m = resolveMedia(it.media, locale, market);
+          const textFirst = i % 2 === 0;
+          return (
+            <div key={i} className="grid items-center gap-8 md:grid-cols-2">
+              <div className={textFirst ? '' : 'md:order-2'}>
+                <h3 className="text-xl font-semibold">{it.title}</h3>
+                <p className="mt-2 text-ink-500">{it.body}</p>
+                {it.bullets && it.bullets.length > 0 && (
+                  <ul className="mt-4 space-y-1.5 text-sm text-ink-700">
+                    {it.bullets.map((b, j) => (
+                      <li key={j} className="flex gap-2">
+                        <span
+                          className="mt-1.5 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full"
+                          style={{ background: 'var(--brand)' }}
+                        />
+                        <span>{b}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className={textFirst ? '' : 'md:order-1'}>
+                {m ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={m.url}
+                    alt={m.alt ?? ''}
+                    className="w-full rounded-2xl border border-ink-100 shadow-soft"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="grid aspect-video place-items-center rounded-2xl border border-dashed border-ink-100 bg-ink-100/30 text-xs text-ink-300">
+                    截图缺失
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function VideoEmbed({
+  content,
+  locale,
+  market,
+}: {
+  content: VideoEmbedContent;
+  locale: PageLocale;
+  market: MarketCode;
+}) {
+  const m = resolveMedia(content.media, locale, market);
+  const host = m ? detectVideoHost(m.url) : 'other';
+  return (
+    <div className="mx-auto max-w-4xl px-6 py-14">
+      <div className="max-w-2xl">
+        <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+        {content.subtitle && <p className="mt-2 text-ink-500">{content.subtitle}</p>}
+      </div>
+      <div className="mt-6 aspect-video overflow-hidden rounded-2xl border border-ink-100 shadow-soft">
+        {m ? (
+          host === 'mp4' ? (
+            <video className="h-full w-full" src={m.url} poster={content.media.poster} controls playsInline />
+          ) : (
+            <iframe
+              className="h-full w-full"
+              src={
+                host === 'youtube'
+                  ? youtubeEmbedUrl(m.url)
+                  : host === 'vimeo'
+                    ? vimeoEmbedUrl(m.url)
+                    : host === 'loom'
+                      ? loomEmbedUrl(m.url)
+                      : m.url
+              }
+              title={m.alt ?? content.title}
+              allow="autoplay; fullscreen; picture-in-picture"
+              allowFullScreen
+              loading="lazy"
+            />
+          )
+        ) : (
+          <div className="grid h-full place-items-center bg-ink-100/30 text-xs text-ink-300">
+            视频 URL 未填
+          </div>
+        )}
       </div>
     </div>
   );
