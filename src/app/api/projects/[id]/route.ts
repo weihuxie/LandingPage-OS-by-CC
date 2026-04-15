@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { deleteProject, getProject, saveProject } from '@/lib/storage';
-import { regenerateModule } from '@/lib/ai';
-import type { Project, PageModule, ToneKey, NarrativeVariant, StyleId } from '@/lib/types';
+import { regenerateModule, generateStrategy, generateVariants } from '@/lib/ai';
+import type {
+  Project,
+  PageModule,
+  ToneKey,
+  NarrativeVariant,
+  StyleId,
+  StrategySummary,
+} from '@/lib/types';
+
+type StrategyBlock = 'audience' | 'goal' | 'narrative' | 'local';
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
   const project = await getProject(params.id);
@@ -17,7 +26,42 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     newTone?: ToneKey;
     switchVariant?: NarrativeVariant;
     newStyleId?: StyleId;
+    // Strategy editing (Phase 2)
+    editStrategy?: StrategySummary;
+    regenerateStrategyBlock?: StrategyBlock;
+    regenerateStrategyLine?: { block: StrategyBlock; index: number };
+    regenerateStrategyAll?: boolean;
+    rebuildVariantsFromStrategy?: boolean; // rebuild modules using current strategy
   };
+
+  // Strategy editing: user typed over one or more lines
+  if (body.editStrategy) {
+    project.strategy = body.editStrategy;
+  }
+
+  // Strategy regeneration (scoped)
+  if (body.regenerateStrategyAll) {
+    project.strategy = generateStrategy(project.inputs);
+  } else if (body.regenerateStrategyBlock) {
+    const fresh = generateStrategy(project.inputs);
+    project.strategy = { ...project.strategy, [body.regenerateStrategyBlock]: fresh[body.regenerateStrategyBlock] };
+  } else if (body.regenerateStrategyLine) {
+    const { block, index } = body.regenerateStrategyLine;
+    const fresh = generateStrategy(project.inputs);
+    const next = [...project.strategy[block]];
+    if (fresh[block][index] !== undefined) {
+      next[index] = fresh[block][index];
+    }
+    project.strategy = { ...project.strategy, [block]: next };
+  }
+
+  // Rebuild modules from current strategy (opt-in so we don't clobber user's
+  // module-level edits every time they tweak one strategy line)
+  if (body.rebuildVariantsFromStrategy) {
+    const variants = generateVariants(project.inputs, project.tone, project.strategy);
+    project.variants = variants;
+    project.modules = variants[project.activeVariant ?? 'A'];
+  }
 
   // Variant switch: promote A or B into project.modules
   if (body.switchVariant && project.variants) {

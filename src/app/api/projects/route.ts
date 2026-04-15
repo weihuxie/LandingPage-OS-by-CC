@@ -25,7 +25,8 @@ export async function POST(req: NextRequest) {
   const tone: ToneKey =
     body.tone ?? (body.inputs.market === 'JP' ? 'japanese' : 'saas');
   const strategy = body.strategy ?? generateStrategy(body.inputs);
-  const variants = generateVariants(body.inputs, tone);
+  // Strategy is now a real input to module generation, not just a preview artifact.
+  const variants = generateVariants(body.inputs, tone, strategy);
   const activeModules = variants.A;
 
   const project: Project = {

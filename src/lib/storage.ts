@@ -1,86 +1,102 @@
+/**
+ * Storage adapter.
+ *
+ * Runtime decision:
+ *   - KV_REST_API_URL present  → Vercel KV (Redis)
+ *   - otherwise                → file system at .data/ (local dev)
+ *
+ * All readers forward-migrate old records so schema changes don't crash
+ * the editor / renderer.
+ */
 import { promises as fs } from 'fs';
 import path from 'path';
+import { kv } from '@vercel/kv';
 import type { Project, Lead, AssetLibrary } from './types';
 
-// On Vercel (and most serverless runtimes), only /tmp is writable.
-// Locally, use the project-relative .data/ dir (gitignored).
-// NOTE: /tmp is per-invocation on Vercel — data does NOT persist across cold
-// starts. This is a stopgap to let e2e flows run. Swap to Vercel KV or
-// Supabase for production persistence.
-const DATA_DIR =
-  process.env.DATA_DIR ??
-  (process.env.VERCEL === '1' ? '/tmp/.data' : path.join(process.cwd(), '.data'));
-const PROJECTS_FILE = path.join(DATA_DIR, 'projects.json');
-const LEADS_FILE = path.join(DATA_DIR, 'leads.json');
-const ASSETS_FILE = path.join(DATA_DIR, 'assets.json');
-const EVENTS_FILE = path.join(DATA_DIR, 'events.json');
+const USE_KV = !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
 
-async function ensure() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  for (const f of [PROJECTS_FILE, LEADS_FILE, EVENTS_FILE]) {
-    try {
-      await fs.access(f);
-    } catch {
-      await fs.writeFile(f, '[]', 'utf8');
-    }
+// --- Keys (shared between KV and FS layouts) ---------------------------
+
+const KEY_PROJECTS = 'lp:projects';
+const KEY_LEADS = 'lp:leads';
+const KEY_ASSETS = 'lp:assets';
+const KEY_EVENTS = 'lp:events';
+
+const DEFAULT_ASSETS: AssetLibrary = {
+  brand: null,
+  testimonials: [],
+  certifications: [],
+  cases: [],
+  press: [],
+};
+
+// --- Low-level adapter -------------------------------------------------
+
+async function readRaw<T>(key: string, fallback: T): Promise<T> {
+  if (USE_KV) {
+    const v = (await kv.get<T>(key)) as T | null;
+    return v ?? fallback;
   }
+  return readFs(key, fallback);
+}
+
+async function writeRaw<T>(key: string, value: T): Promise<void> {
+  if (USE_KV) {
+    await kv.set(key, value);
+    return;
+  }
+  await writeFs(key, value);
+}
+
+// --- FS adapter --------------------------------------------------------
+
+const DATA_DIR =
+  process.env.DATA_DIR ?? path.join(process.cwd(), '.data');
+
+function fsPath(key: string): string {
+  return path.join(DATA_DIR, key.replace(/^lp:/, '') + '.json');
+}
+
+async function ensureFsDir() {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+}
+
+async function readFs<T>(key: string, fallback: T): Promise<T> {
+  await ensureFsDir();
+  const file = fsPath(key);
   try {
-    await fs.access(ASSETS_FILE);
+    const raw = await fs.readFile(file, 'utf8');
+    return JSON.parse(raw) as T;
   } catch {
-    await fs.writeFile(
-      ASSETS_FILE,
-      JSON.stringify(
-        { brand: null, testimonials: [], certifications: [], cases: [], press: [] },
-        null,
-        2,
-      ),
-      'utf8',
-    );
+    return fallback;
   }
 }
 
+async function writeFs<T>(key: string, value: T): Promise<void> {
+  await ensureFsDir();
+  const file = fsPath(key);
+  await fs.writeFile(file, JSON.stringify(value, null, 2), 'utf8');
+}
+
+// --- Projects ----------------------------------------------------------
+
 export async function readProjects(): Promise<Project[]> {
-  await ensure();
-  const raw = await fs.readFile(PROJECTS_FILE, 'utf8');
-  try {
-    const list = JSON.parse(raw) as any[];
-    return list.map(migrate);
-  } catch {
-    return [];
-  }
+  const list = (await readRaw<any[]>(KEY_PROJECTS, [])) ?? [];
+  return list.map(migrate);
 }
 
 export async function writeProjects(list: Project[]): Promise<void> {
-  await ensure();
-  await fs.writeFile(PROJECTS_FILE, JSON.stringify(list, null, 2), 'utf8');
+  await writeRaw(KEY_PROJECTS, list);
 }
 
 export async function getProject(id: string): Promise<Project | null> {
   const list = await readProjects();
-  const p = list.find((x) => x.id === id);
-  return p ? migrate(p) : null;
+  return list.find((p) => p.id === id) ?? null;
 }
 
 export async function getProjectBySlug(slug: string): Promise<Project | null> {
   const list = await readProjects();
-  const p = list.find((x) => x.slug === slug);
-  return p ? migrate(p) : null;
-}
-
-// Forward-migrate older project records so renderer / editor never crash.
-function migrate(p: any): Project {
-  const theme = p.theme ?? {};
-  const styleId = theme.styleId ?? (theme.style === 'minimal' ? 'minimal-trust' : 'saas-modern');
-  const variants = p.variants ?? { A: p.modules ?? [], B: p.modules ?? [] };
-  return {
-    ...p,
-    activeVariant: p.activeVariant ?? 'A',
-    publishMode: p.publishMode ?? 'single',
-    theme: { primary: theme.primary ?? '#4861ff', styleId, secondary: theme.secondary },
-    variants,
-    views: p.views ?? 0,
-    abStats: p.abStats ?? { A: { views: 0, leads: 0 }, B: { views: 0, leads: 0 } },
-  } as Project;
+  return list.find((p) => p.slug === slug) ?? null;
 }
 
 export async function saveProject(project: Project): Promise<Project> {
@@ -98,60 +114,40 @@ export async function deleteProject(id: string): Promise<void> {
   await writeProjects(list.filter((p) => p.id !== id));
 }
 
+// --- Leads -------------------------------------------------------------
+
 export async function readLeads(projectId?: string): Promise<Lead[]> {
-  await ensure();
-  const raw = await fs.readFile(LEADS_FILE, 'utf8');
-  let all: Lead[] = [];
-  try {
-    all = JSON.parse(raw) as Lead[];
-  } catch {
-    all = [];
-  }
+  const all = (await readRaw<Lead[]>(KEY_LEADS, [])) ?? [];
   return projectId ? all.filter((l) => l.projectId === projectId) : all;
 }
 
 export async function appendLead(lead: Lead): Promise<void> {
-  await ensure();
-  const raw = await fs.readFile(LEADS_FILE, 'utf8');
-  let all: Lead[] = [];
-  try {
-    all = JSON.parse(raw) as Lead[];
-  } catch {
-    all = [];
-  }
+  const all = (await readRaw<Lead[]>(KEY_LEADS, [])) ?? [];
   all.unshift(lead);
-  await fs.writeFile(LEADS_FILE, JSON.stringify(all, null, 2), 'utf8');
+  await writeRaw(KEY_LEADS, all);
 
-  // bump project lead count + A/B stats
-  const projects = await readProjects();
-  const p = projects.find((x) => x.id === lead.projectId);
+  const list = await readProjects();
+  const p = list.find((x) => x.id === lead.projectId);
   if (p) {
     p.leadCount = (p.leadCount ?? 0) + 1;
     if (lead.variant && p.abStats) {
       p.abStats[lead.variant].leads += 1;
     }
-    await writeProjects(projects);
+    await writeProjects(list);
   }
 }
 
-// --- Asset library ------------------------------------------------------
+// --- Assets ------------------------------------------------------------
 
 export async function readAssets(): Promise<AssetLibrary> {
-  await ensure();
-  const raw = await fs.readFile(ASSETS_FILE, 'utf8');
-  try {
-    return JSON.parse(raw) as AssetLibrary;
-  } catch {
-    return { brand: null, testimonials: [], certifications: [], cases: [], press: [] };
-  }
+  return (await readRaw<AssetLibrary>(KEY_ASSETS, DEFAULT_ASSETS)) ?? DEFAULT_ASSETS;
 }
 
 export async function writeAssets(lib: AssetLibrary): Promise<void> {
-  await ensure();
-  await fs.writeFile(ASSETS_FILE, JSON.stringify(lib, null, 2), 'utf8');
+  await writeRaw(KEY_ASSETS, lib);
 }
 
-// --- Events (lightweight analytics for A9 dashboard) -------------------
+// --- Events (analytics) ------------------------------------------------
 
 export interface PageEvent {
   id: string;
@@ -164,42 +160,52 @@ export interface PageEvent {
   createdAt: number;
 }
 
-export async function appendEvent(ev: PageEvent): Promise<void> {
-  await ensure();
-  const raw = await fs.readFile(EVENTS_FILE, 'utf8');
-  let all: PageEvent[] = [];
-  try {
-    all = JSON.parse(raw) as PageEvent[];
-  } catch {
-    all = [];
-  }
-  all.unshift(ev);
-  // Cap at 50k events to keep the file manageable (PoC)
-  if (all.length > 50_000) all = all.slice(0, 50_000);
-  await fs.writeFile(EVENTS_FILE, JSON.stringify(all, null, 2), 'utf8');
+const MAX_EVENTS = 50_000;
 
-  // bump counter on project for views
+export async function appendEvent(ev: PageEvent): Promise<void> {
+  const all = (await readRaw<PageEvent[]>(KEY_EVENTS, [])) ?? [];
+  all.unshift(ev);
+  if (all.length > MAX_EVENTS) all.length = MAX_EVENTS;
+  await writeRaw(KEY_EVENTS, all);
+
   if (ev.type === 'view') {
-    const projects = await readProjects();
-    const p = projects.find((x) => x.id === ev.projectId);
+    const list = await readProjects();
+    const p = list.find((x) => x.id === ev.projectId);
     if (p) {
       p.views = (p.views ?? 0) + 1;
       if (ev.variant && p.abStats) {
         p.abStats[ev.variant].views += 1;
       }
-      await writeProjects(projects);
+      await writeProjects(list);
     }
   }
 }
 
 export async function readEvents(projectId?: string): Promise<PageEvent[]> {
-  await ensure();
-  const raw = await fs.readFile(EVENTS_FILE, 'utf8');
-  let all: PageEvent[] = [];
-  try {
-    all = JSON.parse(raw) as PageEvent[];
-  } catch {
-    all = [];
-  }
+  const all = (await readRaw<PageEvent[]>(KEY_EVENTS, [])) ?? [];
   return projectId ? all.filter((e) => e.projectId === projectId) : all;
+}
+
+// --- Migration (forward-compat) ---------------------------------------
+
+function migrate(p: any): Project {
+  const theme = p.theme ?? {};
+  const styleId =
+    theme.styleId ?? (theme.style === 'minimal' ? 'minimal-trust' : 'saas-modern');
+  const variants = p.variants ?? { A: p.modules ?? [], B: p.modules ?? [] };
+  return {
+    ...p,
+    activeVariant: p.activeVariant ?? 'A',
+    publishMode: p.publishMode ?? 'single',
+    theme: { primary: theme.primary ?? '#4861ff', styleId, secondary: theme.secondary },
+    variants,
+    views: p.views ?? 0,
+    abStats: p.abStats ?? { A: { views: 0, leads: 0 }, B: { views: 0, leads: 0 } },
+  } as Project;
+}
+
+// --- Introspection (for /api/health) ----------------------------------
+
+export function storageBackend(): 'kv' | 'fs' {
+  return USE_KV ? 'kv' : 'fs';
 }

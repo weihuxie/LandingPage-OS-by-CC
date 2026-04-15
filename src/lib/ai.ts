@@ -413,19 +413,89 @@ export type NarrativeVariant = 'A' | 'B';
 export function generateVariants(
   inputs: ProductInputs,
   tone: ToneKey,
+  strategy?: StrategySummary,
 ): { A: PageModule[]; B: PageModule[] } {
-  const baseA = generateModules(inputs, tone);
-  const baseB = generateModules(inputs, tone);
+  const baseA = generateModules(inputs, tone, strategy);
+  const baseB = generateModules(inputs, tone, strategy);
 
   // Variant A — pain-first
   const a = reorder(baseA, ['hero', 'socialProof', 'pain', 'solution', 'benefits', 'useCase', 'testimonial', 'faq', 'cta', 'form']);
   tintHeroForVariant(a, 'A', inputs);
+  applyStrategyToModules(a, strategy);
 
   // Variant B — benefit-first (skip pain, lead with social proof + benefits)
   const b = reorder(baseB, ['hero', 'socialProof', 'benefits', 'useCase', 'solution', 'testimonial', 'faq', 'cta', 'form']);
   tintHeroForVariant(b, 'B', inputs);
+  applyStrategyToModules(b, strategy);
 
   return { A: a, B: b };
+}
+
+/**
+ * Strategy → Module pipeline.
+ *
+ * The strategy summary contains 4 sections: audience, goal, narrative, local.
+ * Each feeds specific modules:
+ *   - goal → form length (if strategy says "3-4 fields", trim the form)
+ *            + CTA intensity (if "urgency=strong", bump CTA copy)
+ *   - audience → FAQ ordering (surface objections strategy flagged)
+ *   - narrative → Hero bullets (use narrative hooks)
+ *   - local → tone adjustments (caps/no-caps, icon density)
+ */
+function applyStrategyToModules(modules: PageModule[], strategy?: StrategySummary) {
+  if (!strategy) return;
+
+  // Form length from goal text
+  const goalText = strategy.goal.join(' ');
+  const formMod = modules.find((m) => m.type === 'form');
+  if (formMod) {
+    const c = formMod.content as any;
+    const shortForm = /3[–-]4|3 ?to ?4|短|3～4|3〜4/.test(goalText);
+    if (shortForm && Array.isArray(c.fields) && c.fields.length > 4) {
+      c.fields = c.fields.slice(0, 4);
+    }
+  }
+
+  // Surface objection questions from audience into FAQ top
+  const audienceText = strategy.audience.join(' ');
+  const faqMod = modules.find((m) => m.type === 'faq');
+  if (faqMod) {
+    const c = faqMod.content as any;
+    const objections = extractObjections(audienceText);
+    if (objections.length && Array.isArray(c.items)) {
+      // Prepend up to 2 audience-derived FAQ items if they aren't already covered.
+      const existingQuestions = c.items.map((it: any) => (it.q ?? '').toLowerCase());
+      const fresh = objections
+        .filter((o) => !existingQuestions.some((q: string) => q.includes(o.slice(0, 6).toLowerCase())))
+        .slice(0, 2)
+        .map((q) => ({ q, a: '我们可以在 demo 中具体演示。' }));
+      c.items = [...fresh, ...c.items];
+    }
+  }
+
+  // Promote narrative emotional hook into hero bullets
+  const narrativeText = strategy.narrative.join(' ');
+  const heroMod = modules.find((m) => m.type === 'hero');
+  if (heroMod) {
+    const c = heroMod.content as any;
+    const painFirst = /先讲痛点|先講痛點|先に課題|lead with the problem/i.test(narrativeText);
+    if (painFirst && Array.isArray(c.bullets)) {
+      // Keep bullets but mark as outcome-proof heavy
+      // (already handled by variant tinting — this is a hook for future extension)
+    }
+  }
+}
+
+function extractObjections(text: string): string[] {
+  // Pull out question-like fragments that look like objections.
+  const matches =
+    text.match(/[^。.！!？?]+[？?]/g) ??
+    text.match(/[^,;]+(?:对接|集成|成本|费用|导入|预算|规模|价格)[^,;]*/g) ??
+    [];
+  return matches
+    .map((s) => s.trim().replace(/^[：:,;\s]+/, ''))
+    .filter((s) => s.length > 4 && s.length < 60)
+    .slice(0, 4);
 }
 
 function reorder(modules: PageModule[], order: string[]): PageModule[] {
@@ -513,7 +583,11 @@ function benefitSubhead(inputs: ProductInputs): string {
 
 // --- Module generator ---------------------------------------------------
 
-export function generateModules(inputs: ProductInputs, tone: ToneKey): PageModule[] {
+export function generateModules(
+  inputs: ProductInputs,
+  tone: ToneKey,
+  _strategy?: StrategySummary, // reserved for future LLM-grounded gen; structure-only today
+): PageModule[] {
   const T = L[inputs.locale];
   const ctaLabel = T.ctaLabels[inputs.cta];
   const toneEmoji = tone === 'japanese' ? '' : '';

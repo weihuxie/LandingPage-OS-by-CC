@@ -105,21 +105,83 @@ export default function Wizard({ locale }: Props) {
     set({ uploadedFileNames: [...inputs.uploadedFileNames, ...names] });
   };
 
-  const finish = async () => {
-    setLoading(true);
-    const res = await fetch('/api/projects', {
+  const [progress, setProgress] = useState<{
+    steps: Array<{ key: string; label: string; done: boolean }>;
+  } | null>(null);
+
+  // Scoped strategy regeneration (client helper — calls /api/strategy and picks one block/line)
+  const regenerateStrategyBlock = async (
+    block: 'audience' | 'goal' | 'narrative' | 'local',
+  ): Promise<string[] | null> => {
+    const res = await fetch('/api/strategy', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        inputs,
-        strategy,
-        referenceUrl: inputs.referenceUrls[0],
-        primary: brandProbe?.primary,
-      }),
+      body: JSON.stringify({ inputs }),
     });
+    if (!res.ok) return null;
     const data = await res.json();
-    setLoading(false);
-    if (data?.id) router.push(`/${locale}/projects/${data.id}`);
+    return data?.strategy?.[block] ?? null;
+  };
+
+  const regenerateStrategyLine = async (
+    block: 'audience' | 'goal' | 'narrative' | 'local',
+    index: number,
+  ): Promise<string | null> => {
+    const fresh = await regenerateStrategyBlock(block);
+    return fresh?.[index] ?? null;
+  };
+
+  const finish = async () => {
+    // Optimistic progress UI (Phase 3).
+    // We show a 4-step checklist, tick each step on a small timer while
+    // the real POST runs in parallel. Feels responsive even though the
+    // server-side generation is deterministic and near-instant.
+    const steps = [
+      { key: 'strategy', label: '整合策略输入', done: false },
+      { key: 'copy', label: '生成 Hero 与文案', done: false },
+      { key: 'variants', label: '产出 A/B 双方案', done: false },
+      { key: 'publish', label: '准备进入编辑器', done: false },
+    ];
+    setProgress({ steps });
+    setLoading(true);
+
+    // Tick ticker in background
+    const tickTimers: ReturnType<typeof setTimeout>[] = [];
+    steps.forEach((_, i) => {
+      tickTimers.push(
+        setTimeout(() => {
+          setProgress((p) => {
+            if (!p) return p;
+            const copy = p.steps.map((s, j) => (j === i ? { ...s, done: true } : s));
+            return { steps: copy };
+          });
+        }, 400 * (i + 1)),
+      );
+    });
+
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          inputs,
+          strategy,
+          referenceUrl: inputs.referenceUrls[0],
+          primary: brandProbe?.primary,
+        }),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = await res.json();
+      if (!data?.id) throw new Error('no-id');
+      // Make sure all ticks show complete before navigation
+      await new Promise((r) => setTimeout(r, 1700));
+      router.push(`/${locale}/projects/${data.id}`);
+    } catch (e: any) {
+      tickTimers.forEach(clearTimeout);
+      setLoading(false);
+      setProgress(null);
+      alert(`生成失败：${e?.message ?? 'unknown'}。请重试，或检查网络。`);
+    }
   };
 
   return (
@@ -389,33 +451,118 @@ export default function Wizard({ locale }: Props) {
               <h2 className="text-lg font-semibold">{t('wizard.step4.title')}</h2>
               <p className="text-sm text-ink-500">{t('wizard.step4.desc')}</p>
             </div>
-            {loading && <div className="text-sm text-ink-500">…</div>}
-            {strategy && (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <StrategyCard title={t('wizard.step4.audience')} lines={strategy.audience} />
-                <StrategyCard title={t('wizard.step4.goal')} lines={strategy.goal} />
-                <StrategyCard title={t('wizard.step4.narrative')} lines={strategy.narrative} />
-                <StrategyCard title={t('wizard.step4.local')} lines={strategy.local} />
+            {progress && (
+              <div className="rounded-xl border border-brand-200 bg-brand-50 p-4">
+                <div className="mb-2 text-sm font-medium text-brand-700">正在生成…</div>
+                <ul className="space-y-1.5 text-sm">
+                  {progress.steps.map((s) => (
+                    <li key={s.key} className="flex items-center gap-2">
+                      <span
+                        className={`grid h-4 w-4 place-items-center rounded-full text-[10px] ${
+                          s.done ? 'bg-brand-600 text-white' : 'border border-brand-300 bg-white text-brand-300'
+                        }`}
+                      >
+                        {s.done ? '✓' : '·'}
+                      </span>
+                      <span className={s.done ? 'text-ink-900' : 'text-ink-500'}>{s.label}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
-            <div>
-              <button
-                className="btn btn-secondary"
-                onClick={async () => {
-                  setLoading(true);
-                  const res = await fetch('/api/strategy', {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ inputs }),
-                  });
-                  const data = await res.json();
-                  setStrategy(data.strategy);
-                  setLoading(false);
-                }}
-              >
-                ↻ {t('wizard.step4.regenerate')}
-              </button>
-            </div>
+            {loading && !progress && <div className="text-sm text-ink-500">…</div>}
+            {strategy && !progress && (
+              <>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <StrategyCard
+                    title={t('wizard.step4.audience')}
+                    block="audience"
+                    lines={strategy.audience}
+                    onEditLine={(i, v) =>
+                      setStrategy({ ...strategy, audience: strategy.audience.map((l, j) => (j === i ? v : l)) })
+                    }
+                    onRegenLine={async (i) => {
+                      const fresh = await regenerateStrategyLine('audience', i);
+                      if (fresh) setStrategy({ ...strategy, audience: strategy.audience.map((l, j) => (j === i ? fresh : l)) });
+                    }}
+                    onRegenBlock={async () => {
+                      const fresh = await regenerateStrategyBlock('audience');
+                      if (fresh) setStrategy({ ...strategy, audience: fresh });
+                    }}
+                  />
+                  <StrategyCard
+                    title={t('wizard.step4.goal')}
+                    block="goal"
+                    lines={strategy.goal}
+                    onEditLine={(i, v) =>
+                      setStrategy({ ...strategy, goal: strategy.goal.map((l, j) => (j === i ? v : l)) })
+                    }
+                    onRegenLine={async (i) => {
+                      const fresh = await regenerateStrategyLine('goal', i);
+                      if (fresh) setStrategy({ ...strategy, goal: strategy.goal.map((l, j) => (j === i ? fresh : l)) });
+                    }}
+                    onRegenBlock={async () => {
+                      const fresh = await regenerateStrategyBlock('goal');
+                      if (fresh) setStrategy({ ...strategy, goal: fresh });
+                    }}
+                  />
+                  <StrategyCard
+                    title={t('wizard.step4.narrative')}
+                    block="narrative"
+                    lines={strategy.narrative}
+                    onEditLine={(i, v) =>
+                      setStrategy({ ...strategy, narrative: strategy.narrative.map((l, j) => (j === i ? v : l)) })
+                    }
+                    onRegenLine={async (i) => {
+                      const fresh = await regenerateStrategyLine('narrative', i);
+                      if (fresh) setStrategy({ ...strategy, narrative: strategy.narrative.map((l, j) => (j === i ? fresh : l)) });
+                    }}
+                    onRegenBlock={async () => {
+                      const fresh = await regenerateStrategyBlock('narrative');
+                      if (fresh) setStrategy({ ...strategy, narrative: fresh });
+                    }}
+                  />
+                  <StrategyCard
+                    title={t('wizard.step4.local')}
+                    block="local"
+                    lines={strategy.local}
+                    onEditLine={(i, v) =>
+                      setStrategy({ ...strategy, local: strategy.local.map((l, j) => (j === i ? v : l)) })
+                    }
+                    onRegenLine={async (i) => {
+                      const fresh = await regenerateStrategyLine('local', i);
+                      if (fresh) setStrategy({ ...strategy, local: strategy.local.map((l, j) => (j === i ? fresh : l)) });
+                    }}
+                    onRegenBlock={async () => {
+                      const fresh = await regenerateStrategyBlock('local');
+                      if (fresh) setStrategy({ ...strategy, local: fresh });
+                    }}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="btn btn-secondary"
+                    onClick={async () => {
+                      if (!confirm('重新生成整份策略会丢弃你所有的手改。继续？')) return;
+                      setLoading(true);
+                      const res = await fetch('/api/strategy', {
+                        method: 'POST',
+                        headers: { 'content-type': 'application/json' },
+                        body: JSON.stringify({ inputs }),
+                      });
+                      const data = await res.json();
+                      setStrategy(data.strategy);
+                      setLoading(false);
+                    }}
+                  >
+                    ↻ {t('wizard.step4.regenerate')}（全部）
+                  </button>
+                  <span className="text-xs text-ink-500">
+                    点击任一条可行内编辑；hover 出现单条 ↻ 重新生成
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -450,15 +597,81 @@ export default function Wizard({ locale }: Props) {
   );
 }
 
-function StrategyCard({ title, lines }: { title: string; lines: string[] }) {
+function StrategyCard({
+  title,
+  block,
+  lines,
+  onEditLine,
+  onRegenLine,
+  onRegenBlock,
+}: {
+  title: string;
+  block: 'audience' | 'goal' | 'narrative' | 'local';
+  lines: string[];
+  onEditLine: (index: number, value: string) => void;
+  onRegenLine: (index: number) => Promise<void> | void;
+  onRegenBlock: () => Promise<void> | void;
+}) {
+  const [editing, setEditing] = useState<number | null>(null);
+  const [regen, setRegen] = useState<number | 'block' | null>(null);
   return (
-    <div className="rounded-xl border border-ink-100 bg-ink-100/30 p-4">
-      <div className="text-xs font-medium uppercase tracking-wider text-ink-500">{title}</div>
+    <div className="group/block rounded-xl border border-ink-100 bg-ink-100/30 p-4">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium uppercase tracking-wider text-ink-500">{title}</div>
+        <button
+          className="rounded-md px-1.5 py-0.5 text-xs text-ink-500 opacity-0 hover:bg-brand-50 hover:text-brand-700 group-hover/block:opacity-100"
+          onClick={async () => {
+            setRegen('block');
+            try {
+              await onRegenBlock();
+            } finally {
+              setRegen(null);
+            }
+          }}
+          title="重新生成整块"
+        >
+          {regen === 'block' ? '…' : '↻ 整块'}
+        </button>
+      </div>
       <ul className="mt-2 space-y-1.5 text-sm text-ink-700">
         {lines.map((line, i) => (
-          <li key={i} className="flex gap-2">
-            <span className="mt-1.5 inline-block h-1 w-1 rounded-full bg-brand-500" />
-            <span>{line}</span>
+          <li key={i} className="group/line flex gap-2">
+            <span className="mt-1.5 inline-block h-1 w-1 flex-shrink-0 rounded-full bg-brand-500" />
+            {editing === i ? (
+              <textarea
+                autoFocus
+                className="input flex-1 !py-1 text-sm"
+                value={line}
+                rows={Math.max(1, Math.ceil(line.length / 30))}
+                onChange={(e) => onEditLine(i, e.target.value)}
+                onBlur={() => setEditing(null)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setEditing(null);
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) setEditing(null);
+                }}
+              />
+            ) : (
+              <span
+                className="flex-1 cursor-text rounded px-1 hover:bg-white"
+                onClick={() => setEditing(i)}
+              >
+                {line}
+              </span>
+            )}
+            <button
+              className="self-start rounded px-1 text-xs text-ink-300 opacity-0 hover:text-brand-700 group-hover/line:opacity-100"
+              title="重新生成这一条"
+              onClick={async () => {
+                setRegen(i);
+                try {
+                  await onRegenLine(i);
+                } finally {
+                  setRegen(null);
+                }
+              }}
+            >
+              {regen === i ? '…' : '↻'}
+            </button>
           </li>
         ))}
       </ul>
