@@ -67,7 +67,7 @@ export default function Wizard({ locale }: Props) {
       const res = await fetch('/api/strategy', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ inputs }),
+        body: JSON.stringify({ inputs, fileContexts }),
       });
       const data = await res.json();
       setStrategy(data.strategy);
@@ -101,10 +101,34 @@ export default function Wizard({ locale }: Props) {
     }
   };
 
-  const onFiles = (files: FileList | null) => {
+  const [fileContexts, setFileContexts] = useState<any[]>([]);
+  const [fileExtracting, setFileExtracting] = useState(0);
+
+  const onFiles = async (files: FileList | null) => {
     if (!files) return;
-    const names = Array.from(files).map((f) => f.name);
+    const arr = Array.from(files);
+    const names = arr.map((f) => f.name);
     set({ uploadedFileNames: [...inputs.uploadedFileNames, ...names] });
+
+    // Upload each file for extraction; accumulate contexts
+    setFileExtracting((n) => n + arr.length);
+    const extracted: any[] = [];
+    for (const file of arr) {
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch('/api/extract-file', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data?.context) {
+          extracted.push({ ...data.context, __fileName: file.name });
+        }
+      } catch {
+        // swallow — user sees file listed but no facts contributed
+      } finally {
+        setFileExtracting((n) => n - 1);
+      }
+    }
+    setFileContexts((prev) => [...prev, ...extracted]);
   };
 
   const [progress, setProgress] = useState<{
@@ -134,6 +158,10 @@ export default function Wizard({ locale }: Props) {
   };
 
   const finish = async () => {
+    // Include the file contexts alongside paste/URL when finalizing — the
+    // server merges everything and grounds both strategy and modules.
+    // (Currently server-side re-extracts paste+URL; file contexts are passed
+    // from client because they were already extracted via /api/extract-file.)
     // Optimistic progress UI (Phase 3).
     // We show a 4-step checklist, tick each step on a small timer while
     // the real POST runs in parallel. Feels responsive even though the
@@ -170,6 +198,7 @@ export default function Wizard({ locale }: Props) {
           strategy,
           referenceUrl: inputs.referenceUrls[0],
           primary: brandProbe?.primary,
+          fileContexts, // file-extracted facts to ground generation
         }),
       });
       if (!res.ok) throw new Error(`${res.status}`);
@@ -434,13 +463,34 @@ export default function Wizard({ locale }: Props) {
                 </label>
                 <span className="ml-1 text-ink-500">— {t('wizard.step3.fileHint')}</span>
               </div>
-              {inputs.uploadedFileNames.length > 0 && (
+              {(fileExtracting > 0 || inputs.uploadedFileNames.length > 0) && (
                 <ul className="mt-2 flex flex-wrap gap-1.5">
-                  {inputs.uploadedFileNames.map((n, i) => (
-                    <li key={i} className="pill">
-                      📎 {n}
+                  {inputs.uploadedFileNames.map((n, i) => {
+                    const ctx = fileContexts.find((c) => c.__fileName === n);
+                    const facts = ctx
+                      ? (ctx.namedCustomers?.length ?? 0) +
+                        (ctx.metrics?.length ?? 0) +
+                        (ctx.features?.length ?? 0) +
+                        (ctx.pains?.length ?? 0)
+                      : 0;
+                    return (
+                      <li
+                        key={i}
+                        className={`pill ${ctx ? 'border-brand-200 bg-brand-50 text-brand-700' : ''}`}
+                        title={ctx ? `读到 ${facts} 条事实,共 ${ctx.textLength} 字` : '解析中或未识别'}
+                      >
+                        📎 {n}
+                        {ctx && facts > 0 && (
+                          <span className="ml-1 text-[10px]">· {facts} 条事实</span>
+                        )}
+                      </li>
+                    );
+                  })}
+                  {fileExtracting > 0 && (
+                    <li className="pill text-ink-500">
+                      ⏳ 解析中 ({fileExtracting})
                     </li>
-                  ))}
+                  )}
                 </ul>
               )}
             </div>

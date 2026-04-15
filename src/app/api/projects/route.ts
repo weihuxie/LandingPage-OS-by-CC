@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
     tone?: ToneKey;
     referenceUrl?: string;
     primary?: string;
+    fileContexts?: any[];
   };
   if (!body?.inputs?.name) {
     return NextResponse.json({ error: 'inputs.name required' }, { status: 400 });
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest) {
   const tone: ToneKey =
     body.tone ?? (body.inputs.market === 'JP' ? 'japanese' : 'saas');
 
-  // Build extracted context from paste + URLs to ground strategy & modules
+  // Build extracted context from paste + URLs + already-extracted file contexts
   const ctxs = [] as any[];
   if (body.inputs.pastedContent?.trim()) {
     ctxs.push(extractFromText(body.inputs.pastedContent, 'paste'));
@@ -61,6 +62,11 @@ export async function POST(req: NextRequest) {
         const siteText = await extractSiteContent(url);
         if (siteText) ctxs.push(extractFromText(siteText, 'url'));
       } catch {}
+    }
+  }
+  if (Array.isArray(body.fileContexts)) {
+    for (const c of body.fileContexts) {
+      if (c && typeof c === 'object' && Array.isArray(c.sourceKinds)) ctxs.push(c);
     }
   }
   const context = ctxs.length ? mergeContexts(ctxs) : undefined;

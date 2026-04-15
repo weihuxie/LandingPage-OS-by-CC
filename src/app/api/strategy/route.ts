@@ -12,22 +12,24 @@ export const dynamic = 'force-dynamic';
  * the strategy so it feels like it actually read your materials.
  */
 export async function POST(req: NextRequest) {
-  const { inputs } = await req.json();
+  const { inputs, fileContexts } = await req.json();
   if (!inputs) return NextResponse.json({ error: 'inputs required' }, { status: 400 });
 
-  const contexts = [];
+  const contexts: any[] = [];
   if (inputs.pastedContent?.trim()) {
     contexts.push(extractFromText(inputs.pastedContent, 'paste'));
   }
   if (Array.isArray(inputs.referenceUrls)) {
     for (const url of inputs.referenceUrls.slice(0, 3)) {
-      // cap at 3 URLs to keep request bounded
       try {
         const siteText = await extractSiteContent(url);
         if (siteText) contexts.push(extractFromText(siteText, 'url'));
-      } catch {
-        // best-effort — don't fail strategy generation if a site is unreachable
-      }
+      } catch {}
+    }
+  }
+  if (Array.isArray(fileContexts)) {
+    for (const c of fileContexts) {
+      if (c && typeof c === 'object' && Array.isArray(c.sourceKinds)) contexts.push(c);
     }
   }
   const merged = contexts.length ? mergeContexts(contexts) : undefined;
