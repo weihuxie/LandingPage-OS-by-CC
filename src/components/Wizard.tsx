@@ -42,6 +42,7 @@ export default function Wizard({ locale }: Props) {
   const [inputs, setInputs] = useState<ProductInputs>(defaultInputs(locale));
   const [refUrl, setRefUrl] = useState('');
   const [strategy, setStrategy] = useState<StrategySummary | null>(null);
+  const [extractedContext, setExtractedContext] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [brandProbe, setBrandProbe] = useState<{
     primary?: string;
@@ -70,6 +71,7 @@ export default function Wizard({ locale }: Props) {
       });
       const data = await res.json();
       setStrategy(data.strategy);
+      setExtractedContext(data.context ?? null);
       setLoading(false);
     }
     setStep((s) => Math.min(totalSteps - 1, s + 1));
@@ -451,6 +453,44 @@ export default function Wizard({ locale }: Props) {
               <h2 className="text-lg font-semibold">{t('wizard.step4.title')}</h2>
               <p className="text-sm text-ink-500">{t('wizard.step4.desc')}</p>
             </div>
+            {extractedContext && extractedContext.textLength > 0 && (
+              <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-4">
+                <div className="mb-2 flex items-center gap-2 text-xs font-medium text-brand-700">
+                  <span>📎 AI 从你的素材里读到了：</span>
+                  <span className="text-ink-500">
+                    共 {extractedContext.textLength} 字 · 来源{' '}
+                    {extractedContext.sourceKinds.join(' + ')}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                  {extractedContext.namedCustomers?.length > 0 && (
+                    <FactsRow
+                      label="客户名"
+                      items={extractedContext.namedCustomers}
+                    />
+                  )}
+                  {extractedContext.metrics?.length > 0 && (
+                    <FactsRow label="量化数字" items={extractedContext.metrics} />
+                  )}
+                  {extractedContext.features?.length > 0 && (
+                    <FactsRow label="功能点" items={extractedContext.features} />
+                  )}
+                  {extractedContext.personas?.length > 0 && (
+                    <FactsRow label="角色" items={extractedContext.personas} />
+                  )}
+                  {extractedContext.pains?.length > 0 && (
+                    <FactsRow
+                      label="痛点原话"
+                      items={extractedContext.pains.slice(0, 2)}
+                    />
+                  )}
+                </div>
+                <div className="mt-2 text-[11px] text-ink-500">
+                  下面的策略已用这些事实做了 grounding — 「客户名」
+                  会替换 Logo 墙，「量化数字」会进统计区，「痛点原话」会直接出现在痛点模块。
+                </div>
+              </div>
+            )}
             {progress && (
               <div className="rounded-xl border border-brand-200 bg-brand-50 p-4">
                 <div className="mb-2 text-sm font-medium text-brand-700">正在生成…</div>
@@ -592,6 +632,27 @@ export default function Wizard({ locale }: Props) {
             {t('wizard.finish')} ✦
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+function FactsRow({ label, items }: { label: string; items: string[] }) {
+  return (
+    <div>
+      <div className="text-[10px] font-medium uppercase tracking-wider text-ink-500">
+        {label}
+      </div>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {items.slice(0, 6).map((it, i) => (
+          <span
+            key={i}
+            className="rounded-md border border-brand-200 bg-white px-1.5 py-0.5 text-[11px] text-ink-700"
+            title={it}
+          >
+            {it.length > 40 ? it.slice(0, 40) + '…' : it}
+          </span>
+        ))}
       </div>
     </div>
   );

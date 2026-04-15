@@ -157,3 +157,56 @@ function absolutize(href: string, base: string): string {
     return href;
   }
 }
+
+/**
+ * Fetch a site and return a cleaned text blob for fact extraction.
+ * Strips script / style / nav / footer. Not a full reader-mode impl but
+ * enough to pipe into extractFromText().
+ */
+export async function extractSiteContent(url: string): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const normalized = url.startsWith('http') ? url : `https://${url}`;
+    const res = await fetch(normalized, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        'user-agent': 'Mozilla/5.0 (compatible; LandingPageOS/1.0)',
+        accept: 'text/html,*/*',
+      },
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const html = await res.text();
+    // Rip out the heavy-fat elements
+    const stripped = html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+      .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
+      .replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
+      .replace(/<svg[\s\S]*?<\/svg>/gi, ' ');
+    // Pull meta og:description + title for quick grounding
+    const titleMatch = stripped.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const ogDesc = stripped.match(
+      /<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i,
+    );
+    const metaDesc = stripped.match(
+      /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i,
+    );
+    // Strip remaining tags, collapse whitespace
+    const bodyText = stripped.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ');
+    const chunks = [
+      titleMatch?.[1]?.trim() ?? '',
+      ogDesc?.[1]?.trim() ?? '',
+      metaDesc?.[1]?.trim() ?? '',
+      bodyText.replace(/\s+/g, ' ').trim().slice(0, 8000), // cap at 8KB of text
+    ];
+    const out = chunks.filter(Boolean).join('\n\n');
+    return out.length >= 40 ? out : null;
+  } catch {
+    clearTimeout(timer);
+    return null;
+  }
+}

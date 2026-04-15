@@ -15,6 +15,8 @@ import {
   ensureMigrated,
 } from '@/lib/storage';
 import { generateStrategy, generateVariants } from '@/lib/ai';
+import { extractFromText, mergeContexts } from '@/lib/extract';
+import { extractSiteContent } from '@/lib/brand';
 import { defaultStyleForMarket } from '@/lib/styles';
 import { makeSlug } from '@/lib/slug';
 import type {
@@ -47,8 +49,24 @@ export async function POST(req: NextRequest) {
   }
   const tone: ToneKey =
     body.tone ?? (body.inputs.market === 'JP' ? 'japanese' : 'saas');
-  const strategy = body.strategy ?? generateStrategy(body.inputs);
-  const variants = generateVariants(body.inputs, tone, strategy);
+
+  // Build extracted context from paste + URLs to ground strategy & modules
+  const ctxs = [] as any[];
+  if (body.inputs.pastedContent?.trim()) {
+    ctxs.push(extractFromText(body.inputs.pastedContent, 'paste'));
+  }
+  if (Array.isArray(body.inputs.referenceUrls)) {
+    for (const url of body.inputs.referenceUrls.slice(0, 3)) {
+      try {
+        const siteText = await extractSiteContent(url);
+        if (siteText) ctxs.push(extractFromText(siteText, 'url'));
+      } catch {}
+    }
+  }
+  const context = ctxs.length ? mergeContexts(ctxs) : undefined;
+
+  const strategy = body.strategy ?? generateStrategy(body.inputs, context);
+  const variants = generateVariants(body.inputs, tone, strategy, context);
   const now = Date.now();
 
   // Find-or-create Product by name (simple MVP dedupe)

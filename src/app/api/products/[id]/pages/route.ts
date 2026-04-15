@@ -7,6 +7,8 @@ import {
   readLandingPages,
 } from '@/lib/storage';
 import { generateStrategy, generateVariants } from '@/lib/ai';
+import { extractFromText, mergeContexts } from '@/lib/extract';
+import { extractSiteContent } from '@/lib/brand';
 import { defaultStyleForMarket } from '@/lib/styles';
 import { makeSlug } from '@/lib/slug';
 import type {
@@ -70,8 +72,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     uploadedFileNames: [],
   };
 
-  const strategy = generateStrategy(inputs);
-  const variants = generateVariants(inputs, tone, strategy);
+  // Ground strategy on website content if available
+  let context;
+  if (product.website) {
+    try {
+      const siteText = await extractSiteContent(product.website);
+      if (siteText) context = mergeContexts([extractFromText(siteText, 'url')]);
+    } catch {}
+  }
+
+  const strategy = generateStrategy(inputs, context);
+  const variants = generateVariants(inputs, tone, strategy, context);
 
   const name = body.name ?? '主站';
   const slug = makeSlug(`${product.name} ${name}`);

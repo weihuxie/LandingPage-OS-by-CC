@@ -8,6 +8,7 @@ import type {
   ToneKey,
 } from './types';
 import { nanoid } from 'nanoid';
+import type { ExtractedContext } from './extract';
 
 // --- Localized snippets --------------------------------------------------
 
@@ -287,7 +288,10 @@ const marketStrategyText = (market: MarketCode, locale: LocaleCode): string[] =>
 
 // --- Strategy generator -------------------------------------------------
 
-export function generateStrategy(inputs: ProductInputs): StrategySummary {
+export function generateStrategy(
+  inputs: ProductInputs,
+  context?: ExtractedContext,
+): StrategySummary {
   const locale = inputs.locale;
   const T = L[locale];
   const cta = T.ctaLabels[inputs.cta];
@@ -385,12 +389,64 @@ export function generateStrategy(inputs: ProductInputs): StrategySummary {
     ],
   };
 
-  return {
+  const strategy: StrategySummary = {
     audience: audienceByLocale[locale],
     goal: goalByLocale[locale],
     narrative: narrativeByLocale[locale],
     local: marketStrategyText(inputs.market, locale),
   };
+
+  // Ground the strategy with extracted facts (customer names / metrics / pains).
+  // This is what fixes the "AI 策略完全没吸收上传资料" complaint.
+  if (context && context.textLength > 0) {
+    if (context.namedCustomers.length) {
+      strategy.audience.unshift(
+        locale === 'en'
+          ? `Named customers to reference: ${context.namedCustomers.slice(0, 5).join(', ')}`
+          : locale === 'ja'
+            ? `既知の顧客名:${context.namedCustomers.slice(0, 5).join('・')}`
+            : `已知客户：${context.namedCustomers.slice(0, 5).join('、')}`,
+      );
+    }
+    if (context.metrics.length) {
+      strategy.narrative.unshift(
+        locale === 'en'
+          ? `Lead with real numbers from your content: ${context.metrics.slice(0, 3).join(' · ')}`
+          : locale === 'ja'
+            ? `素材から抽出した実数値を前面に:${context.metrics.slice(0, 3).join(' · ')}`
+            : `用素材中的真实数字做主证据：${context.metrics.slice(0, 3).join(' · ')}`,
+      );
+    }
+    if (context.pains.length) {
+      strategy.narrative.push(
+        locale === 'en'
+          ? `Pain phrases surfaced in inputs — reuse them verbatim: "${context.pains[0].slice(0, 80)}"`
+          : locale === 'ja'
+            ? `入力から拾った痛点表現をそのまま使う:"${context.pains[0].slice(0, 60)}"`
+            : `从素材里抓到的痛点原话，建议直接用："${context.pains[0].slice(0, 60)}"`,
+      );
+    }
+    if (context.features.length) {
+      strategy.goal.push(
+        locale === 'en'
+          ? `Anchor benefits to the top features you mentioned: ${context.features.slice(0, 3).join(' · ')}`
+          : locale === 'ja'
+            ? `ベネフィットの軸は素材の主要機能に揃える:${context.features.slice(0, 3).join(' · ')}`
+            : `收益文案围绕素材里的重点功能：${context.features.slice(0, 3).join(' · ')}`,
+      );
+    }
+    if (context.personas.length) {
+      strategy.audience.push(
+        locale === 'en'
+          ? `Personas surfaced in content: ${context.personas.slice(0, 3).join(' · ')}`
+          : locale === 'ja'
+            ? `素材に登場したペルソナ:${context.personas.slice(0, 3).join('・')}`
+            : `素材里出现的角色：${context.personas.slice(0, 3).join('、')}`,
+      );
+    }
+  }
+
+  return strategy;
 }
 
 // --- Dual narrative module generator (PRD §4.3) -----------------------
@@ -414,21 +470,85 @@ export function generateVariants(
   inputs: ProductInputs,
   tone: ToneKey,
   strategy?: StrategySummary,
+  context?: ExtractedContext,
 ): { A: PageModule[]; B: PageModule[] } {
-  const baseA = generateModules(inputs, tone, strategy);
-  const baseB = generateModules(inputs, tone, strategy);
+  const baseA = generateModules(inputs, tone, strategy, context);
+  const baseB = generateModules(inputs, tone, strategy, context);
 
   // Variant A — pain-first
   const a = reorder(baseA, ['hero', 'socialProof', 'pain', 'solution', 'benefits', 'useCase', 'testimonial', 'faq', 'cta', 'form']);
   tintHeroForVariant(a, 'A', inputs);
   applyStrategyToModules(a, strategy);
+  applyContextToModules(a, context);
 
   // Variant B — benefit-first (skip pain, lead with social proof + benefits)
   const b = reorder(baseB, ['hero', 'socialProof', 'benefits', 'useCase', 'solution', 'testimonial', 'faq', 'cta', 'form']);
   tintHeroForVariant(b, 'B', inputs);
   applyStrategyToModules(b, strategy);
+  applyContextToModules(b, context);
 
   return { A: a, B: b };
+}
+
+/**
+ * Inject extracted facts into module content: replace placeholder logos with
+ * real named customers, replace placeholder metrics with real numbers, replace
+ * hero bullets with feature phrases extracted from the user's materials.
+ */
+function applyContextToModules(modules: PageModule[], context?: ExtractedContext) {
+  if (!context) return;
+
+  // Social proof logos → named customers if we have 3+
+  if (context.namedCustomers.length >= 3) {
+    const sp = modules.find((m) => m.type === 'socialProof');
+    if (sp) {
+      const c = sp.content as any;
+      c.logos = context.namedCustomers.slice(0, 6);
+    }
+  }
+
+  // Stats → real metrics parsed from text
+  if (context.metrics.length >= 2) {
+    const sp = modules.find((m) => m.type === 'socialProof');
+    if (sp) {
+      const c = sp.content as any;
+      const stats = context.metrics.slice(0, 3).map((m) => ({
+        label: inferLabelFromMetric(m),
+        value: m,
+      }));
+      c.stats = stats;
+    }
+  }
+
+  // Hero bullets → feature phrases from source material
+  if (context.features.length >= 2) {
+    const hero = modules.find((m) => m.type === 'hero');
+    if (hero) {
+      const c = hero.content as any;
+      c.bullets = context.features.slice(0, 3);
+    }
+  }
+
+  // Pain module → real pain phrases from user content
+  if (context.pains.length >= 2) {
+    const pain = modules.find((m) => m.type === 'pain');
+    if (pain) {
+      const c = pain.content as any;
+      c.items = context.pains.slice(0, 3).map((p) => ({
+        title: (p.match(/^[^,。，.]+/) ?? [p])[0].slice(0, 30),
+        body: p.slice(0, 160),
+      }));
+    }
+  }
+}
+
+function inferLabelFromMetric(metric: string): string {
+  if (/ROI|倍/i.test(metric)) return 'ROI';
+  if (/hour|hr|时|小时|時間/i.test(metric)) return '每周节省';
+  if (/%/i.test(metric)) return '提升';
+  if (/team|customers|用户|团队/i.test(metric)) return '客户';
+  if (/\$|¥/i.test(metric)) return '节省';
+  return '';
 }
 
 /**
@@ -587,6 +707,7 @@ export function generateModules(
   inputs: ProductInputs,
   tone: ToneKey,
   _strategy?: StrategySummary, // reserved for future LLM-grounded gen; structure-only today
+  _context?: ExtractedContext, // reserved: customer names / metrics pulled from uploads
 ): PageModule[] {
   const T = L[inputs.locale];
   const ctaLabel = T.ctaLabels[inputs.cta];
