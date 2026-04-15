@@ -2,7 +2,14 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import type { Project, Lead, AssetLibrary } from './types';
 
-const DATA_DIR = path.join(process.cwd(), '.data');
+// On Vercel (and most serverless runtimes), only /tmp is writable.
+// Locally, use the project-relative .data/ dir (gitignored).
+// NOTE: /tmp is per-invocation on Vercel — data does NOT persist across cold
+// starts. This is a stopgap to let e2e flows run. Swap to Vercel KV or
+// Supabase for production persistence.
+const DATA_DIR =
+  process.env.DATA_DIR ??
+  (process.env.VERCEL === '1' ? '/tmp/.data' : path.join(process.cwd(), '.data'));
 const PROJECTS_FILE = path.join(DATA_DIR, 'projects.json');
 const LEADS_FILE = path.join(DATA_DIR, 'leads.json');
 const ASSETS_FILE = path.join(DATA_DIR, 'assets.json');
