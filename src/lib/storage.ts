@@ -50,8 +50,10 @@ async function writeRaw<T>(key: string, value: T): Promise<void> {
 
 // --- FS adapter --------------------------------------------------------
 
+// Priority: explicit DATA_DIR → /tmp on Vercel (writable, ephemeral) → project-relative .data/
 const DATA_DIR =
-  process.env.DATA_DIR ?? path.join(process.cwd(), '.data');
+  process.env.DATA_DIR ??
+  (process.env.VERCEL === '1' ? '/tmp/.data' : path.join(process.cwd(), '.data'));
 
 function fsPath(key: string): string {
   return path.join(DATA_DIR, key.replace(/^lp:/, '') + '.json');
