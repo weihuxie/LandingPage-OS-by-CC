@@ -230,71 +230,150 @@ export function storageBackend(): 'kv' | 'fs' {
   return useKV() ? 'kv' : 'fs';
 }
 
-// --- v2: Product / LandingPage / Brand -------------------------------
+// --- v2: Per-entity KV keys (race-safe) ------------------------------
+//
+// ARCHITECTURE FIX: Previously all pages were in ONE array at one KV key.
+// Concurrent read-modify-write (two POSTs at nearly the same time) caused
+// data loss: both read [A,B,C], one appends D, the other appends E,
+// last writer wins → one page permanently lost.
+//
+// Now: each Product/LandingPage gets its own KV key.
+// Index keys (sets of IDs) use Redis SADD/SMEMBERS for atomic add/remove.
+// FS fallback uses the old array approach (acceptable for local dev).
+
+const PAGE_KEY_PREFIX = 'lp:v2:page:';
+const PAGE_INDEX_KEY = 'lp:v2:page-ids';
+const PRODUCT_KEY_PREFIX = 'lp:v2:product:';
+const PRODUCT_INDEX_KEY = 'lp:v2:product-ids';
+const SLUG_MAP_KEY_PREFIX = 'lp:v2:slug:';
+
+// --- Products ----------------------------------------------------------
 
 export async function readProducts(): Promise<Product[]> {
-  const list = (await readRaw<Product[]>(KEY_PRODUCTS, [])) ?? [];
-  return list;
+  if (useKV()) {
+    const ids = await kv.smembers(PRODUCT_INDEX_KEY) as string[];
+    if (!ids || ids.length === 0) return [];
+    const pipeline = kv.pipeline();
+    for (const id of ids) pipeline.get(PRODUCT_KEY_PREFIX + id);
+    const results = await pipeline.exec();
+    return (results ?? []).filter((r): r is Product => !!r);
+  }
+  return (await readFs<Product[]>(KEY_PRODUCTS, []));
 }
 
 export async function writeProducts(list: Product[]): Promise<void> {
-  await writeRaw(KEY_PRODUCTS, list);
+  // FS only (legacy compat)
+  await writeFs(KEY_PRODUCTS, list);
 }
 
 export async function getProduct(id: string): Promise<Product | null> {
-  const list = await readProducts();
+  if (useKV()) {
+    return (await kv.get<Product>(PRODUCT_KEY_PREFIX + id)) ?? null;
+  }
+  const list = await readFs<Product[]>(KEY_PRODUCTS, []);
   return list.find((p) => p.id === id) ?? null;
 }
 
 export async function saveProduct(product: Product): Promise<Product> {
-  const list = await readProducts();
-  const idx = list.findIndex((p) => p.id === product.id);
   product.updatedAt = Date.now();
+  if (useKV()) {
+    await kv.set(PRODUCT_KEY_PREFIX + product.id, product);
+    await kv.sadd(PRODUCT_INDEX_KEY, product.id);
+    return product;
+  }
+  const list = await readFs<Product[]>(KEY_PRODUCTS, []);
+  const idx = list.findIndex((p) => p.id === product.id);
   if (idx === -1) list.unshift(product);
   else list[idx] = product;
-  await writeProducts(list);
+  await writeFs(KEY_PRODUCTS, list);
   return product;
 }
 
 export async function deleteProductAndPages(id: string): Promise<void> {
-  const products = await readProducts();
-  const pages = await readLandingPages();
-  await writeProducts(products.filter((p) => p.id !== id));
-  await writeLandingPages(pages.filter((pg) => pg.productId !== id));
+  const pages = await readLandingPages(id);
+  for (const pg of pages) await deleteLandingPage(pg.id);
+  if (useKV()) {
+    await kv.del(PRODUCT_KEY_PREFIX + id);
+    await kv.srem(PRODUCT_INDEX_KEY, id);
+  } else {
+    const list = await readFs<Product[]>(KEY_PRODUCTS, []);
+    await writeFs(KEY_PRODUCTS, list.filter((p) => p.id !== id));
+  }
 }
 
+// --- Landing Pages -----------------------------------------------------
+
 export async function readLandingPages(productId?: string): Promise<LandingPage[]> {
-  const list = (await readRaw<LandingPage[]>(KEY_PAGES, [])) ?? [];
+  if (useKV()) {
+    const ids = await kv.smembers(PAGE_INDEX_KEY) as string[];
+    if (!ids || ids.length === 0) return [];
+    const pipeline = kv.pipeline();
+    for (const id of ids) pipeline.get(PAGE_KEY_PREFIX + id);
+    const results = await pipeline.exec();
+    const all = (results ?? []).filter((r): r is LandingPage => !!r);
+    return productId ? all.filter((p) => p.productId === productId) : all;
+  }
+  const list = (await readFs<LandingPage[]>(KEY_PAGES, [])) ?? [];
   return productId ? list.filter((p) => p.productId === productId) : list;
 }
 
 export async function writeLandingPages(list: LandingPage[]): Promise<void> {
-  await writeRaw(KEY_PAGES, list);
+  // FS only (for migration compat). KV uses per-key writes.
+  await writeFs(KEY_PAGES, list);
 }
 
 export async function getLandingPage(id: string): Promise<LandingPage | null> {
-  const list = await readLandingPages();
+  if (useKV()) {
+    return (await kv.get<LandingPage>(PAGE_KEY_PREFIX + id)) ?? null;
+  }
+  const list = await readFs<LandingPage[]>(KEY_PAGES, []);
   return list.find((p) => p.id === id) ?? null;
 }
 
 export async function getLandingPageBySlug(slug: string): Promise<LandingPage | null> {
-  const list = await readLandingPages();
+  if (useKV()) {
+    // Check slug→id map
+    const id = await kv.get<string>(SLUG_MAP_KEY_PREFIX + slug);
+    if (id) return getLandingPage(id);
+    // Fallback: scan all (slower, but catches unmapped slugs)
+    const all = await readLandingPages();
+    return all.find((p) => p.slug === slug) ?? null;
+  }
+  const list = await readFs<LandingPage[]>(KEY_PAGES, []);
   return list.find((p) => p.slug === slug) ?? null;
 }
 
 export async function saveLandingPage(page: LandingPage): Promise<LandingPage> {
-  const list = await readLandingPages();
-  const idx = list.findIndex((p) => p.id === page.id);
   page.updatedAt = Date.now();
+  if (useKV()) {
+    // Atomic: write page + add to index + update slug map
+    await Promise.all([
+      kv.set(PAGE_KEY_PREFIX + page.id, page),
+      kv.sadd(PAGE_INDEX_KEY, page.id),
+      kv.set(SLUG_MAP_KEY_PREFIX + page.slug, page.id),
+    ]);
+    return page;
+  }
+  const list = await readFs<LandingPage[]>(KEY_PAGES, []);
+  const idx = list.findIndex((p) => p.id === page.id);
   if (idx === -1) list.unshift(page);
   else list[idx] = page;
-  await writeLandingPages(list);
+  await writeFs(KEY_PAGES, list);
   return page;
 }
 
 export async function deleteLandingPage(id: string): Promise<void> {
-  const pages = await readLandingPages();
-  await writeLandingPages(pages.filter((p) => p.id !== id));
+  if (useKV()) {
+    const page = await getLandingPage(id);
+    await Promise.all([
+      kv.del(PAGE_KEY_PREFIX + id),
+      kv.srem(PAGE_INDEX_KEY, id),
+      page ? kv.del(SLUG_MAP_KEY_PREFIX + page.slug) : Promise.resolve(),
+    ]);
+    return;
+  }
+  const list = await readFs<LandingPage[]>(KEY_PAGES, []);
+  await writeFs(KEY_PAGES, list.filter((p) => p.id !== id));
 }
 
 const DEFAULT_BRAND: Brand = {
