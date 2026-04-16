@@ -155,10 +155,16 @@ export async function POST(req: NextRequest) {
     debug.pageSaved = true;
 
     // Verify: immediately read back
-    const { getLandingPage: glp } = await import('@/lib/storage');
+    const { getLandingPage: glp, readLandingPages: rlp } = await import('@/lib/storage');
     const readback = await glp(page.id);
     debug.readbackFound = !!readback;
     debug.readbackId = readback?.id;
+    const allAfter = await rlp();
+    debug.totalPagesAfterWrite = allAfter.length;
+
+    // Compare KV URL hash (truncated for security) to detect multi-DB issue
+    const kvUrl = process.env['KV_REST_API_URL'] ?? '';
+    debug.kvUrlHash = kvUrl ? kvUrl.slice(-12) : 'NOT_SET';
   } catch (e: any) {
     debug.error = { message: e?.message, stack: e?.stack?.slice(0, 300) };
   }

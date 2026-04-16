@@ -17,7 +17,9 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
   try {
     result.steps.backend = storageBackend();
     result.steps.kvUrlDot = process.env.KV_REST_API_URL ? 'set' : 'NOT_SET';
-    result.steps.kvUrlBracket = process.env['KV_REST_API_URL'] ? 'set' : 'NOT_SET';
+    const kvUrl = process.env['KV_REST_API_URL'] ?? '';
+    result.steps.kvUrlBracket = kvUrl ? 'set' : 'NOT_SET';
+    result.steps.kvUrlHash = kvUrl ? kvUrl.slice(-12) : 'NOT_SET';
     result.steps.kvTokenDot = process.env.KV_REST_API_TOKEN ? 'set' : 'NOT_SET';
     result.steps.kvTokenBracket = process.env['KV_REST_API_TOKEN'] ? 'set' : 'NOT_SET';
     result.steps.vercelDot = process.env.VERCEL;
