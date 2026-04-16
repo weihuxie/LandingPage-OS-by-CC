@@ -12,7 +12,6 @@ import {
   readProducts,
   saveProduct,
   saveLandingPage,
-  ensureMigrated,
 } from '@/lib/storage';
 import { generateStrategy, generateVariants } from '@/lib/ai';
 import { extractFromText, mergeContexts } from '@/lib/extract';
@@ -36,7 +35,6 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  await ensureMigrated();
   const body = (await req.json()) as {
     inputs: ProductInputs;
     strategy?: StrategySummary;

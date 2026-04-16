@@ -303,14 +303,28 @@ export async function writeBrand(brand: Brand): Promise<void> {
   await writeRaw(KEY_BRAND, brand);
 }
 
-// --- v1 -> v2 lazy migration on read ----------------------------------
+// --- v1 -> v2 migration (RUN-ONCE) -----------------------------------
+
+const KEY_MIGRATION_DONE = 'lp:v2:migration-done';
 
 /**
- * Ensure any legacy Project records have been split into Product+LandingPage.
- * Idempotent: if all legacy projects have a corresponding v2 page, no-op.
- * Run on-demand when a v2 read happens and no records are found.
+ * Migrate legacy Project records into Product+LandingPage.
+ *
+ * CRITICAL SAFETY: This function previously ran lazily on every read.
+ * That caused a catastrophic data loss bug: during Vercel deploys, KV reads
+ * sometimes returned empty (timeout/cold start), migration thought "no v2
+ * data exists", re-created 3 old migrated pages, and OVERWROTE the 7 real
+ * pages the user had created. 4 pages permanently lost.
+ *
+ * Now: runs ONLY when explicitly called (e.g. a one-time admin action),
+ * and sets a flag so it never runs again. Also refuses to write if it
+ * would reduce the total number of records.
  */
 async function ensureV2MigrationRun(): Promise<void> {
+  // Check done flag — once set, never run again
+  const done = await readRaw<boolean>(KEY_MIGRATION_DONE, false);
+  if (done) return;
+
   const [products, pages, legacy] = await Promise.all([
     readProducts(),
     readLandingPages(),
@@ -319,7 +333,11 @@ async function ensureV2MigrationRun(): Promise<void> {
 
   const existingPageIds = new Set(pages.map((p) => p.id));
   const toMigrate = (legacy ?? []).filter((p) => !existingPageIds.has(p.id));
-  if (toMigrate.length === 0) return;
+  if (toMigrate.length === 0) {
+    // Nothing to migrate — mark as done so we don't keep checking
+    await writeRaw(KEY_MIGRATION_DONE, true);
+    return;
+  }
 
   const newProducts = [...products];
   const newPages = [...pages];
@@ -328,15 +346,32 @@ async function ensureV2MigrationRun(): Promise<void> {
     newProducts.unshift(product);
     newPages.unshift(page);
   }
-  await Promise.all([writeProducts(newProducts), writeLandingPages(newPages)]);
+
+  // DATA LOSS GUARD: refuse to write if we'd end up with fewer records
+  if (newPages.length < pages.length) {
+    console.error(
+      `[migration] ABORT: would reduce pages from ${pages.length} to ${newPages.length}. ` +
+      `This is the data-loss bug. Skipping write.`,
+    );
+    return;
+  }
+
+  await Promise.all([
+    writeProducts(newProducts),
+    writeLandingPages(newPages),
+    writeRaw(KEY_MIGRATION_DONE, true), // mark done
+  ]);
 }
 
-// Call this lazily on any v2 read. Safe to call many times.
+/**
+ * Public entry for migration. Now safe to call many times (no-op after first).
+ * Removed from all hot read paths; only called explicitly.
+ */
 export async function ensureMigrated(): Promise<void> {
   try {
     await ensureV2MigrationRun();
   } catch {
-    // Non-fatal — v2 reads will just return empty until next retry.
+    // Non-fatal
   }
 }
 
@@ -348,7 +383,6 @@ export async function ensureMigrated(): Promise<void> {
  * working on new data without duplicate writes.
  */
 export async function getProjectCompat(id: string): Promise<Project | null> {
-  await ensureMigrated();
   const page = await getLandingPage(id);
   if (!page) return null;
   const product = await getProduct(page.productId);
@@ -357,7 +391,6 @@ export async function getProjectCompat(id: string): Promise<Project | null> {
 }
 
 export async function getProjectBySlugCompat(slug: string): Promise<Project | null> {
-  await ensureMigrated();
   const page = await getLandingPageBySlug(slug);
   if (!page) return null;
   const product = await getProduct(page.productId);
@@ -366,7 +399,6 @@ export async function getProjectBySlugCompat(slug: string): Promise<Project | nu
 }
 
 export async function listProjectsCompat(): Promise<Project[]> {
-  await ensureMigrated();
   const [pages, products] = await Promise.all([readLandingPages(), readProducts()]);
   const byId = new Map(products.map((p) => [p.id, p]));
   return pages

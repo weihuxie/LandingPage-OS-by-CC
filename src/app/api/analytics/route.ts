@@ -4,7 +4,6 @@ import {
   readLandingPages,
   readEvents,
   readLeads,
-  ensureMigrated,
 } from '@/lib/storage';
 import type { LandingPage, Product, PageLocale } from '@/lib/types';
 
@@ -19,7 +18,6 @@ export const revalidate = 0;
  *       → per-locale stats + per-(variant,locale) A/B split
  */
 export async function GET() {
-  await ensureMigrated();
   const [products, pages, events, leads] = await Promise.all([
     readProducts(),
     readLandingPages(),

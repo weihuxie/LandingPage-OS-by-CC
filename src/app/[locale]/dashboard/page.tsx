@@ -1,6 +1,6 @@
 import { unstable_setRequestLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
-import { readProducts, readLandingPages, ensureMigrated } from '@/lib/storage';
+import { readProducts, readLandingPages } from '@/lib/storage';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +10,6 @@ export default async function Dashboard({
   params: { locale: string };
 }) {
   unstable_setRequestLocale(locale);
-  await ensureMigrated();
   const [products, pages] = await Promise.all([readProducts(), readLandingPages()]);
 
   // Group pages by product

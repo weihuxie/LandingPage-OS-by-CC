@@ -3,7 +3,6 @@ import { nanoid } from 'nanoid';
 import {
   readProducts,
   saveProduct,
-  ensureMigrated,
 } from '@/lib/storage';
 import { defaultStyleForMarket } from '@/lib/styles';
 import type { Product } from '@/lib/types';
@@ -12,7 +11,6 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET() {
-  await ensureMigrated();
   const products = await readProducts();
   return NextResponse.json({ products });
 }
