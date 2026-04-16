@@ -7,7 +7,9 @@ import path from 'path';
 import { kv } from '@vercel/kv';
 
 function useKV(): boolean {
-  return !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
+  // Bracket notation prevents Next.js webpack from inlining the build-time value.
+  // eslint-disable-next-line dot-notation
+  return !!process.env['KV_REST_API_URL'] && !!process.env['KV_REST_API_TOKEN'];
 }
 const DATA_DIR =
   process.env.DATA_DIR ??

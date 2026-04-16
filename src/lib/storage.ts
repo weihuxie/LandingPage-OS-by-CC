@@ -14,13 +14,19 @@ import { kv } from '@vercel/kv';
 import type { Project, Lead, AssetLibrary, Product, LandingPage, Brand } from './types';
 import { migrateProjectToV2, projectViewFromV2 } from './migrate-v2';
 
-// CRITICAL: evaluate at CALL TIME, not module load time.
-// Old warm lambdas from deploys before KV was configured would have
-// USE_KV=false permanently if this was a const — writes go to /tmp,
-// new lambdas read KV, data "disappears". This was the root cause of
-// the phantom page-creation bug.
+/**
+ * CRITICAL: Detect KV availability at RUNTIME, not build time.
+ *
+ * Next.js webpack (DefinePlugin) replaces `process.env.KV_REST_API_URL`
+ * with its build-time value — which is `undefined` because KV env vars
+ * are Runtime-only (not available during `next build`).
+ *
+ * Fix: use bracket notation `process.env['KV_REST_API_URL']` which
+ * webpack does NOT inline, so the check happens at actual request time.
+ */
 function useKV(): boolean {
-  return !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
+  // eslint-disable-next-line dot-notation
+  return !!process.env['KV_REST_API_URL'] && !!process.env['KV_REST_API_TOKEN'];
 }
 
 // --- Keys (shared between KV and FS layouts) ---------------------------
@@ -62,9 +68,10 @@ async function writeRaw<T>(key: string, value: T): Promise<void> {
 // --- FS adapter --------------------------------------------------------
 
 // Priority: explicit DATA_DIR → /tmp on Vercel (writable, ephemeral) → project-relative .data/
+// Bracket notation for VERCEL too: webpack inlines process.env.VERCEL to undefined at build time.
 const DATA_DIR =
-  process.env.DATA_DIR ??
-  (process.env.VERCEL === '1' ? '/tmp/.data' : path.join(process.cwd(), '.data'));
+  process.env['DATA_DIR'] ??
+  (process.env['VERCEL'] === '1' ? '/tmp/.data' : path.join(process.cwd(), '.data'));
 
 function fsPath(key: string): string {
   return path.join(DATA_DIR, key.replace(/^lp:/, '') + '.json');
