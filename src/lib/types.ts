@@ -329,6 +329,47 @@ export interface StylePreset {
   hero: 'gradient' | 'flat' | 'grid' | 'editorial';
 }
 
+// --- Localization strategy (Phase H · 白盒化本地化) --------------------
+
+/**
+ * When user clicks "+ 加日语" we first show THIS, let them edit, then generate.
+ * Makes localization decisions transparent instead of a black box.
+ */
+export interface LocalizationStrategy {
+  targetLocale: PageLocale;
+  targetMarket?: MarketCode;
+
+  audienceNuances: string[];             // decision-maker differences per market
+  trustTriggers: string[];               // what signals credibility here
+  ctaIntensity: 'restrained' | 'moderate' | 'strong';
+  narrativeNotes: string[];              // how the story angle differs
+
+  recommendedStyle: StyleId;
+  recommendedModuleOrder?: ModuleType[];
+
+  formChanges: {
+    add: Array<'name' | 'email' | 'company' | 'phone' | 'message'>;
+    remove: Array<'name' | 'email' | 'company' | 'phone' | 'message'>;
+  };
+
+  testimonialFilter?: {
+    preferPrimaryLocale: PageLocale;
+    preferredMarkets: MarketCode[];
+  };
+  certificationFilter?: {
+    preferredMarkets: MarketCode[];
+  };
+
+  mediaGaps: Array<{
+    moduleRef: string;
+    label: string;
+    suggestedAction: 'upload-localized' | 'ai-translate-caption' | 'reuse-default';
+  }>;
+
+  approvedByUser: boolean;
+  savedAsTemplate?: boolean;
+}
+
 // --- A/B Dual Narrative (PRD §4.3) -------------------------------------
 
 export type NarrativeVariant = 'A' | 'B';

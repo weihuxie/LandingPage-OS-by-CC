@@ -17,6 +17,8 @@ import { auditProject } from '@/lib/linter';
 import { nativeLabel, PAGE_LOCALES } from '@/lib/i18n-detect';
 import PageRenderer from './PageRenderer';
 import ModuleEditor from './ModuleEditor';
+import LocalizationPreviewModal from './LocalizationPreviewModal';
+import type { LocalizationStrategy } from '@/lib/types';
 
 type Props = {
   locale: string;
@@ -63,6 +65,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   );
   const [copied, setCopied] = useState(false);
   const [addingLocale, setAddingLocale] = useState(false);
+  const [pendingLocale, setPendingLocale] = useState<PageLocale | null>(null);
 
   const selected = useMemo(
     () => project.modules.find((m) => m.id === selectedModuleId) ?? null,
@@ -222,16 +225,23 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     setSelectedModuleId(nextModules[0]?.id ?? null);
   };
 
-  // Add a new locale to this page — uses current strategy + inputs,
-  // only swaps the L[locale] templates (per user's Q4 answer).
-  const addLocale = async (newLocale: PageLocale) => {
+  // '+ 加语言' now opens a white-box modal so the user sees/edits/approves
+  // the localization strategy before generation happens (Phase H).
+  const addLocale = (newLocale: PageLocale) => {
     if (!page) return;
+    setPendingLocale(newLocale);
+  };
+
+  // Called after the user approves the localization strategy in the modal.
+  const confirmAddLocale = async (strategy: LocalizationStrategy) => {
+    if (!page || !pendingLocale) return;
+    const newLocale = pendingLocale;
     setAddingLocale(true);
     try {
       const res = await fetch(`/api/pages/${page.id}/locales`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ locale: newLocale }),
+        body: JSON.stringify({ locale: newLocale, strategy }),
       });
       const data = await res.json();
       if (data?.page) {
@@ -250,6 +260,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
       }
     } finally {
       setAddingLocale(false);
+      setPendingLocale(null);
     }
   };
 
@@ -767,6 +778,16 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
           </div>
         )}
       </aside>
+
+      {pendingLocale && page && (
+        <LocalizationPreviewModal
+          pageId={page.id}
+          targetLocale={pendingLocale}
+          targetMarket={page.targetMarket}
+          onApprove={confirmAddLocale}
+          onClose={() => setPendingLocale(null)}
+        />
+      )}
     </div>
   );
 }
