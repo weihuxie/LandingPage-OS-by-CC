@@ -39,9 +39,33 @@ export default async function ProjectPage({
   }
 
   const page = await getLandingPage(params.id);
-  if (!page) notFound();
+  if (!page) {
+    // TEMP DEBUG: instead of notFound(), show diagnostic
+    const allPages = await readLandingPages();
+    return (
+      <pre style={{ padding: 40 }}>
+        {JSON.stringify({
+          error: 'page_not_found',
+          id: params.id,
+          backend: storageBackend(),
+          allPagesCount: allPages.length,
+          allPageIds: allPages.map(p => p.id),
+        }, null, 2)}
+      </pre>
+    );
+  }
   const product = await getProduct(page.productId);
-  if (!product) notFound();
+  if (!product) {
+    return (
+      <pre style={{ padding: 40 }}>
+        {JSON.stringify({
+          error: 'product_not_found',
+          pageId: page.id,
+          productId: page.productId,
+        }, null, 2)}
+      </pre>
+    );
+  }
 
   const leads = await readLeads(page.id);
   const projectView = projectViewFromV2(page, product);
