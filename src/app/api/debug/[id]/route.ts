@@ -22,6 +22,8 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
     const allPages = await readLandingPages();
     result.steps.allPagesCount = allPages.length;
     result.steps.allPageIds = allPages.map((p) => p.id);
+    // Estimate KV payload size to check if it's hitting Upstash limits
+    result.steps.estimatedKvSizeKB = Math.round(JSON.stringify(allPages).length / 1024);
 
     const page = await getLandingPage(params.id);
     result.steps.page = page ? { id: page.id, slug: page.slug, productId: page.productId } : null;
