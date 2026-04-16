@@ -1,23 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getLandingPage, getProduct, readLeads } from '@/lib/storage';
+import {
+  getLandingPage,
+  getProduct,
+  readLeads,
+  readLandingPages,
+  storageBackend,
+} from '@/lib/storage';
 import { projectViewFromV2 } from '@/lib/migrate-v2';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * Debug endpoint that mimics exactly what /[locale]/projects/[id]/page.tsx
- * does, line-by-line, to diagnose why the page returns 404 when the API
- * finds data. This endpoint will be deleted after the bug is fixed.
- */
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
   const result: Record<string, any> = { id: params.id, steps: {} };
 
   try {
+    // Diagnostics
+    result.steps.backend = storageBackend();
+    result.steps.kvUrl = process.env.KV_REST_API_URL ? 'set' : 'NOT_SET';
+
+    // Read ALL pages first to see what getLandingPage is scanning
+    const allPages = await readLandingPages();
+    result.steps.allPagesCount = allPages.length;
+    result.steps.allPageIds = allPages.map((p) => p.id);
+
     const page = await getLandingPage(params.id);
     result.steps.page = page ? { id: page.id, slug: page.slug, productId: page.productId } : null;
 
     if (!page) {
       result.steps.pageResult = 'NOT_FOUND → notFound() would fire';
+      result.steps.hint = allPages.length === 0
+        ? 'readLandingPages() returned empty — KV might not have v2 data, or migration not run'
+        : `readLandingPages() returned ${allPages.length} pages but none match id='${params.id}'`;
       return NextResponse.json(result);
     }
 
