@@ -14,7 +14,14 @@ import { kv } from '@vercel/kv';
 import type { Project, Lead, AssetLibrary, Product, LandingPage, Brand } from './types';
 import { migrateProjectToV2, projectViewFromV2 } from './migrate-v2';
 
-const USE_KV = !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
+// CRITICAL: evaluate at CALL TIME, not module load time.
+// Old warm lambdas from deploys before KV was configured would have
+// USE_KV=false permanently if this was a const — writes go to /tmp,
+// new lambdas read KV, data "disappears". This was the root cause of
+// the phantom page-creation bug.
+function useKV(): boolean {
+  return !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
+}
 
 // --- Keys (shared between KV and FS layouts) ---------------------------
 
@@ -37,7 +44,7 @@ const DEFAULT_ASSETS: AssetLibrary = {
 // --- Low-level adapter -------------------------------------------------
 
 async function readRaw<T>(key: string, fallback: T): Promise<T> {
-  if (USE_KV) {
+  if (useKV()) {
     const v = (await kv.get<T>(key)) as T | null;
     return v ?? fallback;
   }
@@ -45,7 +52,7 @@ async function readRaw<T>(key: string, fallback: T): Promise<T> {
 }
 
 async function writeRaw<T>(key: string, value: T): Promise<void> {
-  if (USE_KV) {
+  if (useKV()) {
     await kv.set(key, value);
     return;
   }
@@ -213,7 +220,7 @@ function migrate(p: any): Project {
 // --- Introspection (for /api/health) ----------------------------------
 
 export function storageBackend(): 'kv' | 'fs' {
-  return USE_KV ? 'kv' : 'fs';
+  return useKV() ? 'kv' : 'fs';
 }
 
 // --- v2: Product / LandingPage / Brand -------------------------------

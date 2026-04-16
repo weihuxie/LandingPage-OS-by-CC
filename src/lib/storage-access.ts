@@ -6,7 +6,9 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { kv } from '@vercel/kv';
 
-const USE_KV = !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
+function useKV(): boolean {
+  return !!process.env.KV_REST_API_URL && !!process.env.KV_REST_API_TOKEN;
+}
 const DATA_DIR =
   process.env.DATA_DIR ??
   (process.env.VERCEL === '1' ? '/tmp/.data' : path.join(process.cwd(), '.data'));
@@ -16,7 +18,7 @@ function fsPath(key: string): string {
 }
 
 export async function readRaw<T>(key: string, fallback: T): Promise<T> {
-  if (USE_KV) {
+  if (useKV()) {
     const v = (await kv.get<T>(key)) as T | null;
     return v ?? fallback;
   }
@@ -30,7 +32,7 @@ export async function readRaw<T>(key: string, fallback: T): Promise<T> {
 }
 
 export async function writeRaw<T>(key: string, value: T): Promise<void> {
-  if (USE_KV) {
+  if (useKV()) {
     await kv.set(key, value);
     return;
   }
