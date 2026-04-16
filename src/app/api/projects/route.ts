@@ -141,9 +141,27 @@ export async function POST(req: NextRequest) {
   };
 
   product.landingPageIds = [page.id, ...product.landingPageIds.filter((x) => x !== page.id)];
-  await saveProduct(product);
-  await saveLandingPage(page);
 
-  // Return legacy-shaped response (id = page.id, slug = page.slug)
-  return NextResponse.json({ id: page.id, slug: page.slug });
+  // Debug: explicit try/catch + verification to find the write bug
+  const debug: Record<string, any> = {};
+  try {
+    debug.beforeSaveProduct = true;
+    await saveProduct(product);
+    debug.productSaved = true;
+
+    debug.beforeSavePage = true;
+    debug.pageId = page.id;
+    await saveLandingPage(page);
+    debug.pageSaved = true;
+
+    // Verify: immediately read back
+    const { getLandingPage: glp } = await import('@/lib/storage');
+    const readback = await glp(page.id);
+    debug.readbackFound = !!readback;
+    debug.readbackId = readback?.id;
+  } catch (e: any) {
+    debug.error = { message: e?.message, stack: e?.stack?.slice(0, 300) };
+  }
+
+  return NextResponse.json({ id: page.id, slug: page.slug, _debug: debug });
 }
