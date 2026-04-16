@@ -1,7 +1,48 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
+
+// --- localStorage auto-save (zero-button draft persistence) -----------
+const DRAFT_KEY = 'lp-wizard-draft';
+
+interface WizardDraft {
+  step: number;
+  inputs: any;
+  strategy: any;
+  brandProbe: any;
+  fileContexts: any[];
+  savedAt: number;
+}
+
+function loadDraft(): WizardDraft | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as WizardDraft;
+    // expire after 24 hours
+    if (Date.now() - d.savedAt > 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(DRAFT_KEY);
+      return null;
+    }
+    return d;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(draft: WizardDraft) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...draft, savedAt: Date.now() }));
+  } catch {}
+}
+
+function clearDraft() {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(DRAFT_KEY);
+}
 import type {
   ProductInputs,
   StrategySummary,
@@ -38,10 +79,13 @@ const defaultInputs = (locale: string): ProductInputs => ({
 export default function Wizard({ locale }: Props) {
   const t = useTranslations();
   const router = useRouter();
-  const [step, setStep] = useState(0);
-  const [inputs, setInputs] = useState<ProductInputs>(defaultInputs(locale));
+
+  // Restore draft from localStorage if available
+  const draft = useMemo(() => loadDraft(), []);
+  const [step, setStep] = useState(draft?.step ?? 0);
+  const [inputs, setInputs] = useState<ProductInputs>(draft?.inputs ?? defaultInputs(locale));
   const [refUrl, setRefUrl] = useState('');
-  const [strategy, setStrategy] = useState<StrategySummary | null>(null);
+  const [strategy, setStrategy] = useState<StrategySummary | null>(draft?.strategy ?? null);
   const [extractedContext, setExtractedContext] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [brandProbe, setBrandProbe] = useState<{
@@ -49,9 +93,18 @@ export default function Wizard({ locale }: Props) {
     candidates: string[];
     source: string;
     siteTitle?: string;
-  } | null>(null);
+  } | null>(draft?.brandProbe ?? null);
   const [brandProbing, setBrandProbing] = useState(false);
+  const [hasDraft] = useState(!!draft);
+  const [fileContexts, setFileContexts] = useState<any[]>(draft?.fileContexts ?? []);
+  const [fileExtracting, setFileExtracting] = useState(0);
   const totalSteps = 4;
+
+  // Auto-save draft on any meaningful state change
+  const persistDraft = useCallback(() => {
+    saveDraft({ step, inputs, strategy, brandProbe, fileContexts: fileContexts ?? [], savedAt: Date.now() });
+  }, [step, inputs, strategy, brandProbe]);
+  useEffect(() => { persistDraft(); }, [persistDraft]);
 
   const set = (patch: Partial<ProductInputs>) => setInputs((s) => ({ ...s, ...patch }));
 
@@ -100,9 +153,6 @@ export default function Wizard({ locale }: Props) {
       }
     }
   };
-
-  const [fileContexts, setFileContexts] = useState<any[]>([]);
-  const [fileExtracting, setFileExtracting] = useState(0);
 
   const onFiles = async (files: FileList | null) => {
     if (!files) return;
@@ -204,6 +254,8 @@ export default function Wizard({ locale }: Props) {
       if (!res.ok) throw new Error(`${res.status}`);
       const data = await res.json();
       if (!data?.id) throw new Error('no-id');
+      // Success! Clear draft — we're done.
+      clearDraft();
       // Make sure all ticks show complete before navigation
       await new Promise((r) => setTimeout(r, 1700));
       router.push(`/${locale}/projects/${data.id}`);
@@ -218,7 +270,24 @@ export default function Wizard({ locale }: Props) {
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{t('wizard.title')}</h1>
+        <div>
+          <h1 className="text-2xl font-semibold">{t('wizard.title')}</h1>
+          {hasDraft && step > 0 && (
+            <div className="mt-1 flex items-center gap-2 text-xs text-brand-700">
+              <span>📋 已从上次中断处恢复</span>
+              <button
+                className="text-ink-500 hover:text-red-600 underline"
+                onClick={() => {
+                  if (!confirm('重新开始？会丢弃当前填写的所有内容。')) return;
+                  clearDraft();
+                  window.location.reload();
+                }}
+              >
+                重新开始
+              </button>
+            </div>
+          )}
+        </div>
         <div className="text-sm text-ink-500">
           {t('wizard.step', { current: step + 1, total: totalSteps })}
         </div>
