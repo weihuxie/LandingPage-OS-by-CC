@@ -10,18 +10,42 @@ import type {
 import { defaultStyleForMarket } from './styles';
 
 /**
+ * Natural market default for a locale. Adding "zh-CN" almost always means
+ * "target China market", not "serve Chinese speakers at the same market as
+ * the original page". Users can override via the modal's market dropdown.
+ */
+export function defaultMarketForLocale(locale: PageLocale): MarketCode {
+  switch (locale) {
+    case 'zh-CN':
+      return 'CN';
+    case 'zh-TW':
+      return 'TW';
+    case 'ja':
+      return 'JP';
+    case 'en':
+      return 'US';
+    default:
+      return 'GLOBAL';
+  }
+}
+
+/**
  * Build a recommended LocalizationStrategy for adding `targetLocale` to an
  * existing LandingPage. Uses market + locale heuristics derived from the
  * region preset logic in ai.ts / styles.ts.
  *
  * User sees this in a modal before generation; they can edit and approve.
  * The resulting approved strategy feeds POST /api/pages/:id/locales.
+ *
+ * Market defaulting: if caller doesn't pass `targetMarket`, we infer from
+ * `targetLocale` — adding Chinese likely means targeting China, not the
+ * original page's market.
  */
 export function proposeLocalization(
   page: LandingPage,
   product: Product,
   targetLocale: PageLocale,
-  targetMarket: MarketCode = page.targetMarket,
+  targetMarket: MarketCode = defaultMarketForLocale(targetLocale),
 ): LocalizationStrategy {
   return {
     targetLocale,

@@ -783,7 +783,9 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         <LocalizationPreviewModal
           pageId={page.id}
           targetLocale={pendingLocale}
-          targetMarket={page.targetMarket}
+          /* Don't default to page.targetMarket — adding a new locale almost
+             always implies a new market (zh-CN → CN, ja → JP, etc). Modal
+             shows a market picker if user wants to override. */
           onApprove={confirmAddLocale}
           onClose={() => setPendingLocale(null)}
         />
