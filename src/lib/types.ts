@@ -80,6 +80,8 @@ export interface StrategySummary {
   local: string[];
 }
 
+export type HeroLayout = 'split' | 'centered' | 'video-bg';
+
 export interface HeroContent {
   eyebrow: string;
   headline: string;
@@ -87,7 +89,8 @@ export interface HeroContent {
   primaryCta: string;
   secondaryCta?: string;
   bullets: string[];
-  media?: MediaRef; // optional visual — product screenshot or demo video
+  media?: MediaRef;
+  layout?: HeroLayout; // default 'split'
 }
 
 export interface ProductShowcaseContent {
@@ -125,9 +128,12 @@ export interface SolutionContent {
   body: string;
 }
 
+export type BenefitsLayout = 'cards' | 'alternating' | 'compact';
+
 export interface BenefitsContent {
   title: string;
-  items: { title: string; body: string }[];
+  items: { title: string; body: string; media?: MediaRef }[];
+  layout?: BenefitsLayout; // default 'cards'
 }
 
 export interface UseCaseContent {

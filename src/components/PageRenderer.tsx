@@ -17,6 +17,8 @@ import type {
   MediaRef,
   PageLocale,
   MarketCode,
+  HeroLayout,
+  BenefitsLayout,
 } from '@/lib/types';
 import { STYLE_PRESETS, cssVarsForStyle } from '@/lib/styles';
 import {
@@ -167,82 +169,120 @@ function Hero({
   locale: PageLocale;
   market: MarketCode;
 }) {
-  const bg = `
-    var(--hero-bg-layer-1, radial-gradient(80% 60% at 10% 10%, color-mix(in oklch, var(--brand) 22%, transparent), transparent 60%)),
-    var(--hero-bg-layer-2, linear-gradient(180deg, #ffffff, #f6f8ff))
-  `;
+  const layout: HeroLayout = content.layout ?? 'split';
   const media = resolveMedia(content.media, locale, market);
   const hasMedia = !!media;
+  const mobile = device === 'mobile';
 
-  return (
-    <div className="relative overflow-hidden" style={{ background: bg }}>
-      <div
-        className={`mx-auto px-6 ${device === 'mobile' ? 'py-12' : 'max-w-6xl py-20'} ${
-          hasMedia && device !== 'mobile' ? 'grid grid-cols-2 items-center gap-10' : ''
-        }`}
+  const eyebrow = content.eyebrow && (
+    <div
+      className="inline-block border px-3 py-1 text-[11px] font-medium uppercase tracking-wider"
+      style={{
+        color: layout === 'video-bg' ? '#fff' : 'var(--brand)',
+        borderColor: layout === 'video-bg' ? 'rgba(255,255,255,0.3)' : 'color-mix(in oklch, var(--brand) 30%, white)',
+        borderRadius: 'var(--radius, 16px)',
+      }}
+    >
+      {content.eyebrow}
+    </div>
+  );
+
+  const headline = (
+    <h1
+      className={`mt-4 tracking-tight ${layout === 'video-bg' ? 'text-white' : 'text-ink-900'} ${
+        mobile ? 'text-3xl' : layout === 'centered' ? 'text-5xl md:text-6xl' : hasMedia ? 'text-4xl md:text-5xl' : 'text-5xl md:text-6xl'
+      }`}
+      style={{ fontWeight: 'var(--heading-weight, 600)' as any, lineHeight: 1.15 }}
+    >
+      {content.headline}
+    </h1>
+  );
+
+  const sub = (
+    <p className={`mt-4 ${layout === 'video-bg' ? 'text-white/80' : 'text-ink-500'} ${mobile ? 'text-base' : 'text-lg'} ${layout === 'centered' ? 'mx-auto max-w-2xl' : 'max-w-2xl'}`}>
+      {content.subhead}
+    </p>
+  );
+
+  const ctas = (
+    <div className={`mt-6 flex flex-wrap items-center gap-3 ${layout === 'centered' ? 'justify-center' : ''}`}>
+      <button
+        className="rounded-xl px-5 py-3 text-sm font-medium text-white transition hover:opacity-90"
+        style={{ background: layout === 'video-bg' ? 'rgba(255,255,255,0.2)' : 'var(--brand)' }}
       >
-        <div>
-          {content.eyebrow && (
-            <div
-              className="inline-block border px-3 py-1 text-[11px] font-medium uppercase tracking-wider"
-              style={{
-                color: 'var(--brand)',
-                borderColor: 'color-mix(in oklch, var(--brand) 30%, white)',
-                borderRadius: 'var(--radius, 16px)',
-              }}
-            >
-              {content.eyebrow}
+        {content.primaryCta}
+      </button>
+      {content.secondaryCta && (
+        <button className={`rounded-xl border px-5 py-3 text-sm font-medium ${layout === 'video-bg' ? 'border-white/30 text-white hover:bg-white/10' : 'border-ink-100 bg-white hover:border-ink-300'}`}>
+          {content.secondaryCta}
+        </button>
+      )}
+    </div>
+  );
+
+  const bullets = content.bullets?.length > 0 && (
+    <ul className={`mt-6 grid gap-2 text-sm ${layout === 'video-bg' ? 'text-white/90' : 'text-ink-700'} ${
+      mobile || layout === 'split' ? 'grid-cols-1' : 'grid-cols-3 max-w-3xl'
+    } ${layout === 'centered' ? 'mx-auto' : ''}`}>
+      {content.bullets.map((b, i) => (
+        <li key={i} className="flex items-center gap-2">
+          <span className="grid h-5 w-5 place-items-center rounded-full text-white text-[10px]" style={{ background: 'var(--brand)' }}>✓</span>
+          {b}
+        </li>
+      ))}
+    </ul>
+  );
+
+  // ---- Layout: split (左文右图) ----
+  if (layout === 'split') {
+    const bg = 'radial-gradient(80% 60% at 10% 10%, color-mix(in oklch, var(--brand) 22%, transparent), transparent 60%), linear-gradient(180deg, #fff, #f6f8ff)';
+    return (
+      <div className="relative overflow-hidden" style={{ background: bg }}>
+        <div className={`mx-auto px-6 ${mobile ? 'py-12' : 'max-w-6xl py-20'} ${hasMedia && !mobile ? 'grid grid-cols-2 items-center gap-10' : ''}`}>
+          <div>{eyebrow}{headline}{sub}{ctas}{bullets}</div>
+          {hasMedia && <div className="relative mt-8 md:mt-0"><HeroMedia media={content.media!} resolved={media!} device={device} /></div>}
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Layout: centered (居中文案 + 下方大图) ----
+  if (layout === 'centered') {
+    const bg = 'radial-gradient(60% 40% at 50% 20%, color-mix(in oklch, var(--brand) 18%, transparent), transparent 60%), linear-gradient(180deg, #fff, #f6f8ff)';
+    return (
+      <div className="relative overflow-hidden" style={{ background: bg }}>
+        <div className={`mx-auto px-6 text-center ${mobile ? 'py-12' : 'max-w-5xl py-24'}`}>
+          {eyebrow}{headline}{sub}{ctas}{bullets}
+          {hasMedia && (
+            <div className="mx-auto mt-10 max-w-4xl">
+              <HeroMedia media={content.media!} resolved={media!} device={device} />
             </div>
           )}
-          <h1
-            className={`mt-4 tracking-tight text-ink-900 ${
-              device === 'mobile' ? 'text-3xl' : hasMedia ? 'text-4xl md:text-5xl' : 'text-5xl md:text-6xl'
-            }`}
-            style={{ fontWeight: 'var(--heading-weight, 600)' as any, lineHeight: 1.2 }}
-          >
-            {content.headline}
-          </h1>
-        <p className={`mt-4 max-w-2xl text-ink-500 ${device === 'mobile' ? 'text-base' : 'text-lg'}`}>
-          {content.subhead}
-        </p>
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <button
-            className="rounded-xl px-5 py-3 text-sm font-medium text-white transition hover:opacity-90"
-            style={{ background: 'var(--brand)' }}
-          >
-            {content.primaryCta}
-          </button>
-          {content.secondaryCta && (
-            <button className="rounded-xl border border-ink-100 bg-white px-5 py-3 text-sm font-medium hover:border-ink-300">
-              {content.secondaryCta}
-            </button>
-          )}
         </div>
-        {content.bullets?.length > 0 && (
-          <ul
-            className={`mt-6 grid gap-2 text-sm text-ink-700 ${
-              device === 'mobile' || hasMedia ? 'grid-cols-1' : 'grid-cols-3 max-w-3xl'
-            }`}
-          >
-            {content.bullets.map((b, i) => (
-              <li key={i} className="flex items-center gap-2">
-                <span
-                  className="grid h-5 w-5 place-items-center rounded-full text-white text-[10px]"
-                  style={{ background: 'var(--brand)' }}
-                >
-                  ✓
-                </span>
-                {b}
-              </li>
-            ))}
-          </ul>
-        )}
+      </div>
+    );
+  }
+
+  // ---- Layout: video-bg (满屏渐变 + 文案叠加) ----
+  return (
+    <div className="relative overflow-hidden" style={{ minHeight: mobile ? 400 : 560 }}>
+      {/* Background gradient layer */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: `linear-gradient(135deg, var(--brand), color-mix(in oklch, var(--brand) 50%, #0b1020))`,
+        }}
+      />
+      {/* Media as dim background (if provided) */}
+      {hasMedia && media.url && (
+        <div className="absolute inset-0 opacity-20">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={media.url} alt="" className="h-full w-full object-cover" loading="lazy" />
         </div>
-        {hasMedia && (
-          <div className="relative">
-            <HeroMedia media={content.media!} resolved={media!} device={device} />
-          </div>
-        )}
+      )}
+      {/* Content overlay */}
+      <div className={`relative mx-auto flex h-full min-h-[inherit] flex-col items-center justify-center px-6 text-center ${mobile ? 'py-16' : 'py-28'}`}>
+        {eyebrow}{headline}{sub}{ctas}{bullets}
       </div>
     </div>
   );
@@ -373,15 +413,76 @@ function Solution({ content }: { content: SolutionContent }) {
 }
 
 function Benefits({ content }: { content: BenefitsContent }) {
+  const layout: BenefitsLayout = content.layout ?? 'cards';
+
+  // ---- cards (三列卡片，当前默认) ----
+  if (layout === 'cards') {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-14">
+        <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+        <div className="mt-8 grid gap-4 sm:grid-cols-3">
+          {content.items.map((b, i) => (
+            <div key={i} className="rounded-2xl border border-ink-100 bg-white p-5">
+              <div className="h-1 w-8 rounded-full" style={{ background: 'var(--brand)' }} />
+              <h3 className="mt-3 font-semibold">{b.title}</h3>
+              <p className="mt-1 text-sm text-ink-500">{b.body}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ---- alternating (左文右图交替) ----
+  if (layout === 'alternating') {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-14">
+        <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+        <div className="mt-10 space-y-14">
+          {content.items.map((b, i) => {
+            const textFirst = i % 2 === 0;
+            return (
+              <div key={i} className="grid items-center gap-8 md:grid-cols-2">
+                <div className={textFirst ? '' : 'md:order-2'}>
+                  <div className="h-1 w-8 rounded-full" style={{ background: 'var(--brand)' }} />
+                  <h3 className="mt-3 text-xl font-semibold">{b.title}</h3>
+                  <p className="mt-2 text-ink-500">{b.body}</p>
+                </div>
+                <div className={textFirst ? '' : 'md:order-1'}>
+                  {b.media?.url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={b.media.url} alt={b.media.alt ?? ''} className="w-full rounded-2xl border border-ink-100 shadow-soft" loading="lazy" />
+                  ) : (
+                    <div className="grid aspect-video place-items-center rounded-2xl border border-dashed border-ink-100 bg-ink-100/30 text-xs text-ink-300">
+                      配图可选
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // ---- compact (一行一条 · icon + 标题 + 描述，信息密度高) ----
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
-      <div className="mt-8 grid gap-4 sm:grid-cols-3">
+      <div className="mt-6 divide-y divide-ink-100 rounded-2xl border border-ink-100 bg-white">
         {content.items.map((b, i) => (
-          <div key={i} className="rounded-2xl border border-ink-100 bg-white p-5">
-            <div className="h-1 w-8 rounded-full" style={{ background: 'var(--brand)' }} />
-            <h3 className="mt-3 font-semibold">{b.title}</h3>
-            <p className="mt-1 text-sm text-ink-500">{b.body}</p>
+          <div key={i} className="flex items-start gap-4 p-5">
+            <div
+              className="mt-1 grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg text-sm text-white"
+              style={{ background: 'var(--brand)' }}
+            >
+              {i + 1}
+            </div>
+            <div>
+              <h3 className="font-semibold">{b.title}</h3>
+              <p className="mt-0.5 text-sm text-ink-500">{b.body}</p>
+            </div>
           </div>
         ))}
       </div>

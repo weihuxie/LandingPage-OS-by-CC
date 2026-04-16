@@ -58,7 +58,7 @@ export default function ModuleEditor({ module, onChange, onRegenerate }: Props) 
         {module.type === 'socialProof' && <SocialProofEditor c={module.content as SocialProofContent} setC={setContent} />}
         {module.type === 'pain' && <ListItemsEditor c={module.content as PainContent} setC={setContent} itemFields={['title', 'body']} />}
         {module.type === 'solution' && <SolutionEditor c={module.content as SolutionContent} setC={setContent} />}
-        {module.type === 'benefits' && <ListItemsEditor c={module.content as BenefitsContent} setC={setContent} itemFields={['title', 'body']} />}
+        {module.type === 'benefits' && <BenefitsEditor c={module.content as BenefitsContent} setC={setContent} />}
         {module.type === 'useCase' && <ListItemsEditor c={module.content as UseCaseContent} setC={setContent} itemFields={['role', 'scenario']} />}
         {module.type === 'testimonial' && <ListItemsEditor c={module.content as TestimonialContent} setC={setContent} itemFields={['quote', 'author', 'company']} />}
         {module.type === 'faq' && <ListItemsEditor c={module.content as FAQContent} setC={setContent} itemFields={['q', 'a']} />}
@@ -100,9 +100,59 @@ function Field({
   );
 }
 
+function LayoutPicker<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: { id: T; name: string; desc: string }[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div>
+      <div className="label mb-1.5">{label}</div>
+      <div className="grid grid-cols-1 gap-1.5">
+        {options.map((o) => (
+          <button
+            key={o.id}
+            onClick={() => onChange(o.id)}
+            className={`rounded-xl border p-2.5 text-left text-xs transition ${
+              value === o.id ? 'border-brand-300 bg-brand-50' : 'border-ink-100 hover:bg-ink-100/40'
+            }`}
+          >
+            <div className="font-medium">{o.name}</div>
+            <div className="mt-0.5 text-[11px] text-ink-500">{o.desc}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const HERO_LAYOUTS: { id: import('@/lib/types').HeroLayout; name: string; desc: string }[] = [
+  { id: 'split', name: '左文右图', desc: '经典双栏，文案左 + 截图/视频右。适合有产品截图的 SaaS。' },
+  { id: 'centered', name: '居中 + 下方大图', desc: '标题居中，下方铺全宽截图。Linear / Notion 风。' },
+  { id: 'video-bg', name: '品牌满屏', desc: '渐变色填满，文案叠加居中。适合品牌型/没有截图时。' },
+];
+
+const BENEFITS_LAYOUTS: { id: import('@/lib/types').BenefitsLayout; name: string; desc: string }[] = [
+  { id: 'cards', name: '三列卡片', desc: '每个收益一张卡，简洁并列。适合 3 个核心卖点。' },
+  { id: 'alternating', name: '左右交替', desc: '文案 + 配图交替排版。有截图时视觉更强。' },
+  { id: 'compact', name: '紧凑列表', desc: '序号 + 标题 + 一行描述。信息密度高，适合 CN 市场。' },
+];
+
 function HeroEditor({ c, setC }: { c: HeroContent; setC: (c: HeroContent) => void }) {
   return (
     <>
+      <LayoutPicker
+        label="布局"
+        value={c.layout ?? 'split'}
+        options={HERO_LAYOUTS}
+        onChange={(v) => setC({ ...c, layout: v })}
+      />
       <Field label="Eyebrow" value={c.eyebrow} onChange={(v) => setC({ ...c, eyebrow: v })} />
       <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline />
       <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} multiline />
@@ -113,6 +163,53 @@ function HeroEditor({ c, setC }: { c: HeroContent; setC: (c: HeroContent) => voi
         value={c.media}
         onChange={(m) => setC({ ...c, media: m })}
       />
+    </>
+  );
+}
+
+function BenefitsEditor({ c, setC }: { c: BenefitsContent; setC: (c: BenefitsContent) => void }) {
+  return (
+    <>
+      <LayoutPicker
+        label="布局"
+        value={c.layout ?? 'cards'}
+        options={BENEFITS_LAYOUTS}
+        onChange={(v) => setC({ ...c, layout: v })}
+      />
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <div className="label">Items</div>
+      <div className="space-y-3">
+        {c.items.map((it, i) => (
+          <div key={i} className="rounded-xl border border-ink-100 p-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <div className="text-xs text-ink-500">#{i + 1}</div>
+              <button
+                onClick={() => setC({ ...c, items: c.items.filter((_, j) => j !== i) })}
+                className="text-xs text-ink-500 hover:text-red-600"
+              >
+                remove
+              </button>
+            </div>
+            <Field label="Title" value={it.title} onChange={(v) => { const next = [...c.items]; next[i] = { ...it, title: v }; setC({ ...c, items: next }); }} />
+            <Field label="Body" value={it.body} onChange={(v) => { const next = [...c.items]; next[i] = { ...it, body: v }; setC({ ...c, items: next }); }} multiline />
+            {(c.layout === 'alternating') && (
+              <div className="mt-2">
+                <MediaField
+                  label="配图 (交替布局用)"
+                  value={it.media}
+                  onChange={(m) => { const next = [...c.items]; next[i] = { ...it, media: m }; setC({ ...c, items: next }); }}
+                />
+              </div>
+            )}
+          </div>
+        ))}
+        <button
+          onClick={() => setC({ ...c, items: [...c.items, { title: '', body: '' }] })}
+          className="btn btn-secondary w-full text-xs"
+        >
+          + Add item
+        </button>
+      </div>
     </>
   );
 }
