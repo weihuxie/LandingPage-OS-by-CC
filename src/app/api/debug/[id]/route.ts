@@ -6,6 +6,7 @@ import {
   readLandingPages,
   storageBackend,
 } from '@/lib/storage';
+import { kv } from '@vercel/kv';
 import { projectViewFromV2 } from '@/lib/migrate-v2';
 
 export const dynamic = 'force-dynamic';
@@ -14,25 +15,36 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
   const result: Record<string, any> = { id: params.id, steps: {} };
 
   try {
-    // Diagnostics
     result.steps.backend = storageBackend();
     result.steps.kvUrl = process.env.KV_REST_API_URL ? 'set' : 'NOT_SET';
 
-    // Read ALL pages first to see what getLandingPage is scanning
+    // RAW KV read — bypass my abstraction layer entirely
+    let rawKvPages: any[] = [];
+    try {
+      const raw = await kv.get('lp:v2:pages');
+      rawKvPages = Array.isArray(raw) ? raw : [];
+    } catch (e: any) {
+      result.steps.rawKvError = e?.message?.slice(0, 200);
+    }
+    result.steps.rawKvPagesCount = rawKvPages.length;
+    result.steps.rawKvPageIds = rawKvPages.map((p: any) => p?.id);
+    result.steps.rawKvSizeKB = Math.round(JSON.stringify(rawKvPages).length / 1024);
+    result.steps.rawKvHasTargetId = rawKvPages.some((p: any) => p?.id === params.id);
+
+    // Now through my abstraction
     const allPages = await readLandingPages();
-    result.steps.allPagesCount = allPages.length;
-    result.steps.allPageIds = allPages.map((p) => p.id);
-    // Estimate KV payload size to check if it's hitting Upstash limits
-    result.steps.estimatedKvSizeKB = Math.round(JSON.stringify(allPages).length / 1024);
+    result.steps.abstractionPagesCount = allPages.length;
+    result.steps.abstractionPageIds = allPages.map((p) => p.id);
 
     const page = await getLandingPage(params.id);
     result.steps.page = page ? { id: page.id, slug: page.slug, productId: page.productId } : null;
 
     if (!page) {
-      result.steps.pageResult = 'NOT_FOUND → notFound() would fire';
-      result.steps.hint = allPages.length === 0
-        ? 'readLandingPages() returned empty — KV might not have v2 data, or migration not run'
-        : `readLandingPages() returned ${allPages.length} pages but none match id='${params.id}'`;
+      result.steps.pageResult = 'NOT_FOUND';
+      result.steps.diagnosis =
+        rawKvPages.some((p: any) => p?.id === params.id)
+          ? 'FOUND in raw KV but NOT in abstraction — readRaw/readLandingPages has a bug'
+          : 'NOT in raw KV either — data was never written or was overwritten';
       return NextResponse.json(result);
     }
 
