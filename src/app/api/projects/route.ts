@@ -141,33 +141,8 @@ export async function POST(req: NextRequest) {
   };
 
   product.landingPageIds = [page.id, ...product.landingPageIds.filter((x) => x !== page.id)];
+  await saveProduct(product);
+  await saveLandingPage(page);
 
-  // Debug: explicit try/catch + verification to find the write bug
-  const debug: Record<string, any> = {};
-  try {
-    debug.beforeSaveProduct = true;
-    await saveProduct(product);
-    debug.productSaved = true;
-
-    debug.beforeSavePage = true;
-    debug.pageId = page.id;
-    await saveLandingPage(page);
-    debug.pageSaved = true;
-
-    // Verify: immediately read back
-    const { getLandingPage: glp, readLandingPages: rlp } = await import('@/lib/storage');
-    const readback = await glp(page.id);
-    debug.readbackFound = !!readback;
-    debug.readbackId = readback?.id;
-    const allAfter = await rlp();
-    debug.totalPagesAfterWrite = allAfter.length;
-
-    // Compare KV URL hash (truncated for security) to detect multi-DB issue
-    const kvUrl = process.env['KV_REST_API_URL'] ?? '';
-    debug.kvUrlHash = kvUrl ? kvUrl.slice(-12) : 'NOT_SET';
-  } catch (e: any) {
-    debug.error = { message: e?.message, stack: e?.stack?.slice(0, 300) };
-  }
-
-  return NextResponse.json({ id: page.id, slug: page.slug, _debug: debug });
+  return NextResponse.json({ id: page.id, slug: page.slug });
 }
