@@ -24,8 +24,28 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import type { ProductInputs, StrategySummary, PageLocale } from './types';
+import type {
+  ProductInputs,
+  StrategySummary,
+  PageLocale,
+  ToneKey,
+  ModuleType,
+  HeroContent,
+  PainContent,
+  BenefitsContent,
+  SolutionContent,
+  CTAContent,
+} from './types';
 import type { ExtractedContext } from './extract';
+
+/** Module types we wire through Claude; anything else falls back to template. */
+const CLAUDE_MODULE_TYPES: ReadonlySet<ModuleType> = new Set([
+  'hero',
+  'pain',
+  'benefits',
+  'solution',
+  'cta',
+]);
 
 export function hasClaudeKey(): boolean {
   // eslint-disable-next-line dot-notation
@@ -166,6 +186,241 @@ export async function generateStrategyViaClaude(
     // Typed errors would be nicer, but we just want to gracefully fall back
     // to the template. Log enough to diagnose in Vercel logs.
     console.error('[claude] strategy generation failed:', e?.message ?? e);
+    return null;
+  }
+}
+
+// ====================================================================
+// Module content regeneration
+// ====================================================================
+//
+// Shared design with strategy:
+//   - One STABLE system prompt, cache_control ephemeral → prompt caching
+//     amortizes cost across every module regen within 5 min.
+//   - Output constrained to per-type JSON schema.
+//   - Graceful null-return on any failure; caller falls back to template.
+//
+// Only the 5 text-heavy modules (hero/pain/benefits/solution/cta) route
+// here. Form/testimonial/socialProof/faq stay on templates — users author
+// those from the asset library, not from AI.
+
+const MODULE_SYSTEM = `You are a senior B2B SaaS landing-page copywriter. You rewrite ONE page module at a time.
+
+Given a product, a locale, a tone, a strategy summary (audience + goal + narrative + local adjustments), and the type of module requested, produce copy that:
+
+- Speaks in the target locale's language (zh-CN / zh-TW / ja / en). Never translate — write natively per locale.
+- Follows the tone: professional / executive / sales / friendly / saas / japanese (japanese = restrained, trust-first, no superlatives).
+- Reuses VERBATIM any customer names, metrics, or pain phrases supplied in the prompt. Do not invent data.
+- Uses short declarative sentences. Avoid filler, superlatives, and ad-speak.
+- Has exactly ONE primary CTA. Any secondary CTA must be lower-intensity.
+- Returns valid JSON matching the schema for the requested module type. Do not add extra fields.
+
+Module-specific constraints:
+
+HERO:
+- eyebrow: 2-4 words, UPPERCASE for Latin-script locales, short phrase for CJK.
+- headline: 1 sentence, <14 words (EN) / <22 chars (CJK). Outcome-first for paid/social traffic; question-first for SEO traffic.
+- subhead: 1-2 sentences expanding the headline. Concrete benefit.
+- primaryCta: 2-4 words, action verb first.
+- secondaryCta: optional, softer.
+- bullets: 3 items, each <60 chars, each a concrete deliverable.
+
+PAIN:
+- title: names the cost, not the feeling. E.g. "Your pipeline is leaking 22% to manual handoffs."
+- subtitle: 1 sentence that quantifies or scopes the cost.
+- items: 3-4 pain points. Each title <30 chars, body <80 chars. Start from symptoms the visitor recognizes.
+
+BENEFITS:
+- title: outcome-framed, not feature-framed. "Ship safer releases in half the cycle" not "Our CI platform".
+- items: 3-4 items, title <40 chars, body <100 chars. Each maps to a concrete capability, not a vague promise.
+
+SOLUTION:
+- title: what it is, in 1 line.
+- subtitle: 1 sentence of scope.
+- body: 2-3 sentences. Lead with what the user gets, end with how it differs.
+
+CTA:
+- headline: single sentence, outcome-focused.
+- subhead: 1 line, removes a last-mile objection (e.g. "No credit card. 14-day trial.").
+- button: 2-4 words, action verb.`;
+
+const HERO_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    eyebrow: { type: 'string' as const },
+    headline: { type: 'string' as const },
+    subhead: { type: 'string' as const },
+    primaryCta: { type: 'string' as const },
+    secondaryCta: { type: 'string' as const },
+    bullets: { type: 'array' as const, items: { type: 'string' as const } },
+  },
+  required: ['eyebrow', 'headline', 'subhead', 'primaryCta', 'bullets'],
+  additionalProperties: false,
+};
+
+const PAIN_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    title: { type: 'string' as const },
+    subtitle: { type: 'string' as const },
+    items: {
+      type: 'array' as const,
+      items: {
+        type: 'object' as const,
+        properties: {
+          title: { type: 'string' as const },
+          body: { type: 'string' as const },
+        },
+        required: ['title', 'body'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['title', 'subtitle', 'items'],
+  additionalProperties: false,
+};
+
+const BENEFITS_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    title: { type: 'string' as const },
+    items: {
+      type: 'array' as const,
+      items: {
+        type: 'object' as const,
+        properties: {
+          title: { type: 'string' as const },
+          body: { type: 'string' as const },
+        },
+        required: ['title', 'body'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['title', 'items'],
+  additionalProperties: false,
+};
+
+const SOLUTION_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    title: { type: 'string' as const },
+    subtitle: { type: 'string' as const },
+    body: { type: 'string' as const },
+  },
+  required: ['title', 'subtitle', 'body'],
+  additionalProperties: false,
+};
+
+const CTA_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    headline: { type: 'string' as const },
+    subhead: { type: 'string' as const },
+    button: { type: 'string' as const },
+  },
+  required: ['headline', 'subhead', 'button'],
+  additionalProperties: false,
+};
+
+const MODULE_SCHEMAS: Record<string, object> = {
+  hero: HERO_SCHEMA,
+  pain: PAIN_SCHEMA,
+  benefits: BENEFITS_SCHEMA,
+  solution: SOLUTION_SCHEMA,
+  cta: CTA_SCHEMA,
+};
+
+export type ClaudeModuleContent =
+  | HeroContent
+  | PainContent
+  | BenefitsContent
+  | SolutionContent
+  | CTAContent;
+
+/**
+ * Returns the new content object for a module (keyed off type), or null if:
+ *   - no API key
+ *   - module type isn't in our Claude-routed set
+ *   - the API call fails or returns malformed JSON
+ *
+ * Caller merges: `{ ...module, content: { ...module.content, ...returned } }`
+ * so fields we don't own (layout, media, bullets length guards, etc.) are
+ * preserved verbatim.
+ */
+export async function regenerateModuleViaClaude(
+  type: ModuleType,
+  inputs: ProductInputs,
+  strategy: StrategySummary,
+  tone: ToneKey,
+  locale: PageLocale,
+): Promise<Partial<ClaudeModuleContent> | null> {
+  if (!hasClaudeKey()) return null;
+  if (!CLAUDE_MODULE_TYPES.has(type)) return null;
+
+  const client = new Anthropic();
+  const schema = MODULE_SCHEMAS[type];
+  if (!schema) return null;
+
+  const productLines = [
+    `Product: ${inputs.name}`,
+    `Tagline: ${inputs.tagline || '(none)'}`,
+    `Category: ${inputs.category || '(unspecified)'}`,
+    `Core value: ${inputs.value || '(unspecified)'}`,
+    `Target market: ${inputs.market}`,
+    `Target locale: ${locale}`,
+    `Conversion goal: ${inputs.cta}`,
+    `Primary traffic source: ${inputs.source}`,
+    `Tone: ${tone}`,
+    `Audience: ${[inputs.industry, inputs.companySize, inputs.role].filter(Boolean).join(' · ') || '(unspecified)'}`,
+  ].join('\n');
+
+  const strategyLines = [
+    'Strategy summary (use this as the source of truth):',
+    `- Audience: ${strategy.audience.slice(0, 5).join(' | ')}`,
+    `- Goal: ${strategy.goal.slice(0, 4).join(' | ')}`,
+    `- Narrative: ${strategy.narrative.slice(0, 4).join(' | ')}`,
+    `- Local adjustments: ${strategy.local.slice(0, 4).join(' | ')}`,
+  ].join('\n');
+
+  const userPrompt = [
+    productLines,
+    '',
+    strategyLines,
+    '',
+    `Rewrite the ${type.toUpperCase()} module. Output JSON matching the ${type} schema, in ${locale}. Tone: ${tone}.`,
+  ].join('\n');
+
+  try {
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      // Adaptive is overkill per-module; disable for faster regens.
+      system: [
+        {
+          type: 'text',
+          text: MODULE_SYSTEM,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
+      output_config: {
+        format: {
+          type: 'json_schema',
+          schema,
+        },
+      } as any,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+
+    const textBlock = response.content.find((b) => b.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') return null;
+
+    const parsed = JSON.parse(textBlock.text);
+    // Minimal shape check — schema already enforces, but be defensive.
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as Partial<ClaudeModuleContent>;
+  } catch (e: any) {
+    console.error(`[claude] module regen failed (${type}):`, e?.message ?? e);
     return null;
   }
 }

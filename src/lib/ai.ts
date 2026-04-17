@@ -9,7 +9,7 @@ import type {
 } from './types';
 import { nanoid } from 'nanoid';
 import type { ExtractedContext } from './extract';
-import { generateStrategyViaClaude } from './llm-claude';
+import { generateStrategyViaClaude, regenerateModuleViaClaude } from './llm-claude';
 
 // --- Localized snippets --------------------------------------------------
 
@@ -879,7 +879,41 @@ export function seedVideoEmbed(inputs: ProductInputs) {
 
 // --- Regenerate copy (per-module) --------------------------------------
 
-export function regenerateModule(
+/**
+ * Async: try Claude for the 5 text-heavy modules (hero/pain/benefits/solution/
+ * cta), otherwise fall through to the template path. Caller must pass the
+ * current page strategy + locale so Claude has the context it needs.
+ *
+ * We MERGE the returned fields onto existing content instead of replacing —
+ * that preserves layout, media, bullets we don't own, etc.
+ */
+export async function regenerateModule(
+  module: PageModule,
+  inputs: ProductInputs,
+  tone: ToneKey,
+  strategy?: StrategySummary,
+  locale?: LocaleCode,
+): Promise<PageModule> {
+  if (strategy && locale) {
+    const live = await regenerateModuleViaClaude(
+      module.type,
+      inputs,
+      strategy,
+      tone,
+      locale,
+    );
+    if (live) {
+      return {
+        ...module,
+        content: { ...(module.content as any), ...live },
+      };
+    }
+  }
+  return regenerateModuleTemplated(module, inputs, tone);
+}
+
+/** Template-only regen, kept for tests and as fallback. */
+export function regenerateModuleTemplated(
   module: PageModule,
   inputs: ProductInputs,
   tone: ToneKey,

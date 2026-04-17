@@ -113,7 +113,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const idx = mods.findIndex((m) => m.id === body.regenerateModuleId);
     if (idx !== -1) {
       const tone = body.newTone ?? page.tone;
-      mods[idx] = regenerateModule(mods[idx], inputs, tone);
+      mods[idx] = await regenerateModule(
+        mods[idx],
+        inputs,
+        tone,
+        page.strategy,
+        page.defaultLocale,
+      );
       page.variants[v][page.defaultLocale] = mods;
       if (body.newTone) page.tone = tone;
     }
