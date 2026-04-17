@@ -81,7 +81,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     } catch {}
   }
 
-  const strategy = generateStrategy(inputs, context);
+  const strategy = await generateStrategy(inputs, context);
   const variants = generateVariants(inputs, tone, strategy, context);
 
   const name = body.name ?? '主站';

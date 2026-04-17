@@ -34,6 +34,6 @@ export async function POST(req: NextRequest) {
   }
   const merged = contexts.length ? mergeContexts(contexts) : undefined;
 
-  const strategy = generateStrategy(inputs, merged);
+  const strategy = await generateStrategy(inputs, merged);
   return NextResponse.json({ strategy, context: merged });
 }

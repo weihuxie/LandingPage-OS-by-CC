@@ -9,6 +9,7 @@ import type {
 } from './types';
 import { nanoid } from 'nanoid';
 import type { ExtractedContext } from './extract';
+import { generateStrategyViaClaude } from './llm-claude';
 
 // --- Localized snippets --------------------------------------------------
 
@@ -288,7 +289,27 @@ const marketStrategyText = (market: MarketCode, locale: LocaleCode): string[] =>
 
 // --- Strategy generator -------------------------------------------------
 
-export function generateStrategy(
+/**
+ * Async entry: try Claude (real API with prompt caching) first.
+ * If the API key is missing OR the call fails, fall back to the deterministic
+ * templated generator — the rest of the pipeline never sees the difference.
+ *
+ * All existing callers should `await generateStrategy(...)`.
+ */
+export async function generateStrategy(
+  inputs: ProductInputs,
+  context?: ExtractedContext,
+): Promise<StrategySummary> {
+  const live = await generateStrategyViaClaude(inputs, context);
+  if (live) return live;
+  return generateStrategyTemplated(inputs, context);
+}
+
+/**
+ * Deterministic template-based strategy — used as fallback when Claude is
+ * unavailable and kept exported for tests / offline dev.
+ */
+export function generateStrategyTemplated(
   inputs: ProductInputs,
   context?: ExtractedContext,
 ): StrategySummary {

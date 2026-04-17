@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
   }
   const context = ctxs.length ? mergeContexts(ctxs) : undefined;
 
-  const strategy = body.strategy ?? generateStrategy(body.inputs, context);
+  const strategy = body.strategy ?? (await generateStrategy(body.inputs, context));
   const variants = generateVariants(body.inputs, tone, strategy, context);
   const now = Date.now();
 

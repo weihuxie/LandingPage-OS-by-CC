@@ -2,12 +2,17 @@
  * LLM Orchestrator — Hybrid routing per PRD v5.1 §4.1
  *
  *   Gemini 1.5 Pro   → long document ingestion (manuals, whitepapers) → extract facts
- *   Claude 3.5 Sonnet → structured JSON copywriting, module content generation
+ *   Claude Opus 4.6  → structured JSON copywriting, module + strategy generation
  *   GPT-4o            → multilingual localization + cultural self-check
  *
  * Keys are platform-hosted (ENV). Users never configure.
  * If a key is missing, the adapter falls back to deterministic templated output
  * (so the app remains fully functional in dev and self-hosted environments).
+ *
+ * NOTE: strategy generation is wired directly in `ai.ts` via `llm-claude.ts`
+ * (bypasses this generic dispatcher so we can use structured-JSON outputs and
+ * prompt caching without making this router generic-over-schema). This file
+ * remains the entry-point for modules / localization / ingestion.
  */
 
 export type LLMTask =
@@ -42,31 +47,37 @@ const route: Record<LLMTask, 'gemini' | 'claude' | 'openai'> = {
 };
 
 // --- Key availability (platform-hosted) ---------------------------------
+// IMPORTANT: bracket notation — webpack DefinePlugin inlines dot-access at
+// build time on Vercel, which would permanently ship "no key" regardless of
+// the runtime env. See CLAUDE.md §一.4 for the matching KV-env footgun.
 
-const hasKey = {
-  claude: !!process.env.ANTHROPIC_API_KEY,
-  gemini: !!process.env.GOOGLE_API_KEY,
-  openai: !!process.env.OPENAI_API_KEY,
-};
+function hasKey() {
+  /* eslint-disable dot-notation */
+  return {
+    claude: !!process.env['ANTHROPIC_API_KEY'],
+    gemini: !!process.env['GOOGLE_API_KEY'],
+    openai: !!process.env['OPENAI_API_KEY'],
+  };
+  /* eslint-enable dot-notation */
+}
 
 // --- Adapters -----------------------------------------------------------
 
 async function claudeAdapter<T>(req: LLMRequest): Promise<LLMResponse<T>> {
-  if (!hasKey.claude) return mockAdapter<T>(req);
-  // TODO: wire @anthropic-ai/sdk with prompt caching enabled.
-  // Prompt cache: system prompt + asset library are cache-hit across calls.
-  // For now, the platform operator drops in the real implementation here.
+  if (!hasKey().claude) return mockAdapter<T>(req);
+  // generate.strategy is handled directly in ai.ts via llm-claude.ts.
+  // Modules / regenerate / audit still templated until wired.
   return mockAdapter<T>(req);
 }
 
 async function geminiAdapter<T>(req: LLMRequest): Promise<LLMResponse<T>> {
-  if (!hasKey.gemini) return mockAdapter<T>(req);
+  if (!hasKey().gemini) return mockAdapter<T>(req);
   // TODO: @google/generative-ai for long-doc ingestion (1M token context).
   return mockAdapter<T>(req);
 }
 
 async function openaiAdapter<T>(req: LLMRequest): Promise<LLMResponse<T>> {
-  if (!hasKey.openai) return mockAdapter<T>(req);
+  if (!hasKey().openai) return mockAdapter<T>(req);
   // TODO: openai SDK, gpt-4o, for cultural localization + voice matching.
   return mockAdapter<T>(req);
 }
@@ -99,9 +110,12 @@ export async function dispatch<T>(req: LLMRequest): Promise<LLMResponse<T>> {
 // --- Introspection (used by /api/health and admin debug panel) ----------
 
 export function providerStatus() {
+  const h = hasKey();
   return {
-    claude: hasKey.claude ? 'live' : 'mock',
-    gemini: hasKey.gemini ? 'live' : 'mock',
-    openai: hasKey.openai ? 'live' : 'mock',
+    // strategy.generate is live when Claude key exists; other Claude tasks
+    // still fall through to templates until each is wired.
+    claude: h.claude ? 'live' : 'mock',
+    gemini: h.gemini ? 'live' : 'mock',
+    openai: h.openai ? 'live' : 'mock',
   };
 }

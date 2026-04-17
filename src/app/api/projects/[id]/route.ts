@@ -82,14 +82,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   };
 
   if (body.editStrategy) page.strategy = body.editStrategy;
-  if (body.regenerateStrategyAll) page.strategy = generateStrategy(inputs);
+  if (body.regenerateStrategyAll) page.strategy = await generateStrategy(inputs);
   else if (body.regenerateStrategyBlock) {
-    const fresh = generateStrategy(inputs);
+    const fresh = await generateStrategy(inputs);
     const key = body.regenerateStrategyBlock as StrategyBlock;
     page.strategy = { ...page.strategy, [key]: fresh[key] };
   } else if (body.regenerateStrategyLine) {
     const { block, index } = body.regenerateStrategyLine as { block: StrategyBlock; index: number };
-    const fresh = generateStrategy(inputs);
+    const fresh = await generateStrategy(inputs);
     const next = [...page.strategy[block]];
     if (fresh[block][index] !== undefined) next[index] = fresh[block][index];
     page.strategy = { ...page.strategy, [block]: next };
