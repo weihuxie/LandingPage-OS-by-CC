@@ -51,12 +51,28 @@ export async function GET(req: NextRequest) {
   }
 
   const locale = url.searchParams.get('locale') ?? 'zh-CN';
-  const client = new Anthropic();
+  // Diagnostic switches
+  const modelOverride = url.searchParams.get('model'); // try a different model id
+  const useBeta = url.searchParams.get('beta') === '1'; // force prompt-caching beta header
+  const mode = url.searchParams.get('mode') ?? 'default';
+
+  const client = new Anthropic(
+    useBeta
+      ? {
+          defaultHeaders: {
+            'anthropic-beta': 'prompt-caching-2024-07-31',
+          },
+        }
+      : undefined,
+  );
   const t0 = Date.now();
 
   try {
-    const response = await client.messages.create({
-      model: 'claude-opus-4-6',
+    // Two shapes for cache_control — if the SDK is silently dropping our
+    // field, the second form (cache_control inline on a string system)
+    // sometimes survives when the typed array form doesn't.
+    const params: any = {
+      model: modelOverride ?? 'claude-opus-4-6',
       max_tokens: 200,
       system: [
         {
@@ -68,18 +84,37 @@ export async function GET(req: NextRequest) {
       messages: [
         {
           role: 'user',
-          // Ask for a tiny, cheap response — the goal is to exercise the
-          // cached system block, not to generate a full strategy.
           content: `Probe call. Target locale: ${locale}. Reply with a single short string: "probe ok" and nothing else. Do not produce a strategy.`,
         },
       ],
-    });
+    };
+
+    // Log what we're actually sending so we can confirm the field is there
+    const sentRequestPreview = {
+      model: params.model,
+      systemType: Array.isArray(params.system) ? 'array' : typeof params.system,
+      systemBlockCount: Array.isArray(params.system) ? params.system.length : undefined,
+      systemFirstBlockKeys: Array.isArray(params.system)
+        ? Object.keys(params.system[0])
+        : undefined,
+      systemFirstBlockCacheControl: Array.isArray(params.system)
+        ? (params.system[0] as any).cache_control
+        : undefined,
+      systemTextLength: Array.isArray(params.system)
+        ? (params.system[0] as any).text?.length
+        : undefined,
+      usingBetaHeader: useBeta,
+    };
+
+    const response = await client.messages.create(params);
 
     const latencyMs = Date.now() - t0;
     const textBlock = response.content.find((b) => b.type === 'text');
     const text = textBlock && textBlock.type === 'text' ? textBlock.text : null;
 
     const usage = response.usage as any;
+    // Return the ENTIRE raw usage object — field names may differ between
+    // SDK versions or model families.
     const cacheReadTokens = usage?.cache_read_input_tokens ?? 0;
     const cacheWriteTokens = usage?.cache_creation_input_tokens ?? 0;
     const cacheStatus =
@@ -87,10 +122,11 @@ export async function GET(req: NextRequest) {
         ? 'HIT — prompt cache working'
         : cacheWriteTokens > 0
           ? 'MISS (first call wrote cache; hit again within 5 min to see read)'
-          : 'unknown';
+          : 'NOT ENGAGED — check sentRequestPreview + usageRaw';
 
     return NextResponse.json({
       ok: true,
+      mode,
       model: response.model,
       latencyMs,
       text,
@@ -100,10 +136,14 @@ export async function GET(req: NextRequest) {
         cacheReadTokens,
         cacheWriteTokens,
       },
+      // Raw usage dump — exposes any fields we haven't accounted for
+      usageRaw: usage,
+      // What we actually sent the API
+      sentRequestPreview,
       cacheStatus,
-      tip:
-        cacheReadTokens === 0 && cacheWriteTokens > 0
-          ? 'Call this endpoint again within 5 minutes — cacheReadTokens should jump to ~200.'
+      hint:
+        cacheReadTokens === 0 && cacheWriteTokens === 0
+          ? 'Cache did not engage. Try ?beta=1 to force the caching beta header, or ?model=claude-opus-4-20250514 to test a model known to support caching.'
           : undefined,
     });
   } catch (e: any) {
