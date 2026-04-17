@@ -67,6 +67,73 @@ export function hasClaudeKey(): boolean {
 const MODEL = 'claude-opus-4-20250514';
 const MAX_TOKENS = 4096;
 
+/**
+ * Robust JSON extractor. Claude is told (in the system prompt) to return
+ * bare JSON, but real model behavior:
+ *   - sometimes wraps in ```json ... ``` fences
+ *   - occasionally prefaces with a line of prose ("Here is the JSON:")
+ *   - very rarely appends a trailing summary sentence
+ *
+ * Silently swallowing JSON.parse failures (the previous behavior) looked
+ * indistinguishable from "no API key" — the user sees templates either
+ * way. This extractor handles all three cases by first trying the raw
+ * text, then stripping fences, then locating the outermost balanced
+ * {...} region. Returns null only when there is genuinely no JSON object
+ * in the response, at which point the caller falls back to template AND
+ * logs the raw text to Vercel logs so we can diagnose.
+ *
+ * Exported so the diagnostic probe can exercise the same code path.
+ */
+export function extractJsonObject<T = unknown>(text: string): T | null {
+  if (!text) return null;
+  // 1. direct parse
+  try {
+    return JSON.parse(text) as T;
+  } catch {}
+  // 2. strip ```json / ``` fences
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fenced?.[1]) {
+    try {
+      return JSON.parse(fenced[1]) as T;
+    } catch {}
+  }
+  // 3. outermost balanced {...} — scan for first "{" then count braces
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        const candidate = text.slice(start, i + 1);
+        try {
+          return JSON.parse(candidate) as T;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 // --- Strategy system prompt (STABLE — this is what gets cached) --------
 //
 // Intentionally verbose. Prompt caching has a 1024-token minimum prefix
@@ -184,9 +251,17 @@ export async function generateStrategyViaClaude(
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      thinking: { type: 'adaptive' },
-      // Cache the (large, stable) system prompt. First call pays write; all
-      // subsequent calls within 5 minutes across any product pay ~0.1×.
+      // Why NOT thinking:adaptive / output_config here:
+      //   - older pinned Opus 4 (20250514) pre-dates structured-output GA and
+      //     may 400 on output_config; that was masked by our `as any` cast +
+      //     silent null-return + template fallback, which looked exactly
+      //     like "no API key" from the UI (bug report: strategy panel
+      //     showed template copy despite key being set).
+      //   - thinking:adaptive adds latency without measurably improving
+      //     the 4-block strategy output, which is tightly constrained by
+      //     the system prompt already.
+      //   - we rely on the system prompt + extractJsonObject to get JSON
+      //     out reliably. Verified via /api/llm-probe?mode=strategy.
       system: [
         {
           type: 'text',
@@ -194,35 +269,38 @@ export async function generateStrategyViaClaude(
           cache_control: { type: 'ephemeral' },
         },
       ],
-      // Constrain the response to the JSON schema we actually parse.
-      output_config: {
-        format: {
-          type: 'json_schema',
-          schema: STRATEGY_SCHEMA,
-        },
-      } as any,
       messages: [{ role: 'user', content: userPrompt }],
     });
 
-    // Response content is typed blocks; find the text block and parse JSON.
     const textBlock = response.content.find((b) => b.type === 'text');
-    if (!textBlock || textBlock.type !== 'text') return null;
+    if (!textBlock || textBlock.type !== 'text') {
+      console.error('[claude] strategy: no text block in response; content types:',
+        response.content.map((b) => b.type).join(','));
+      return null;
+    }
 
-    const parsed = JSON.parse(textBlock.text) as StrategySummary;
-    // Basic shape validation — model could still slip through
+    const parsed = extractJsonObject<StrategySummary>(textBlock.text);
+    if (!parsed) {
+      console.error('[claude] strategy: could not extract JSON from response. Raw (first 400 chars):',
+        textBlock.text.slice(0, 400));
+      return null;
+    }
     if (
       !Array.isArray(parsed.audience) ||
       !Array.isArray(parsed.goal) ||
       !Array.isArray(parsed.narrative) ||
       !Array.isArray(parsed.local)
     ) {
+      console.error('[claude] strategy: JSON missing required arrays. Keys:',
+        Object.keys(parsed as object).join(','));
       return null;
     }
     return parsed;
   } catch (e: any) {
-    // Typed errors would be nicer, but we just want to gracefully fall back
-    // to the template. Log enough to diagnose in Vercel logs.
-    console.error('[claude] strategy generation failed:', e?.message ?? e);
+    // Log enough to diagnose in Vercel logs. status + full message helps
+    // distinguish 400 (bad request) from 401 (bad key) from 529 (overload).
+    console.error('[claude] strategy generation failed:',
+      e?.status ?? '', e?.message ?? e);
     return null;
   }
 }
@@ -408,8 +486,10 @@ export async function regenerateModuleViaClaude(
   if (!CLAUDE_MODULE_TYPES.has(type)) return null;
 
   const client = new Anthropic();
-  const schema = MODULE_SCHEMAS[type];
-  if (!schema) return null;
+  // MODULE_SCHEMAS are kept as documentation of the expected output shape
+  // (see extractJsonObject usage below). They are not passed to the API
+  // today because output_config is unreliable on the pinned Opus model.
+  if (!MODULE_SCHEMAS[type]) return null;
 
   const productLines = [
     `Product: ${inputs.name}`,
@@ -444,7 +524,10 @@ export async function regenerateModuleViaClaude(
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      // Adaptive is overkill per-module; disable for faster regens.
+      // See strategy call for rationale on why we dropped thinking /
+      // output_config. Schema is still shipped in MODULE_SYSTEM as a
+      // text spec ("Return JSON matching the requested module's schema")
+      // and enforced by extractJsonObject + per-module shape check.
       system: [
         {
           type: 'text',
@@ -452,24 +535,26 @@ export async function regenerateModuleViaClaude(
           cache_control: { type: 'ephemeral' },
         },
       ],
-      output_config: {
-        format: {
-          type: 'json_schema',
-          schema,
-        },
-      } as any,
       messages: [{ role: 'user', content: userPrompt }],
     });
 
     const textBlock = response.content.find((b) => b.type === 'text');
-    if (!textBlock || textBlock.type !== 'text') return null;
+    if (!textBlock || textBlock.type !== 'text') {
+      console.error(`[claude] module ${type}: no text block; content types:`,
+        response.content.map((b) => b.type).join(','));
+      return null;
+    }
 
-    const parsed = JSON.parse(textBlock.text);
-    // Minimal shape check — schema already enforces, but be defensive.
-    if (!parsed || typeof parsed !== 'object') return null;
-    return parsed as Partial<ClaudeModuleContent>;
+    const parsed = extractJsonObject<Partial<ClaudeModuleContent>>(textBlock.text);
+    if (!parsed || typeof parsed !== 'object') {
+      console.error(`[claude] module ${type}: could not extract JSON. Raw (first 300):`,
+        textBlock.text.slice(0, 300));
+      return null;
+    }
+    return parsed;
   } catch (e: any) {
-    console.error(`[claude] module regen failed (${type}):`, e?.message ?? e);
+    console.error(`[claude] module regen failed (${type}):`,
+      e?.status ?? '', e?.message ?? e);
     return null;
   }
 }
