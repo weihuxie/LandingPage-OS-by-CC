@@ -85,6 +85,21 @@ export async function GET(req: NextRequest) {
       `Produce the strategy summary per your framework. Write audience/goal/narrative in ${locale}; write local in ${locale}.`,
     ].join('\n');
 
+    const strategyTool = {
+      name: 'emit_strategy',
+      description: 'Emit the four-part strategy summary.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          audience: { type: 'array', items: { type: 'string' } },
+          goal: { type: 'array', items: { type: 'string' } },
+          narrative: { type: 'array', items: { type: 'string' } },
+          local: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['audience', 'goal', 'narrative', 'local'],
+      },
+    };
+
     try {
       const response = await client.messages.create({
         model: modelOverride ?? 'claude-opus-4-20250514',
@@ -96,23 +111,36 @@ export async function GET(req: NextRequest) {
             cache_control: { type: 'ephemeral' },
           },
         ],
+        tools: [strategyTool],
+        tool_choice: { type: 'tool', name: 'emit_strategy' },
         messages: [{ role: 'user', content: userPrompt }],
       });
 
       const latencyMs = Date.now() - t0;
       const contentTypes = response.content.map((b) => b.type);
-      const textBlock = response.content.find((b) => b.type === 'text');
-      const rawText =
-        textBlock && textBlock.type === 'text' ? textBlock.text : null;
 
+      // Primary: tool_use block with validated input
+      const toolUse = response.content.find((b) => b.type === 'tool_use');
       let parsed: any = null;
       let parseError: string | null = null;
-      if (rawText) {
-        try {
-          parsed = extractJsonObject(rawText);
-          if (!parsed) parseError = 'extractJsonObject returned null';
-        } catch (pe: any) {
-          parseError = pe?.message ?? String(pe);
+      let rawText: string | null = null;
+
+      if (toolUse && toolUse.type === 'tool_use') {
+        parsed = toolUse.input;
+      } else {
+        // Fallback path: model returned text despite forced tool_choice
+        const textBlock = response.content.find((b) => b.type === 'text');
+        rawText =
+          textBlock && textBlock.type === 'text' ? textBlock.text : null;
+        if (rawText) {
+          try {
+            parsed = extractJsonObject(rawText);
+            if (!parsed) parseError = 'extractJsonObject returned null';
+          } catch (pe: any) {
+            parseError = pe?.message ?? String(pe);
+          }
+        } else {
+          parseError = 'no tool_use and no text block';
         }
       }
 
@@ -132,9 +160,7 @@ export async function GET(req: NextRequest) {
         model: response.model,
         stopReason: response.stop_reason,
         contentBlockTypes: contentTypes,
-        // Always include raw text so you can see EXACTLY what Claude
-        // returned when parsing fails (e.g. markdown fences, preamble,
-        // wrong language, refusal). Trimmed to keep payload small.
+        usedToolUse: !!(toolUse && toolUse.type === 'tool_use'),
         rawTextPreview: rawText ? rawText.slice(0, 1500) : null,
         rawTextLength: rawText?.length ?? 0,
         parseError,

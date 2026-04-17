@@ -198,6 +198,24 @@ const STRATEGY_SCHEMA = {
 };
 
 /**
+ * Tool-use definition. Using Anthropic's tool-use API instead of asking
+ * the model to emit raw JSON in its text response: the API validates
+ * tool input against the schema server-side and guarantees valid JSON,
+ * which eliminates the class of bugs where Claude emits unescaped inner
+ * quotes inside CJK string values (real production failure:
+ *   "强调效率和密度：突出"11小时/周"的具体数字"
+ * — the inner `"11小时/周"` made JSON.parse fail). Forcing tool_choice
+ * to this tool makes Claude call it on every turn.
+ */
+const STRATEGY_TOOL_NAME = 'emit_strategy';
+const STRATEGY_TOOL = {
+  name: STRATEGY_TOOL_NAME,
+  description:
+    'Emit the four-part strategy summary. Each array must contain 3-5 short declarative strings in the target locale.',
+  input_schema: STRATEGY_SCHEMA,
+};
+
+/**
  * Produce a StrategySummary via real Claude API call.
  * Returns null when the key is missing or the call fails — caller falls back
  * to the deterministic template path in ai.ts.
@@ -251,17 +269,15 @@ export async function generateStrategyViaClaude(
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      // Why NOT thinking:adaptive / output_config here:
-      //   - older pinned Opus 4 (20250514) pre-dates structured-output GA and
-      //     may 400 on output_config; that was masked by our `as any` cast +
-      //     silent null-return + template fallback, which looked exactly
-      //     like "no API key" from the UI (bug report: strategy panel
-      //     showed template copy despite key being set).
-      //   - thinking:adaptive adds latency without measurably improving
-      //     the 4-block strategy output, which is tightly constrained by
-      //     the system prompt already.
-      //   - we rely on the system prompt + extractJsonObject to get JSON
-      //     out reliably. Verified via /api/llm-probe?mode=strategy.
+      // Tool-use for structured output. The Anthropic API validates the
+      // tool input against STRATEGY_SCHEMA server-side, so we always get
+      // syntactically valid JSON back — no more quote-escaping bugs on
+      // CJK output. tool_choice forces the model to call this tool on
+      // every turn; there is no "regular" text response path.
+      //
+      // Text fallback (extractJsonObject) is retained below in case a
+      // future model somehow returns a text block; in practice with
+      // tool_choice set, all content comes in a tool_use block.
       system: [
         {
           type: 'text',
@@ -269,19 +285,38 @@ export async function generateStrategyViaClaude(
           cache_control: { type: 'ephemeral' },
         },
       ],
+      tools: [STRATEGY_TOOL],
+      tool_choice: { type: 'tool', name: STRATEGY_TOOL_NAME },
       messages: [{ role: 'user', content: userPrompt }],
     });
 
+    // Preferred path: tool_use block with validated input.
+    const toolUse = response.content.find((b) => b.type === 'tool_use');
+    if (toolUse && toolUse.type === 'tool_use') {
+      const parsed = toolUse.input as StrategySummary;
+      if (
+        parsed &&
+        Array.isArray(parsed.audience) &&
+        Array.isArray(parsed.goal) &&
+        Array.isArray(parsed.narrative) &&
+        Array.isArray(parsed.local)
+      ) {
+        return parsed;
+      }
+      console.error('[claude] strategy: tool_use shape mismatch. Keys:',
+        Object.keys((parsed ?? {}) as object).join(','));
+    }
+
+    // Fallback: some SDK versions / settings may still return text. Parse it.
     const textBlock = response.content.find((b) => b.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
-      console.error('[claude] strategy: no text block in response; content types:',
+      console.error('[claude] strategy: no tool_use or text block. Content types:',
         response.content.map((b) => b.type).join(','));
       return null;
     }
-
     const parsed = extractJsonObject<StrategySummary>(textBlock.text);
     if (!parsed) {
-      console.error('[claude] strategy: could not extract JSON from response. Raw (first 400 chars):',
+      console.error('[claude] strategy: could not extract JSON from text fallback. Raw (first 400):',
         textBlock.text.slice(0, 400));
       return null;
     }
@@ -297,8 +332,6 @@ export async function generateStrategyViaClaude(
     }
     return parsed;
   } catch (e: any) {
-    // Log enough to diagnose in Vercel logs. status + full message helps
-    // distinguish 400 (bad request) from 401 (bad key) from 529 (overload).
     console.error('[claude] strategy generation failed:',
       e?.status ?? '', e?.message ?? e);
     return null;
@@ -458,6 +491,27 @@ const MODULE_SCHEMAS: Record<string, object> = {
   cta: CTA_SCHEMA,
 };
 
+/**
+ * Per-module tool definitions. Same reasoning as STRATEGY_TOOL: we pass
+ * these as tools + force tool_choice so Claude emits validated JSON via
+ * tool_use instead of free-form text (which is where the CJK-quote
+ * escaping bugs lived).
+ */
+const MODULE_TOOL_NAMES: Record<string, string> = {
+  hero: 'emit_hero',
+  pain: 'emit_pain',
+  benefits: 'emit_benefits',
+  solution: 'emit_solution',
+  cta: 'emit_cta',
+};
+const MODULE_TOOL_DESCRIPTIONS: Record<string, string> = {
+  hero: 'Emit rewritten hero module content in the target locale.',
+  pain: 'Emit rewritten pain module content in the target locale.',
+  benefits: 'Emit rewritten benefits module content in the target locale.',
+  solution: 'Emit rewritten solution module content in the target locale.',
+  cta: 'Emit rewritten CTA module content in the target locale.',
+};
+
 export type ClaudeModuleContent =
   | HeroContent
   | PainContent
@@ -517,17 +571,23 @@ export async function regenerateModuleViaClaude(
     '',
     strategyLines,
     '',
-    `Rewrite the ${type.toUpperCase()} module. Output JSON matching the ${type} schema, in ${locale}. Tone: ${tone}.`,
+    `Rewrite the ${type.toUpperCase()} module. Call the ${MODULE_TOOL_NAMES[type]} tool with the content in ${locale}. Tone: ${tone}.`,
   ].join('\n');
+
+  const toolName = MODULE_TOOL_NAMES[type];
+  const tool = {
+    name: toolName,
+    description: MODULE_TOOL_DESCRIPTIONS[type],
+    input_schema: MODULE_SCHEMAS[type] as any,
+  };
 
   try {
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      // See strategy call for rationale on why we dropped thinking /
-      // output_config. Schema is still shipped in MODULE_SYSTEM as a
-      // text spec ("Return JSON matching the requested module's schema")
-      // and enforced by extractJsonObject + per-module shape check.
+      // Tool-use structured output. See STRATEGY_TOOL comment — same
+      // reasoning. Prevents the "unescaped inner double quote in CJK
+      // string" class of JSON.parse failures.
       system: [
         {
           type: 'text',
@@ -535,19 +595,29 @@ export async function regenerateModuleViaClaude(
           cache_control: { type: 'ephemeral' },
         },
       ],
+      tools: [tool],
+      tool_choice: { type: 'tool', name: toolName },
       messages: [{ role: 'user', content: userPrompt }],
     });
 
+    // Preferred path: tool_use with validated input.
+    const toolUse = response.content.find((b) => b.type === 'tool_use');
+    if (toolUse && toolUse.type === 'tool_use') {
+      const parsed = toolUse.input as Partial<ClaudeModuleContent>;
+      if (parsed && typeof parsed === 'object') return parsed;
+      console.error(`[claude] module ${type}: tool_use input not an object`);
+    }
+
+    // Fallback: text block (shouldn't happen with forced tool_choice).
     const textBlock = response.content.find((b) => b.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
-      console.error(`[claude] module ${type}: no text block; content types:`,
+      console.error(`[claude] module ${type}: no tool_use or text block. Content types:`,
         response.content.map((b) => b.type).join(','));
       return null;
     }
-
     const parsed = extractJsonObject<Partial<ClaudeModuleContent>>(textBlock.text);
     if (!parsed || typeof parsed !== 'object') {
-      console.error(`[claude] module ${type}: could not extract JSON. Raw (first 300):`,
+      console.error(`[claude] module ${type}: could not extract JSON from text fallback. Raw (first 300):`,
         textBlock.text.slice(0, 300));
       return null;
     }
