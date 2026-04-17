@@ -14,7 +14,7 @@ import {
   saveLandingPage,
 } from '@/lib/storage';
 import { generateStrategy, generateVariants } from '@/lib/ai';
-import { extractFromText, mergeContexts } from '@/lib/extract';
+import { extractFromTextSmart, mergeContexts } from '@/lib/extract';
 import { extractSiteContent } from '@/lib/brand';
 import { defaultStyleForMarket } from '@/lib/styles';
 import { makeSlug } from '@/lib/slug';
@@ -52,13 +52,13 @@ export async function POST(req: NextRequest) {
   // Build extracted context from paste + URLs + already-extracted file contexts
   const ctxs = [] as any[];
   if (body.inputs.pastedContent?.trim()) {
-    ctxs.push(extractFromText(body.inputs.pastedContent, 'paste'));
+    ctxs.push(await extractFromTextSmart(body.inputs.pastedContent, 'paste'));
   }
   if (Array.isArray(body.inputs.referenceUrls)) {
     for (const url of body.inputs.referenceUrls.slice(0, 3)) {
       try {
         const siteText = await extractSiteContent(url);
-        if (siteText) ctxs.push(extractFromText(siteText, 'url'));
+        if (siteText) ctxs.push(await extractFromTextSmart(siteText, 'url'));
       } catch {}
     }
   }

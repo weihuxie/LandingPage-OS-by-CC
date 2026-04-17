@@ -7,7 +7,7 @@ import {
   readLandingPages,
 } from '@/lib/storage';
 import { generateStrategy, generateVariants } from '@/lib/ai';
-import { extractFromText, mergeContexts } from '@/lib/extract';
+import { extractFromTextSmart, mergeContexts } from '@/lib/extract';
 import { extractSiteContent } from '@/lib/brand';
 import { defaultStyleForMarket } from '@/lib/styles';
 import { makeSlug } from '@/lib/slug';
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (product.website) {
     try {
       const siteText = await extractSiteContent(product.website);
-      if (siteText) context = mergeContexts([extractFromText(siteText, 'url')]);
+      if (siteText) context = mergeContexts([await extractFromTextSmart(siteText, 'url')]);
     } catch {}
   }
 

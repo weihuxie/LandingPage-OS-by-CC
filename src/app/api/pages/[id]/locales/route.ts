@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getLandingPage, saveLandingPage, getProduct } from '@/lib/storage';
 import { generateVariants } from '@/lib/ai';
 import { pickTopTestimonials, testimonialsToModuleItems } from '@/lib/testimonial-match';
+import { localizeModulesViaGpt } from '@/lib/llm-openai';
 import type { LandingPage, PageLocale, LocalizationStrategy } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -110,8 +111,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
   }
 
-  page.variants.A[locale] = variants.A;
-  page.variants.B[locale] = variants.B;
+  // Route each variant's text-heavy modules through GPT-4o for native
+  // rewriting in the target locale. Falls back to templated variants when
+  // the OpenAI key is missing or the call fails. Runs A and B in parallel
+  // (~5 modules each, Promise.all-ed internally, so bounded by slowest call).
+  const targetMarketForLocalize = body.strategy?.targetMarket ?? page.targetMarket;
+  const [localizedA, localizedB] = await Promise.all([
+    localizeModulesViaGpt(variants.A, locale, targetMarketForLocalize, page.tone),
+    localizeModulesViaGpt(variants.B, locale, targetMarketForLocalize, page.tone),
+  ]);
+
+  page.variants.A[locale] = localizedA;
+  page.variants.B[locale] = localizedB;
   page.availableLocales = [...page.availableLocales, locale];
 
   await saveLandingPage(page);

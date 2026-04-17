@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractFileText } from '@/lib/file-read';
-import { extractFromText } from '@/lib/extract';
+import { extractFromTextSmart } from '@/lib/extract';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // pdf-parse / mammoth need node, not edge
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       context: null,
     });
   }
-  const context = extractFromText(text, 'file');
+  const context = await extractFromTextSmart(text, 'file');
   return NextResponse.json({
     filename: file.name,
     textLength: text.length,

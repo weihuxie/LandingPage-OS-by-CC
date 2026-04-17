@@ -170,6 +170,29 @@ export function extractFromText(
 }
 
 /**
+ * Async: try Gemini long-doc ingestion first; fall back to regex.
+ * Gemini only engages for text > GEMINI_MIN_CHARS (see llm-gemini.ts) —
+ * short pastes aren't worth the round trip.
+ *
+ * This is the PREFERRED entry point when the caller is already in an async
+ * context. The sync extractFromText remains available for truly synchronous
+ * paths (none currently; kept for test ergonomics).
+ */
+export async function extractFromTextSmart(
+  text: string,
+  source: 'paste' | 'url' | 'file',
+): Promise<ExtractedContext> {
+  if (!text || text.trim().length < 10) return EMPTY;
+  // Lazy-import to keep the module graph light for callers that only use
+  // the sync regex path (e.g. tests). Zero runtime cost when Gemini key
+  // is absent — llm-gemini.ts returns null immediately.
+  const { extractViaGemini } = await import('./llm-gemini');
+  const gemini = await extractViaGemini(text, source);
+  if (gemini) return gemini;
+  return extractFromText(text, source);
+}
+
+/**
  * Merge multiple contexts (paste + multiple URLs + multiple files) into one.
  * Deduplicates by string equality; preserves order of first appearance.
  */

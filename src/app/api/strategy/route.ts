@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateStrategy } from '@/lib/ai';
-import { extractFromText, mergeContexts } from '@/lib/extract';
+import { extractFromTextSmart, mergeContexts } from '@/lib/extract';
 import { extractSiteContent } from '@/lib/brand';
 
 export const dynamic = 'force-dynamic';
@@ -17,13 +17,13 @@ export async function POST(req: NextRequest) {
 
   const contexts: any[] = [];
   if (inputs.pastedContent?.trim()) {
-    contexts.push(extractFromText(inputs.pastedContent, 'paste'));
+    contexts.push(await extractFromTextSmart(inputs.pastedContent, 'paste'));
   }
   if (Array.isArray(inputs.referenceUrls)) {
     for (const url of inputs.referenceUrls.slice(0, 3)) {
       try {
         const siteText = await extractSiteContent(url);
-        if (siteText) contexts.push(extractFromText(siteText, 'url'));
+        if (siteText) contexts.push(await extractFromTextSmart(siteText, 'url'));
       } catch {}
     }
   }

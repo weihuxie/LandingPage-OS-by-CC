@@ -50,15 +50,20 @@ const route: Record<LLMTask, 'gemini' | 'claude' | 'openai'> = {
 // IMPORTANT: bracket notation — webpack DefinePlugin inlines dot-access at
 // build time on Vercel, which would permanently ship "no key" regardless of
 // the runtime env. See CLAUDE.md §一.4 for the matching KV-env footgun.
+//
+// We defer to each adapter's own hasXKey() so the source of truth stays
+// with the adapter that actually uses it.
+
+import { hasClaudeKey } from './llm-claude';
+import { hasGeminiKey } from './llm-gemini';
+import { hasOpenAIKey } from './llm-openai';
 
 function hasKey() {
-  /* eslint-disable dot-notation */
   return {
-    claude: !!process.env['ANTHROPIC_API_KEY'],
-    gemini: !!process.env['GOOGLE_API_KEY'],
-    openai: !!process.env['OPENAI_API_KEY'],
+    claude: hasClaudeKey(),
+    gemini: hasGeminiKey(),
+    openai: hasOpenAIKey(),
   };
-  /* eslint-enable dot-notation */
 }
 
 // --- Adapters -----------------------------------------------------------
