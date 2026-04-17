@@ -22,6 +22,7 @@ import {
 } from '@/lib/ai';
 import type {
   PageModule,
+  PageLocale,
   ToneKey,
   NarrativeVariant,
   StyleId,
@@ -61,9 +62,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     regenerateModuleId?: string;
     newTone?: ToneKey;
     newStyleId?: StyleId;
+    // NEW: the locale tab the user is editing. When a page has multiple
+    // locales, the client must tell us which locale slot to touch —
+    // previously this was hard-coded to page.defaultLocale, which caused
+    // "regenerate on 日本語 tab → content comes back in zh-CN" and
+    // "selected module ID no longer matches any module in the returned
+    // project view → right editor panel empties itself".
+    locale?: string;
   };
 
-  // Build inputs for regen helpers
+  // Resolve which locale slot this request is targeting. Falls back to
+  // defaultLocale when the caller didn't pass one (older clients / strategy-
+  // only patches that don't touch per-locale module arrays).
+  const targetLocale: PageLocale =
+    (body.locale as PageLocale | undefined) ?? page.defaultLocale;
+
+  // Build inputs for regen helpers. Locale follows the slot we're editing
+  // so Claude writes in the right language, not always the page's default.
   const inputs = {
     name: product.name,
     tagline: product.tagline,
@@ -71,7 +86,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     value: product.value,
     cta: page.cta,
     market: page.targetMarket,
-    locale: page.defaultLocale as any,
+    locale: targetLocale as any,
     industry: page.audience.industry,
     companySize: page.audience.companySize,
     role: page.audience.role,
@@ -109,7 +124,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   if (body.regenerateModuleId) {
     const v = page.activeVariant;
-    const mods = page.variants[v][page.defaultLocale] ?? [];
+    // Regenerate in the locale slot the user is actually viewing — NOT
+    // always the defaultLocale. Before this fix, clicking 重新生成 while
+    // on the 日本語 tab regenerated the zh-CN slot in Chinese and the ja
+    // slot was never touched — so the Japanese tab ended up displaying
+    // Chinese copy, and the module IDs shifted under the client's feet.
+    const mods = page.variants[v][targetLocale] ?? [];
     const idx = mods.findIndex((m) => m.id === body.regenerateModuleId);
     if (idx !== -1) {
       const tone = body.newTone ?? page.tone;
@@ -118,16 +138,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         inputs,
         tone,
         page.strategy,
-        page.defaultLocale,
+        targetLocale,
       );
-      page.variants[v][page.defaultLocale] = mods;
+      page.variants[v][targetLocale] = mods;
       if (body.newTone) page.tone = tone;
     }
   }
 
   if (body.modules) {
     const v = page.activeVariant ?? 'A';
-    page.variants[v][page.defaultLocale] = body.modules;
+    // Apply manual edits to the locale slot the user is viewing, not the
+    // default locale — otherwise editing on the 日本語 tab would silently
+    // overwrite the zh-CN slot instead.
+    page.variants[v][targetLocale] = body.modules;
   }
 
   if (body.tone) page.tone = body.tone;
@@ -137,7 +160,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   await saveLandingPage(page);
 
-  return NextResponse.json({ project: projectViewFromV2(page, product) });
+  // Return both the compat project view AND the raw page. Multi-locale
+  // clients need the page to refresh their per-locale module cache after
+  // a regenerate/edit — projectViewFromV2's `modules` field only reflects
+  // the default locale, which is not always the tab the user is on.
+  return NextResponse.json({
+    project: projectViewFromV2(page, product),
+    page,
+  });
 }
 
 export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {

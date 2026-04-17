@@ -164,10 +164,31 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     const res = await fetch(`/api/projects/${project.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ regenerateModuleId: id, newTone: project.tone }),
+      body: JSON.stringify({
+        regenerateModuleId: id,
+        newTone: project.tone,
+        // Tell the server which locale slot to touch. Without this, the
+        // server falls back to page.defaultLocale and the currently-
+        // viewed tab (e.g. 日本語) gets regenerated in Chinese.
+        locale: editingLocale,
+      }),
     });
     const data = await res.json();
-    if (data?.project) setProject(data.project);
+    if (!data?.project) return;
+
+    // If we have a fresh page back, splice the regenerated locale's
+    // modules over the compat project view — otherwise projectViewFromV2
+    // would hand us the defaultLocale modules, IDs would no longer match
+    // the selected one, and the right editor panel would collapse to the
+    // "Select a module to edit" empty state.
+    if (data.page) {
+      setPage(data.page);
+      const v = project.activeVariant ?? 'A';
+      const localeMods = data.page.variants?.[v]?.[editingLocale] ?? [];
+      setProject({ ...data.project, modules: localeMods });
+    } else {
+      setProject(data.project);
+    }
   };
 
   const changeTone = async (tone: ToneKey) => {
