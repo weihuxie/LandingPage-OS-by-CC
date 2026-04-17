@@ -1,6 +1,8 @@
 import { unstable_setRequestLocale, getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { readProducts, readLandingPages } from '@/lib/storage';
+import { providerStatus } from '@/lib/llm';
+import { storageBackend } from '@/lib/storage';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +13,8 @@ export default async function Dashboard({
 }) {
   unstable_setRequestLocale(locale);
   const [products, pages] = await Promise.all([readProducts(), readLandingPages()]);
+  const llm = providerStatus();
+  const storage = storageBackend();
 
   // Group pages by product
   const pagesByProduct = new Map<string, typeof pages>();
@@ -29,6 +33,27 @@ export default async function Dashboard({
         </Link>
       </div>
 
+      {/* System status strip — at a glance LLM + storage health */}
+      <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-ink-500">
+        <StatusPill label="Claude" value={llm.claude} />
+        <StatusPill label="Gemini" value={llm.gemini} />
+        <StatusPill label="GPT-4o" value={llm.openai} />
+        <span className="pill">💾 存储：{storage === 'kv' ? 'Vercel KV' : '本地文件'}</span>
+        <Link href="/api/health" className="pill hover:border-brand-300">
+          /api/health
+        </Link>
+      </div>
+
+      {products.length === 0 && (
+        // New-install hint to set keys, only shown before any product exists.
+        llm.claude === 'mock' && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <strong>LLM 跑在降级模板上。</strong> 在 Vercel 项目环境变量里加{' '}
+            <code className="rounded bg-white px-1 py-0.5">ANTHROPIC_API_KEY</code>{' '}
+            后重新部署，即可启用真 Claude + prompt caching。
+          </div>
+        )
+      )}
       {products.length === 0 ? (
         <div className="card mt-8 p-10 text-center text-ink-500">
           还没有产品。点右上角创建你的第一个产品。
@@ -81,5 +106,17 @@ export default async function Dashboard({
         </div>
       )}
     </div>
+  );
+}
+
+function StatusPill({ label, value }: { label: string; value: string }) {
+  const live = value === 'live';
+  return (
+    <span
+      className={`pill ${live ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-ink-100 bg-ink-50 text-ink-500'}`}
+      title={live ? 'Real API key configured' : 'Falling back to deterministic templates'}
+    >
+      {live ? '🟢' : '⚪️'} {label}：{live ? 'live' : 'mock'}
+    </span>
   );
 }
