@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import type {
   Project,
@@ -73,6 +73,45 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   );
 
   const findings = useMemo(() => auditProject(project), [project]);
+
+  // Track the CURRENT editing locale in a ref so async callbacks (regenerate
+  // especially, which takes 5-15s for Claude) can check whether the user
+  // navigated away mid-call. Without this guard, a regenerate on the 日本語
+  // tab that resolves after the user has switched to 繁中 would overwrite
+  // the 繁中 display with Japanese content — the "串显示" bug.
+  const editingLocaleRef = useRef<PageLocale>(editingLocale);
+  useEffect(() => {
+    editingLocaleRef.current = editingLocale;
+  }, [editingLocale]);
+
+  // Mirror project.modules → page.variants[activeVariant][editingLocale]
+  // whenever project.modules changes. Without this mirror, the `page` state
+  // we hold in React only ever reflects what was loaded at mount time (or
+  // returned by addLocale/regenerate). Edits live in project.modules and
+  // are synced to the server via the debounced autosave — but our LOCAL
+  // page cache goes stale. switchLocaleTab reads page.variants[v][target]
+  // to paint the tab, so switching away from zh-CN (after edits) and back
+  // made user edits "vanish": they were on the server, but the UI was
+  // reading the stale local page state.
+  useEffect(() => {
+    setPage((prev) => {
+      if (!prev) return prev;
+      const v = project.activeVariant ?? 'A';
+      const current = prev.variants[v]?.[editingLocale];
+      // Identity guard — when switchLocaleTab just loaded modules FROM page
+      // into project, the two references are equal and we skip the write to
+      // avoid a pointless re-render loop with the autosave effect (which
+      // has `page` in its deps).
+      if (current === project.modules) return prev;
+      return {
+        ...prev,
+        variants: {
+          ...prev.variants,
+          [v]: { ...prev.variants[v], [editingLocale]: project.modules },
+        },
+      };
+    });
+  }, [project.modules, project.activeVariant, editingLocale]);
 
   useEffect(() => {
     if (status !== 'saving') return;
@@ -161,30 +200,38 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   };
 
   const regenerate = async (id: string) => {
+    // Capture the locale at REQUEST time. If the user switches tabs during
+    // the 5-15s Claude call, we must NOT paint these modules into their
+    // current view — that's the "串显示" bug (日本語 tab suddenly showing
+    // 繁中 content because regenerate was fired from 繁中 earlier).
+    const requestLocale = editingLocale;
     const res = await fetch(`/api/projects/${project.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         regenerateModuleId: id,
         newTone: project.tone,
-        // Tell the server which locale slot to touch. Without this, the
-        // server falls back to page.defaultLocale and the currently-
-        // viewed tab (e.g. 日本語) gets regenerated in Chinese.
-        locale: editingLocale,
+        locale: requestLocale,
       }),
     });
     const data = await res.json();
     if (!data?.project) return;
 
-    // If we have a fresh page back, splice the regenerated locale's
-    // modules over the compat project view — otherwise projectViewFromV2
-    // would hand us the defaultLocale modules, IDs would no longer match
-    // the selected one, and the right editor panel would collapse to the
-    // "Select a module to edit" empty state.
+    // Always refresh our local page cache — the regenerated locale's
+    // content on the server is newer than what we had.
+    if (data.page) setPage(data.page);
+
+    // Only paint the new modules into the editor when the user is STILL
+    // on the tab that triggered the regenerate. editingLocaleRef reads the
+    // live value, not the stale closure from when this function was called.
+    if (editingLocaleRef.current !== requestLocale) return;
+
     if (data.page) {
-      setPage(data.page);
       const v = project.activeVariant ?? 'A';
-      const localeMods = data.page.variants?.[v]?.[editingLocale] ?? [];
+      const localeMods = data.page.variants?.[v]?.[requestLocale] ?? [];
+      // Keep selectedModuleId valid — regenerateModule preserves module.id
+      // via {...module} spread, so the previously-selected module still
+      // exists in the new array and the right editor panel stays open.
       setProject({ ...data.project, modules: localeMods });
     } else {
       setProject(data.project);
@@ -231,11 +278,43 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   };
 
   // Switch the locale tab: load modules for (activeVariant, targetLocale)
-  // from the local `page` state without a network round-trip.
-  const switchLocaleTab = (targetLocale: PageLocale) => {
+  // from the local `page` state. Before switching, we eagerly flush any
+  // pending autosave for the CURRENT tab — otherwise React's useEffect
+  // cleanup would cancel the 400ms debounced save when editingLocale
+  // changes, and the re-fired effect would save the NEW tab's modules
+  // to the NEW tab's slot. Result: the old tab's pending edits were
+  // silently dropped on the floor (not persisted to the server).
+  //
+  // The page-mirror effect above keeps edits visible in the UI when
+  // switching back, but a browser refresh would lose them without the
+  // eager flush here.
+  const switchLocaleTab = async (targetLocale: PageLocale) => {
     if (!page) return;
     if (!page.availableLocales.includes(targetLocale)) return;
+    if (targetLocale === editingLocale) return;
+
     const v = project.activeVariant ?? 'A';
+
+    if (status === 'saving') {
+      try {
+        await fetch(`/api/pages/${page.id}/modules`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            variant: v,
+            locale: editingLocale,
+            modules: project.modules,
+          }),
+        });
+        setStatus('saved');
+      } catch {
+        // Non-fatal. The mirror effect above has already cached the
+        // edits in local page state, so the user's UI will still show
+        // them on the next tab switch back. Server will catch up via
+        // the next autosave trigger.
+      }
+    }
+
     const nextModules = page.variants[v][targetLocale] ?? [];
     setEditingLocale(targetLocale);
     setProject((p) => ({
@@ -244,6 +323,52 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
       inputs: { ...p.inputs, locale: targetLocale as any },
     }));
     setSelectedModuleId(nextModules[0]?.id ?? null);
+  };
+
+  // Delete a locale tab. Server already has DELETE /api/pages/[id]/locales;
+  // we just didn't expose any UI trigger — users could add locales but
+  // never remove them. The backend refuses to drop the defaultLocale
+  // while other locales exist (you'd need to promote another first), so
+  // we hide the X on the default tab.
+  const deleteLocale = async (localeToDelete: PageLocale) => {
+    if (!page) return;
+    const label = nativeLabel(localeToDelete);
+    if (
+      !confirm(
+        `确定删除 ${label} 版本？该语言的所有模块编辑将丢失（不影响其他语言）。`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/pages/${page.id}/locales`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ locale: localeToDelete }),
+      });
+      const data = await res.json();
+      if (data?.page) {
+        setPage(data.page);
+        // If the user was viewing the tab we just deleted, fall back to
+        // the page's default locale so they aren't staring at a ghost tab.
+        if (editingLocale === localeToDelete) {
+          const fallback = data.page.defaultLocale as PageLocale;
+          const v = project.activeVariant ?? 'A';
+          const nextModules = data.page.variants[v][fallback] ?? [];
+          setEditingLocale(fallback);
+          setProject((p) => ({
+            ...p,
+            modules: nextModules,
+            inputs: { ...p.inputs, locale: fallback as any },
+          }));
+          setSelectedModuleId(nextModules[0]?.id ?? null);
+        }
+      } else if (data?.error) {
+        alert(`删除失败：${data.error}`);
+      }
+    } catch (e: any) {
+      alert(`删除失败：${e?.message ?? e}`);
+    }
   };
 
   // '+ 加语言' now opens a white-box modal so the user sees/edits/approves
@@ -634,20 +759,39 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         {/* Locale tabs (Phase D) */}
         {page && (
           <div className="mb-2 flex items-center gap-1 flex-wrap">
-            {page.availableLocales.map((l) => (
-              <button
-                key={l}
-                onClick={() => switchLocaleTab(l)}
-                className={`rounded-t-lg border-b-2 px-3 py-1.5 text-xs transition ${
-                  editingLocale === l
-                    ? 'border-brand-600 bg-white font-medium text-ink-900'
-                    : 'border-transparent text-ink-500 hover:text-ink-900'
-                }`}
-              >
-                {nativeLabel(l)}
-                {l === page.defaultLocale && <span className="ml-1 text-brand-600">★</span>}
-              </button>
-            ))}
+            {page.availableLocales.map((l) => {
+              const isActive = editingLocale === l;
+              const isDefault = l === page.defaultLocale;
+              // The backend refuses to delete defaultLocale while other
+              // locales exist, and a single-locale page can't have its
+              // only tab removed — so hide the X in those cases.
+              const canDelete = !isDefault && page.availableLocales.length > 1;
+              return (
+                <div key={l} className="inline-flex items-stretch">
+                  <button
+                    onClick={() => switchLocaleTab(l)}
+                    className={`border-b-2 px-3 py-1.5 text-xs transition ${
+                      isActive
+                        ? 'border-brand-600 bg-white font-medium text-ink-900'
+                        : 'border-transparent text-ink-500 hover:text-ink-900'
+                    } ${canDelete && isActive ? 'rounded-tl-lg pr-1.5' : 'rounded-t-lg'}`}
+                  >
+                    {nativeLabel(l)}
+                    {isDefault && <span className="ml-1 text-brand-600">★</span>}
+                  </button>
+                  {canDelete && isActive && (
+                    <button
+                      onClick={() => deleteLocale(l)}
+                      title={`删除 ${nativeLabel(l)} 版本`}
+                      aria-label={`删除 ${nativeLabel(l)}`}
+                      className="rounded-tr-lg border-b-2 border-brand-600 bg-white pl-1 pr-2 py-1.5 text-xs text-ink-400 hover:text-red-600"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              );
+            })}
             {/* Add-locale button: only shows locales not yet generated */}
             {PAGE_LOCALES.filter((l) => !page.availableLocales.includes(l)).length > 0 && (
               <div className="relative">
