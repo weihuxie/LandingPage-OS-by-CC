@@ -13,7 +13,7 @@ import {
   saveProduct,
   saveLandingPage,
 } from '@/lib/storage';
-import { generateStrategy, generateVariants } from '@/lib/ai';
+import { generateStrategy, generateVariants, hydrateModulesViaClaude } from '@/lib/ai';
 import { extractFromTextSmart, mergeContexts } from '@/lib/extract';
 import { extractSiteContent } from '@/lib/brand';
 import { defaultStyleForMarket } from '@/lib/styles';
@@ -70,7 +70,17 @@ export async function POST(req: NextRequest) {
   const context = ctxs.length ? mergeContexts(ctxs) : undefined;
 
   const strategy = body.strategy ?? (await generateStrategy(body.inputs, context));
-  const variants = generateVariants(body.inputs, tone, strategy, context);
+  const templated = generateVariants(body.inputs, tone, strategy, context);
+  // Claude rewrites hero/pain/benefits/solution/cta for the default locale
+  // (see src/lib/ai.ts `hydrateModulesViaClaude`). Silent template fallback
+  // on key missing / API error — user path unchanged either way.
+  const variants = await hydrateModulesViaClaude(
+    templated,
+    body.inputs,
+    strategy,
+    tone,
+    body.inputs.locale,
+  );
   const now = Date.now();
 
   // Find-or-create Product by name (simple MVP dedupe)

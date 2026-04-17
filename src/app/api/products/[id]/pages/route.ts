@@ -6,7 +6,7 @@ import {
   saveLandingPage,
   readLandingPages,
 } from '@/lib/storage';
-import { generateStrategy, generateVariants } from '@/lib/ai';
+import { generateStrategy, generateVariants, hydrateModulesViaClaude } from '@/lib/ai';
 import { extractFromTextSmart, mergeContexts } from '@/lib/extract';
 import { extractSiteContent } from '@/lib/brand';
 import { defaultStyleForMarket } from '@/lib/styles';
@@ -82,7 +82,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const strategy = await generateStrategy(inputs, context);
-  const variants = generateVariants(inputs, tone, strategy, context);
+  const templated = generateVariants(inputs, tone, strategy, context);
+  // Rewrite text-heavy modules via Claude for the default locale. Falls
+  // back to templates silently if the key is missing / API fails — user
+  // experience stays identical to pre-LLM path on failure.
+  const variants = await hydrateModulesViaClaude(
+    templated,
+    inputs,
+    strategy,
+    tone,
+    body.defaultLocale,
+  );
 
   const name = body.name ?? '主站';
   const slug = makeSlug(`${product.name} ${name}`);

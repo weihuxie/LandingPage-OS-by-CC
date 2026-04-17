@@ -6,10 +6,31 @@ import type {
   MarketCode,
   CTAGoal,
   ToneKey,
+  PageLocale,
+  ModuleType,
 } from './types';
 import { nanoid } from 'nanoid';
 import type { ExtractedContext } from './extract';
 import { generateStrategyViaClaude, regenerateModuleViaClaude } from './llm-claude';
+
+/**
+ * Guard against users pasting a multi-paragraph "core value" into the hero
+ * headline. We truncate to the first sentence (split on . / 。 / ! / ? /
+ * newline) and hard-cap at `maxChars`. Without this, a 1245-char paste
+ * became the H1 verbatim — visible in production as the zh-CN hero redline
+ * "Hero 标题 1245 字, 偏长". Kept even with Claude wired because Claude
+ * can still fail / fall back to template under the graceful-degradation
+ * contract, and template must never render raw body-text as a headline.
+ */
+function firstSentence(text: string | undefined, maxChars: number): string {
+  if (!text) return '';
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  const match = trimmed.match(/^[^.。！？!?\n]+[.。！？!?]?/);
+  const head = (match ? match[0] : trimmed).trim();
+  if (head.length <= maxChars) return head;
+  return head.slice(0, maxChars - 1).trimEnd() + '…';
+}
 
 // --- Localized snippets --------------------------------------------------
 
@@ -734,6 +755,14 @@ export function generateModules(
   const ctaLabel = T.ctaLabels[inputs.cta];
   const toneEmoji = tone === 'japanese' ? '' : '';
 
+  // Hero copy is small-surface; longer value props belong in solution/body.
+  // CJK caps slightly tighter (one display line ≈ 28-32 chars depending on
+  // viewport). EN wider because average char width is smaller.
+  const headlineCap = inputs.locale === 'en' ? 80 : 28;
+  const bulletCap = inputs.locale === 'en' ? 60 : 24;
+  const safeHeadlineValue = firstSentence(inputs.value, headlineCap);
+  const safeBulletValue = firstSentence(inputs.value, bulletCap);
+
   const modules: PageModule[] = [
     {
       id: nanoid(8),
@@ -741,11 +770,11 @@ export function generateModules(
       enabled: true,
       content: {
         eyebrow: T.eyebrow(inputs.category),
-        headline: T.headlineTmpl(inputs.name, inputs.value),
+        headline: T.headlineTmpl(inputs.name, safeHeadlineValue),
         subhead: T.subheadTmpl(inputs.tagline, inputs.name),
         primaryCta: ctaLabel,
         secondaryCta: undefined,
-        bullets: T.bullets(inputs.value),
+        bullets: T.bullets(safeBulletValue),
       },
     },
     {
@@ -921,4 +950,78 @@ export function regenerateModuleTemplated(
   const fresh = generateModules(inputs, tone).find((m) => m.type === module.type);
   if (!fresh) return module;
   return { ...module, content: fresh.content };
+}
+
+// --- Claude-driven module hydration on initial creation ------------------
+//
+// Why this exists: before this helper, the flow was
+//   wizard → strategy (Claude ✓) → generateVariants (TEMPLATE) → save.
+// Users paying for the Claude key never saw Claude-written module content
+// until they clicked "regenerate" on individual modules. This closes that
+// gap: every new page is born with Claude-written hero/pain/benefits/
+// solution/cta for its default locale.
+//
+// Constraints kept cheap:
+//   - only the 5 text-heavy types route here; socialProof / testimonials /
+//     faq / form / useCase stay templated (authored from assets or AI
+//     later — not worth the round-trip today)
+//   - one Claude call per module type, applied to BOTH variant A and B.
+//     A/B storytelling differentiation is a known gap (see CLAUDE.md §2.3);
+//     the variant order + eyebrow already differ, and narrative-level
+//     split can layer on later with a per-variant strategy hint. Spending
+//     10 Claude calls per page just to re-narrate hero twice isn't worth
+//     it until we have A/B signal that justifies it.
+//
+// Performance: 5 parallel calls, warm-cache pricing after the first.
+// At Opus 4.6 cached rates: ~$0.01 per page creation. Latency is bounded
+// by the slowest of the 5 — typically ~3-6s end-to-end.
+//
+// Fail-safe: if Claude returns null for any module (no key, API error,
+// malformed JSON), that module keeps its templated content. A catastrophic
+// all-null return leaves the templated variants untouched — user never
+// sees an error, they see templates, same as the pre-LLM behavior.
+
+export async function hydrateModulesViaClaude(
+  variants: { A: PageModule[]; B: PageModule[] },
+  inputs: ProductInputs,
+  strategy: StrategySummary,
+  tone: ToneKey,
+  locale: PageLocale,
+): Promise<{ A: PageModule[]; B: PageModule[] }> {
+  const TYPES: ModuleType[] = ['hero', 'pain', 'benefits', 'solution', 'cta'];
+
+  const rewrites = await Promise.all(
+    TYPES.map(async (t) => {
+      try {
+        const r = await regenerateModuleViaClaude(t, inputs, strategy, tone, locale);
+        return [t, r] as const;
+      } catch (e) {
+        // regenerateModuleViaClaude already logs; swallow so Promise.all
+        // doesn't collapse all 5 on one failure.
+        return [t, null] as const;
+      }
+    }),
+  );
+
+  const patchByType = new Map<ModuleType, Record<string, unknown>>();
+  for (const [t, r] of rewrites) {
+    if (r && typeof r === 'object') patchByType.set(t, r as Record<string, unknown>);
+  }
+  if (patchByType.size === 0) return variants;
+
+  const apply = (mods: PageModule[]): PageModule[] =>
+    mods.map((m) => {
+      const patch = patchByType.get(m.type);
+      if (!patch) return m;
+      // Merge: Claude fields win, but preserve any templated fields Claude
+      // didn't produce (e.g. nested layout hints, future locale tweaks).
+      // Cast through unknown because PageModule<ModuleContent> is a discriminated
+      // union that doesn't narrow by key at this point — we know the patch
+      // fields match the module's type at runtime because patchByType is
+      // keyed by ModuleType.
+      const merged = { ...(m.content as unknown as Record<string, unknown>), ...patch };
+      return { ...m, content: merged as unknown as PageModule['content'] } as PageModule;
+    });
+
+  return { A: apply(variants.A), B: apply(variants.B) };
 }
