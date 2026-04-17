@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { STRATEGY_SYSTEM, generateStrategyViaClaude } from '@/lib/llm-claude';
+import { STRATEGY_SYSTEM, extractJsonObject } from '@/lib/llm-claude';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -65,38 +65,87 @@ export async function GET(req: NextRequest) {
   const client = new Anthropic();
   const t0 = Date.now();
 
-  // --- mode=strategy: end-to-end test of generateStrategyViaClaude ---
+  // --- mode=strategy: inline Claude call with full introspection -------
+  // Duplicates the shape of generateStrategyViaClaude() on purpose: we
+  // want to see the raw failure (HTTP status, content block types, raw
+  // text) directly in the HTTP response instead of requiring the user
+  // to grep Vercel function logs.
   if (mode === 'strategy') {
-    const fakeInputs = {
-      name: 'Helios',
-      tagline: 'Outcome-first workspace',
-      category: 'SaaS',
-      value: 'Gives Ops teams back 11 hours a week.',
-      market: 'US' as const,
-      locale: locale as any,
-      cta: 'demo' as const,
-      industry: 'Software',
-      companySize: 'Mid-market',
-      role: 'Head of RevOps',
-      source: 'ads' as const,
-      pastedContent: '',
-      referenceUrls: [],
-      uploadedFileNames: [],
-    };
+    const userPrompt = [
+      'Product: Helios',
+      'Tagline: Outcome-first workspace',
+      'Category: SaaS',
+      'Core value: Gives Ops teams back 11 hours a week.',
+      'Target market: US',
+      `Target locale: ${locale}`,
+      'Conversion goal: demo',
+      'Primary traffic source: ads',
+      'Audience: Software · Mid-market · Head of RevOps',
+      '',
+      `Produce the strategy summary per your framework. Write audience/goal/narrative in ${locale}; write local in ${locale}.`,
+    ].join('\n');
+
     try {
-      const strategy = await generateStrategyViaClaude(fakeInputs);
+      const response = await client.messages.create({
+        model: modelOverride ?? 'claude-opus-4-20250514',
+        max_tokens: 4096,
+        system: [
+          {
+            type: 'text',
+            text: STRATEGY_SYSTEM,
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+        messages: [{ role: 'user', content: userPrompt }],
+      });
+
+      const latencyMs = Date.now() - t0;
+      const contentTypes = response.content.map((b) => b.type);
+      const textBlock = response.content.find((b) => b.type === 'text');
+      const rawText =
+        textBlock && textBlock.type === 'text' ? textBlock.text : null;
+
+      let parsed: any = null;
+      let parseError: string | null = null;
+      if (rawText) {
+        try {
+          parsed = extractJsonObject(rawText);
+          if (!parsed) parseError = 'extractJsonObject returned null';
+        } catch (pe: any) {
+          parseError = pe?.message ?? String(pe);
+        }
+      }
+
+      const shapeOk =
+        parsed &&
+        Array.isArray(parsed.audience) &&
+        Array.isArray(parsed.goal) &&
+        Array.isArray(parsed.narrative) &&
+        Array.isArray(parsed.local);
+
+      const usage = response.usage as any;
+
       return NextResponse.json({
-        ok: strategy !== null,
+        ok: !!shapeOk,
         mode: 'strategy',
-        latencyMs: Date.now() - t0,
-        strategy,
-        // If null, user should check Vercel function logs — we added
-        // verbose console.error calls in llm-claude.ts that report
-        // HTTP status, partial raw text, or shape-mismatch keys.
-        note:
-          strategy === null
-            ? 'strategy path returned null — check Vercel logs for [claude] strategy lines'
-            : 'strategy generated and JSON parsed successfully',
+        latencyMs,
+        model: response.model,
+        stopReason: response.stop_reason,
+        contentBlockTypes: contentTypes,
+        // Always include raw text so you can see EXACTLY what Claude
+        // returned when parsing fails (e.g. markdown fences, preamble,
+        // wrong language, refusal). Trimmed to keep payload small.
+        rawTextPreview: rawText ? rawText.slice(0, 1500) : null,
+        rawTextLength: rawText?.length ?? 0,
+        parseError,
+        shapeOk,
+        strategy: shapeOk ? parsed : null,
+        usage: {
+          inputTokens: usage?.input_tokens ?? null,
+          outputTokens: usage?.output_tokens ?? null,
+          cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+          cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
+        },
       });
     } catch (e: any) {
       return NextResponse.json(
@@ -104,10 +153,16 @@ export async function GET(req: NextRequest) {
           ok: false,
           mode: 'strategy',
           latencyMs: Date.now() - t0,
+          // These two fields tell you whether the API rejected the
+          // request (400 = bad param, 401 = key, 429 = rate, 529 =
+          // overload) vs. the SDK threw locally.
+          apiStatus: e?.status ?? null,
+          apiErrorType: e?.error?.type ?? e?.name ?? null,
           error: e?.message ?? String(e),
-          status: e?.status ?? null,
+          // Some SDK errors carry the full response body on .error
+          errorBody: e?.error ?? null,
         },
-        { status: 500 },
+        { status: 200 }, // keep 200 so the browser shows the JSON
       );
     }
   }
