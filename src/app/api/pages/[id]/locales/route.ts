@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getLandingPage, saveLandingPage, getProduct } from '@/lib/storage';
-import { generateVariants } from '@/lib/ai';
+import { generateVariants, hydrateModulesViaClaude } from '@/lib/ai';
 import { pickTopTestimonials, testimonialsToModuleItems } from '@/lib/testimonial-match';
 import { localizeModulesViaGpt } from '@/lib/llm-openai';
 import type { LandingPage, PageLocale, LocalizationStrategy } from '@/lib/types';
@@ -115,14 +115,53 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
   }
 
-  // Route each variant's text-heavy modules through GPT-4o for native
-  // rewriting in the target locale. Falls back to templated variants when
-  // the OpenAI key is missing or the call fails. Runs A and B in parallel
-  // (~5 modules each, Promise.all-ed internally, so bounded by slowest call).
+  // First pass — route hero/pain/benefits/solution/cta through Claude
+  // tool-use for PRODUCT-SPECIFIC, LOCALE-NATIVE rewriting. This mirrors
+  // what the default-locale creation path does in products/[id]/pages.
+  //
+  // Why this matters: without Claude hydration, the add-locale path
+  // previously took the deterministic English templates out of
+  // generateVariants() and handed them to GPT-4o to "translate into ja".
+  // GPT-4o's source was generic boilerplate ("save hours", "boost ROI"),
+  // so its output was also generic — the default locale would show the
+  // user's actual product (WINPILOT / 商机评估 / 赢单概率) because it
+  // got Claude-hydrated on first save, but the ja tab would collapse
+  // back to "節約時間 / ROIを上げる" because the source material for the
+  // GPT translation never mentioned the product specifically.
+  //
+  // Claude hydration writes natively in the target locale using product
+  // inputs + strategy as the grounding signal, so "Japanese tab" now
+  // reads like a Japanese copywriter wrote it for THIS product — not
+  // like a translator localized a generic SaaS template.
+  let hydratedA = variants.A;
+  let hydratedB = variants.B;
+  try {
+    const claudeOut = await hydrateModulesViaClaude(
+      { A: variants.A, B: variants.B },
+      inputs,
+      page.strategy,
+      page.tone,
+      locale,
+    );
+    hydratedA = claudeOut.A;
+    hydratedB = claudeOut.B;
+  } catch (e) {
+    console.error(
+      '[locales] Claude hydration failed; will rely on GPT-4o fallback for all modules:',
+      e,
+    );
+  }
+
+  // Second pass — GPT-4o localization covers the modules Claude does
+  // NOT rewrite (socialProof / useCase / testimonial text / faq / form
+  // labels). When Claude hydration succeeded, the 5 text-heavy modules
+  // are already in the target locale, so GPT-4o mostly passes them
+  // through with minor refinement. When Claude hydration failed, this
+  // pass is the entire localization layer.
   const targetMarketForLocalize = body.strategy?.targetMarket ?? page.targetMarket;
   const [localizedA, localizedB] = await Promise.all([
-    localizeModulesViaGpt(variants.A, locale, targetMarketForLocalize, page.tone),
-    localizeModulesViaGpt(variants.B, locale, targetMarketForLocalize, page.tone),
+    localizeModulesViaGpt(hydratedA, locale, targetMarketForLocalize, page.tone),
+    localizeModulesViaGpt(hydratedB, locale, targetMarketForLocalize, page.tone),
   ]);
 
   page.variants.A[locale] = localizedA;
