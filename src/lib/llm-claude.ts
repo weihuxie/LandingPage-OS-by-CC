@@ -52,8 +52,19 @@ export function hasClaudeKey(): boolean {
   return !!process.env['ANTHROPIC_API_KEY'];
 }
 
-/** Model + parameters. Change in one place. */
-const MODEL = 'claude-opus-4-6';
+/** Model + parameters. Change in one place.
+ *
+ * NOTE on model choice: we had `claude-opus-4-6` here, but diagnostic
+ * probing (see /api/llm-probe) proved that this alias does not engage
+ * prompt caching — the API returns the full cache_creation schema but
+ * writes 0 tokens to either TTL bucket. Swapped to the pinned
+ * `claude-opus-4-20250514` which caches correctly (confirmed via probe:
+ * cache_creation_input_tokens=1294 on first call, system block of 1294
+ * tokens). If a newer pinned Opus release (4-1, 4-2, etc.) is confirmed
+ * to cache, update here. Do NOT move to a non-pinned alias without
+ * re-running the probe first.
+ */
+const MODEL = 'claude-opus-4-20250514';
 const MAX_TOKENS = 4096;
 
 // --- Strategy system prompt (STABLE — this is what gets cached) --------
