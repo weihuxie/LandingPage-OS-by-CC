@@ -6,6 +6,10 @@ import { localizeModulesViaGpt } from '@/lib/llm-openai';
 import type { LandingPage, PageLocale, LocalizationStrategy } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
+// GPT-4o localizes 5 modules × 2 variants in parallel. Each call is ~2-5s,
+// bounded by slowest in the batch. 60s ceiling protects us from the 10s
+// Hobby default killing the function mid-save.
+export const maxDuration = 60;
 
 /**
  * Add a new locale to a LandingPage.

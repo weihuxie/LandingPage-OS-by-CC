@@ -28,6 +28,12 @@ import type {
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+// Extend serverless timeout beyond the 10s Hobby default. 5 parallel Opus
+// module calls + 1 strategy call can touch 30-45s on a cold cache. Without
+// this, the function was being killed mid-request and the product record
+// never landed in KV — user saw "生成失败：504" and no new product appeared
+// in the dashboard. 60s is the Pro-plan ceiling; raise further on Enterprise.
+export const maxDuration = 60;
 
 export async function GET() {
   const projects = await listProjectsCompat();
@@ -70,17 +76,9 @@ export async function POST(req: NextRequest) {
   const context = ctxs.length ? mergeContexts(ctxs) : undefined;
 
   const strategy = body.strategy ?? (await generateStrategy(body.inputs, context));
-  const templated = generateVariants(body.inputs, tone, strategy, context);
-  // Claude rewrites hero/pain/benefits/solution/cta for the default locale
-  // (see src/lib/ai.ts `hydrateModulesViaClaude`). Silent template fallback
-  // on key missing / API error — user path unchanged either way.
-  const variants = await hydrateModulesViaClaude(
-    templated,
-    body.inputs,
-    strategy,
-    tone,
-    body.inputs.locale,
-  );
+  // Generate templated variants synchronously. Claude enrichment happens
+  // AFTER the first save — see the save-first-enrich-after pattern below.
+  const variants = generateVariants(body.inputs, tone, strategy, context);
   const now = Date.now();
 
   // Find-or-create Product by name (simple MVP dedupe)
@@ -151,8 +149,35 @@ export async function POST(req: NextRequest) {
   };
 
   product.landingPageIds = [page.id, ...product.landingPageIds.filter((x) => x !== page.id)];
+
+  // --- FIRST SAVE: templated variants, guaranteed to persist ------------
+  // Must run BEFORE any Claude module calls. Previously the enrichment
+  // sat before the save and — when 5 parallel Opus calls exceeded the
+  // Vercel 10s/60s timeout — the function was killed before the product
+  // ever landed in KV. User saw "生成失败" and no new product in the
+  // dashboard. Now we persist first; Claude enrichment is a best-effort
+  // second save.
   await saveProduct(product);
   await saveLandingPage(page);
+
+  // --- SECOND SAVE (best-effort): enrich modules via Claude -------------
+  // If this times out or throws, the first save stands and the user sees
+  // templated copy in the editor. They can still hit "regenerate" on any
+  // module to re-attempt the Claude call per-module.
+  try {
+    const enriched = await hydrateModulesViaClaude(
+      { A: variants.A, B: variants.B },
+      body.inputs,
+      strategy,
+      tone,
+      body.inputs.locale,
+    );
+    page.variants.A[body.inputs.locale] = enriched.A;
+    page.variants.B[body.inputs.locale] = enriched.B;
+    await saveLandingPage(page);
+  } catch (e) {
+    console.error('[projects] Claude enrichment failed; template content stays:', e);
+  }
 
   return NextResponse.json({ id: page.id, slug: page.slug });
 }

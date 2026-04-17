@@ -21,6 +21,9 @@ import type {
 } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
+// See /api/projects route for timeout rationale — same 5-parallel-Opus
+// workload here, same Vercel timeout risk without raising maxDuration.
+export const maxDuration = 60;
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
   const pages = await readLandingPages(params.id);
@@ -82,17 +85,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const strategy = await generateStrategy(inputs, context);
-  const templated = generateVariants(inputs, tone, strategy, context);
-  // Rewrite text-heavy modules via Claude for the default locale. Falls
-  // back to templates silently if the key is missing / API fails — user
-  // experience stays identical to pre-LLM path on failure.
-  const variants = await hydrateModulesViaClaude(
-    templated,
-    inputs,
-    strategy,
-    tone,
-    body.defaultLocale,
-  );
+  // Templated variants first — Claude enrichment runs AFTER the first save
+  // below, so a Vercel timeout during Claude calls can't lose the product.
+  const variants = generateVariants(inputs, tone, strategy, context);
 
   const name = body.name ?? '主站';
   const slug = makeSlug(`${product.name} ${name}`);
@@ -141,9 +136,28 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     },
   };
 
+  // --- FIRST SAVE: templated modules, guaranteed persistence -----------
   await saveLandingPage(page);
   product.landingPageIds = [page.id, ...product.landingPageIds.filter((x) => x !== page.id)];
   await saveProduct(product);
+
+  // --- SECOND SAVE (best-effort): enrich via Claude --------------------
+  // Same pattern as /api/projects — if Claude times out or errors, the
+  // templated page from the first save remains usable in the editor.
+  try {
+    const enriched = await hydrateModulesViaClaude(
+      { A: variants.A, B: variants.B },
+      inputs,
+      strategy,
+      tone,
+      body.defaultLocale,
+    );
+    page.variants.A[body.defaultLocale] = enriched.A;
+    page.variants.B[body.defaultLocale] = enriched.B;
+    await saveLandingPage(page);
+  } catch (e) {
+    console.error('[products/pages] Claude enrichment failed; template content stays:', e);
+  }
 
   return NextResponse.json({ page });
 }
