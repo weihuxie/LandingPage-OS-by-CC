@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { STRATEGY_SYSTEM } from '@/lib/llm-claude';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -21,20 +22,9 @@ export const revalidate = 0;
  */
 
 /* eslint-disable dot-notation */
-const SYSTEM_PROMPT = `You are a health-check endpoint. When asked, respond with ONLY a single JSON object of the form {"status":"ok","echo":"<short acknowledgement in the requested language>"}. No surrounding commentary, no markdown fences.
-
-This message is intentionally padded with stable instructions so it can be
-prompt-cached. The production application uses cache_control on system blocks
-roughly 1-2K tokens long; this probe deliberately emulates that shape so a
-cache hit on the 2nd call proves that the mechanism works for the real app
-code path too.
-
-Stable instruction block:
-- Always return valid JSON.
-- Always use the requested locale code for the echo field.
-- Never include any fields beyond status and echo.
-- Never explain. Never apologize. Never add markdown.
-- If the prompt is unclear, still return the same shape with echo="unclear".`;
+// Reuse the PRODUCTION strategy system prompt. That way a passing probe
+// proves the real app path caches — a toy probe prompt could pass while
+// the production block silently failed the 1024-token threshold.
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
@@ -71,14 +61,16 @@ export async function GET(req: NextRequest) {
       system: [
         {
           type: 'text',
-          text: SYSTEM_PROMPT,
+          text: STRATEGY_SYSTEM,
           cache_control: { type: 'ephemeral' },
         },
       ],
       messages: [
         {
           role: 'user',
-          content: `Health ping. Respond in locale=${locale}. Return the JSON.`,
+          // Ask for a tiny, cheap response — the goal is to exercise the
+          // cached system block, not to generate a full strategy.
+          content: `Probe call. Target locale: ${locale}. Reply with a single short string: "probe ok" and nothing else. Do not produce a strategy.`,
         },
       ],
     });
