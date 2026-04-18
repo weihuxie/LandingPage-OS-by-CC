@@ -16,6 +16,7 @@ import {
 import { generateStrategy, generateVariants, hydrateModulesViaClaude } from '@/lib/ai';
 import { extractFromTextSmart, mergeContexts } from '@/lib/extract';
 import { extractSiteContent } from '@/lib/brand';
+import { reportHeroTemplate } from '@/lib/template-detection';
 import { defaultStyleForMarket } from '@/lib/styles';
 import { makeSlug } from '@/lib/slug';
 import type {
@@ -174,10 +175,21 @@ export async function POST(req: NextRequest) {
     );
     page.variants.A[body.inputs.locale] = enriched.A;
     page.variants.B[body.inputs.locale] = enriched.B;
-    await saveLandingPage(page);
   } catch (e) {
     console.error('[projects] Claude enrichment failed; template content stays:', e);
   }
+
+  // --- Template-residue check ------------------------------------------
+  // Whether or not hydrateModulesViaClaude threw, walk the saved variants
+  // and see if the hero headline / bullets still match ai.ts's known
+  // fallback strings. If BOTH variants still look like templates, mark
+  // the page so the editor shows a warning and deploy can refuse.
+  // Silent degradation was the single biggest quality hole — see
+  // CLAUDE.md §4 and the user-reported "3.8 倍 ROI" incident.
+  const heroReportA = reportHeroTemplate(page.variants.A[body.inputs.locale] ?? [], body.inputs.name);
+  const heroReportB = reportHeroTemplate(page.variants.B[body.inputs.locale] ?? [], body.inputs.name);
+  page.hydrationFailed = heroReportA.anyTemplate && heroReportB.anyTemplate;
+  await saveLandingPage(page);
 
   return NextResponse.json({ id: page.id, slug: page.slug });
 }

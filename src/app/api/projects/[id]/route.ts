@@ -29,6 +29,7 @@ import type {
   StrategySummary,
 } from '@/lib/types';
 import { projectViewFromV2 } from '@/lib/migrate-v2';
+import { reportHeroTemplate } from '@/lib/template-detection';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -157,6 +158,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (typeof body.published === 'boolean') page.published = body.published;
   if (body.publishMode) page.publishMode = body.publishMode;
   if (body.theme) page.theme = { ...page.theme, ...body.theme };
+
+  // Recompute hydrationFailed flag after any change that could fix it
+  // (successful regenerate on a template hero, or a module edit that
+  // replaces the template headline). Scanned across all cells because
+  // one rescued variant/locale is enough to clear the page-level flag.
+  if (page.hydrationFailed || body.regenerateModuleId || body.modules) {
+    const reports = [
+      ...Object.values(page.variants.A).map((mods) => mods && reportHeroTemplate(mods, product.name)),
+      ...Object.values(page.variants.B).map((mods) => mods && reportHeroTemplate(mods, product.name)),
+    ].filter((r): r is NonNullable<typeof r> => !!r);
+    page.hydrationFailed = reports.length > 0 && reports.every((r) => r.anyTemplate);
+  }
 
   await saveLandingPage(page);
 

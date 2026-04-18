@@ -1,4 +1,5 @@
 import type { Project, PageModule, HeroContent, FormContent } from './types';
+import { reportHeroTemplate } from './template-detection';
 
 export interface LintFinding {
   severity: 'error' | 'warn' | 'info';
@@ -44,6 +45,24 @@ export function auditProject(project: Project): LintFinding[] {
         moduleId: m.id,
       });
     }
+  }
+
+  // R2b: Hero is still a raw template fingerprint — fatal quality bug.
+  // If Claude hydration failed silently, the page may be shipping
+  // "每周有 11 小时" / "3.8 倍 ROI" style fake-grounded copy that does
+  // not reflect the user's actual product. Treat as error so the publish
+  // gate refuses and the editor banner surfaces the problem.
+  const heroReport = reportHeroTemplate(project.modules, project.inputs.name);
+  if (heroReport.anyTemplate) {
+    const parts: string[] = [];
+    if (heroReport.headline) parts.push('主标题');
+    if (heroReport.bullets) parts.push('要点');
+    out.push({
+      severity: 'error',
+      rule: 'hero-is-template',
+      message: `Hero 的${parts.join(' / ')}仍是未被替换的模板占位文案，与当前产品信息不匹配。请点击重新生成，或手动改写后再发布。`,
+      moduleId: heroes[0]?.id,
+    });
   }
 
   // R3: Form length — too many fields hurts CVR.

@@ -3,6 +3,7 @@ import { getLandingPage, saveLandingPage, getProduct } from '@/lib/storage';
 import { generateVariants, hydrateModulesViaClaude } from '@/lib/ai';
 import { pickTopTestimonials, testimonialsToModuleItems } from '@/lib/testimonial-match';
 import { localizeModulesViaGpt } from '@/lib/llm-openai';
+import { reportHeroTemplate } from '@/lib/template-detection';
 import type { LandingPage, PageLocale, LocalizationStrategy } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -167,6 +168,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   page.variants.A[locale] = localizedA;
   page.variants.B[locale] = localizedB;
   page.availableLocales = [...page.availableLocales, locale];
+
+  // Recompute the page-level hydrationFailed flag. It stays TRUE only
+  // while EVERY available (variant, locale) cell still has template hero
+  // copy — any successful Claude rewrite on any cell clears it. This
+  // way adding a ja locale that DID get hydrated rescues a page whose
+  // default-locale hydration failed.
+  const reportsA = Object.values(page.variants.A).map((mods) =>
+    mods ? reportHeroTemplate(mods, product.name) : null,
+  );
+  const reportsB = Object.values(page.variants.B).map((mods) =>
+    mods ? reportHeroTemplate(mods, product.name) : null,
+  );
+  const allTemplate = [...reportsA, ...reportsB]
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+    .every((r) => r.anyTemplate);
+  page.hydrationFailed = allTemplate;
 
   await saveLandingPage(page);
   return NextResponse.json({ page });

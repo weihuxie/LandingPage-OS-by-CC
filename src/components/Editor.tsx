@@ -126,7 +126,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     const timer = setTimeout(async () => {
       // If v2 page available, save modules to exact (variant, locale) cell
       if (page) {
-        await fetch(`/api/pages/${page.id}/modules`, {
+        const res = await fetch(`/api/pages/${page.id}/modules`, {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
@@ -139,6 +139,16 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
           // silently lost.
           keepalive: true,
         });
+        // Read back the server-computed flags (hydrationFailed in particular)
+        // so the banner clears the moment the user edits the hero away from
+        // the template. If we skip this, the banner sticks until full reload.
+        try {
+          const data = await res.json();
+          if (data?.page) setPage(data.page);
+        } catch {
+          // Non-JSON / network failure — leave local state as-is; next save
+          // will retry. Do not toast: autosave should stay silent.
+        }
         // Mirror tone/theme on page too
         await fetch(`/api/pages/${page.id}`, {
           method: 'PATCH',
@@ -516,11 +526,27 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   };
 
   const [deploying, setDeploying] = useState(false);
-  const deployToVercel = async () => {
+  const deployToVercel = async (force = false) => {
     setDeploying(true);
     try {
-      const res = await fetch(`/api/projects/${project.id}/deploy`, { method: 'POST' });
+      const res = await fetch(`/api/projects/${project.id}/deploy`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ force }),
+      });
       const data = await res.json();
+      // Quality gate: server refuses publish when Hero is still template
+      // copy. Surface the reason in a confirm dialog so the user can either
+      // fix it (recommended) or force-publish with full awareness of what's
+      // going live. We never silently proceed — that's the behavior we are
+      // specifically trying to kill here.
+      if (res.status === 409 && data?.error === 'hero-is-template') {
+        const ok = window.confirm(
+          `${data.reason ?? 'Hero 仍是模板占位文案。'}\n\n确认仍要发布吗？发布后访客看到的将是与产品无关的通用文案。`,
+        );
+        if (ok) await deployToVercel(true);
+        return;
+      }
       if (data?.project) setProject(data.project);
       if (data?.deploy?.status === 'error') {
         alert('Vercel 部署失败：' + (data.deploy.errorMessage ?? 'unknown'));
@@ -809,6 +835,28 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
 
       {/* Middle: preview */}
       <section className="col-span-12 bg-ink-100/30 p-4 md:col-span-6 lg:col-span-6">
+        {/* Hydration-failure banner (PRD v5.1 §4.4 quality gate).
+            Server flags this when the Hero hero headline / bullets still
+            match ai.ts's fallback template fingerprints across every
+            (variant, locale) cell — i.e. Claude's first rewrite pass and
+            every subsequent regenerate have all failed silently. The
+            preview will visibly show generic copy that does NOT reflect
+            this product, so we surface the problem loudly rather than
+            letting the user ship "3.8 倍 ROI" with no supporting grounding. */}
+        {page?.hydrationFailed && (
+          <div className="mb-3 rounded-xl border border-red-300 bg-red-50 p-3 text-xs text-red-800">
+            <div className="mb-1 flex items-center gap-1.5 font-medium">
+              <span aria-hidden>⚠️</span>
+              <span>Hero 文案可能仍是模板占位符</span>
+            </div>
+            <p className="leading-relaxed">
+              AI 改写在生成/切换语言时失败，当前 Hero 标题或要点仍是未被替换的通用文案，
+              与您的产品信息不匹配。建议点击 Hero 模块右侧的「重新生成」按钮，或手动改写后再发布。
+              未修复时，发布功能将被阻止。
+            </p>
+          </div>
+        )}
+
         {/* Locale tabs (Phase D) */}
         {page && (
           <div className="mb-2 flex items-center gap-1 flex-wrap">
@@ -923,7 +971,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             </a>
             <button
               className="btn btn-secondary px-3 py-1.5 text-xs"
-              onClick={deployToVercel}
+              onClick={() => deployToVercel(false)}
               disabled={deploying}
               title="将当前页面部署到 Vercel（平台托管 token）"
             >

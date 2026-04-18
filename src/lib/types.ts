@@ -507,6 +507,18 @@ export interface LandingPage {
   publishedAt?: number;
   deploy?: DeployRecord | null;
 
+  /**
+   * True when Claude module hydration did NOT succeed at least once for
+   * the default locale (no API key, API error, or all 5 parallel module
+   * rewrites returned null). Persisted on the page so the editor can
+   * render a warning banner and the deploy pre-check can block publish.
+   *
+   * Cleared back to false the moment any subsequent hydration call
+   * (add-locale / regenerate hero) succeeds and produces non-template
+   * headline copy on at least one variant.
+   */
+  hydrationFailed?: boolean;
+
   stats: {
     views: number;
     leads: number;
