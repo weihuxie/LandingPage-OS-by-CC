@@ -673,24 +673,29 @@ function buildEnterpriseB2BStack(base: PageModule[], inputs: ProductInputs): Pag
 function applyContextToModules(modules: PageModule[], context?: ExtractedContext) {
   if (!context) return;
 
-  // Social proof logos → named customers if we have 3+
+  // Social proof: a page may have multiple socialProof modules with
+  // different variants (enterprise-b2b has a logos-only band AND a
+  // stats-only band). Route logos into bands that render logos, and
+  // stats into bands that render stats. Bands without an explicit
+  // variant default to 'logos-and-stats', which renders both.
+  const socialProofs = modules.filter((m) => m.type === 'socialProof');
   if (context.namedCustomers.length >= 3) {
-    const sp = modules.find((m) => m.type === 'socialProof');
-    if (sp) {
+    for (const sp of socialProofs) {
       const c = sp.content as any;
+      const variant = c.variant ?? 'logos-and-stats';
+      if (variant === 'stats-only') continue; // doesn't render logos
       c.logos = context.namedCustomers.slice(0, 6);
     }
   }
-
-  // Stats → real metrics parsed from text
   if (context.metrics.length >= 2) {
-    const sp = modules.find((m) => m.type === 'socialProof');
-    if (sp) {
+    const stats = context.metrics.slice(0, 3).map((m) => ({
+      label: inferLabelFromMetric(m),
+      value: m,
+    }));
+    for (const sp of socialProofs) {
       const c = sp.content as any;
-      const stats = context.metrics.slice(0, 3).map((m) => ({
-        label: inferLabelFromMetric(m),
-        value: m,
-      }));
+      const variant = c.variant ?? 'logos-and-stats';
+      if (variant === 'logos-only') continue; // doesn't render stats
       c.stats = stats;
     }
   }
@@ -1082,7 +1087,17 @@ export function regenerateModuleTemplated(
 ): PageModule {
   const fresh = generateModules(inputs, tone).find((m) => m.type === module.type);
   if (!fresh) return module;
-  return { ...module, content: fresh.content };
+  // Preserve structural fields the user (or the enterprise-b2b stack builder)
+  // set on the module that govern layout/mode, not copy. Without this,
+  // clicking "regenerate" on a logos-only socialProof band reverts it to
+  // 'logos-and-stats', or regenerating an external form reverts it to
+  // inline mode and the user's externalUrl is dropped.
+  const old = module.content as any;
+  const merged: any = { ...fresh.content };
+  if ('variant' in old) merged.variant = old.variant;
+  if ('mode' in old) merged.mode = old.mode;
+  if ('externalUrl' in old) merged.externalUrl = old.externalUrl;
+  return { ...module, content: merged };
 }
 
 // --- Claude-driven module hydration on initial creation ------------------
