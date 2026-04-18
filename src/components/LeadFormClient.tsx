@@ -28,6 +28,47 @@ export default function LeadFormClient({
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
 
+  // External mode: skip the inline form entirely, render a CTA card
+  // linking to 飞书 / Typeform / Calendly. Fire a form_submit event on
+  // click so lead-source attribution still works for this page.
+  if (content.mode === 'external') {
+    const href = content.externalUrl && content.externalUrl.trim() ? content.externalUrl : '';
+    const isExternal = /^https?:\/\//i.test(href);
+    const onClick = () => {
+      if (!interactive) return;
+      fetch('/api/events', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ slug, type: 'form_submit', variant, locale }),
+        keepalive: true,
+      }).catch(() => {});
+    };
+    return (
+      <div className="mx-auto max-w-3xl px-6 py-16" id="contact">
+        <div className="rounded-3xl border border-ink-100 bg-white p-8 text-center shadow-soft sm:p-10">
+          <h3 className="text-2xl font-semibold">{content.title}</h3>
+          <p className="mt-2 text-ink-500">{content.subtitle}</p>
+          {href ? (
+            <a
+              href={href}
+              target={isExternal ? '_blank' : undefined}
+              rel={isExternal ? 'noopener noreferrer' : undefined}
+              onClick={onClick}
+              className="mt-6 inline-block rounded-xl px-6 py-3 text-sm font-medium text-white transition"
+              style={{ background: 'var(--brand)' }}
+            >
+              {content.submitLabel}
+            </a>
+          ) : (
+            <div className="mt-6 text-xs text-ink-400">
+              (External form URL not configured)
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const update = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   const onSubmit = async (e: React.FormEvent) => {

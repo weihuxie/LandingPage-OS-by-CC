@@ -132,7 +132,8 @@
       "sales": "销售导向",
       "friendly": "友好自然",
       "saas": "高级 SaaS",
-      "japanese": "日本商务风"
+      "japanese": "日本商务风",
+      "enterprise-b2b": "企业 B2B（Helios 风）"
     },
     "saved": "已保存",
     "saving": "保存中…",

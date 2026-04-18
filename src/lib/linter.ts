@@ -46,10 +46,24 @@ export function auditProject(project: Project): LintFinding[] {
     }
   }
 
-  // R3: Form length — too many fields hurts CVR
+  // R3: Form length — too many fields hurts CVR.
+  // Skip when mode='external': fields aren't rendered, the external tool
+  // owns field count. Instead warn if externalUrl is missing — that form
+  // renders as a dead card otherwise.
   const forms = project.modules.filter((m) => m.type === 'form');
   for (const f of forms) {
     const c = f.content as FormContent;
+    if (c.mode === 'external') {
+      if (!c.externalUrl || !/^https?:\/\//i.test(c.externalUrl)) {
+        out.push({
+          severity: 'error',
+          rule: 'form-external-url-missing',
+          message: '表单设为外链模式，但 External URL 为空或格式不正确。',
+          moduleId: f.id,
+        });
+      }
+      continue;
+    }
     if (c.fields && c.fields.length > 5) {
       out.push({
         severity: 'warn',

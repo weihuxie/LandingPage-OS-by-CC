@@ -34,6 +34,7 @@ const TONES: ToneKey[] = [
   'friendly',
   'saas',
   'japanese',
+  'enterprise-b2b',
 ];
 
 const ALL_TYPES: ModuleType[] = [

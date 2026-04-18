@@ -75,13 +75,33 @@ function serializeModule(m: any): string {
         <p class="sub">${escapeHtml(c.subhead)}</p>
         <a class="cta" href="#contact">${escapeHtml(c.primaryCta)}</a>
       </div></section>`;
-    case 'socialProof':
+    case 'socialProof': {
+      // variant controls which bands render:
+      //   'logos-only'     → logo wall, no stats
+      //   'stats-only'     → stats grid, no logos
+      //   'logos-and-stats' (default) → both stacked
+      const variant = c.variant ?? 'logos-and-stats';
+      const showLogos = variant !== 'stats-only';
+      const showStats = variant !== 'logos-only';
+      const logosHtml = showLogos && (c.logos ?? []).length
+        ? `<div class="grid3" style="margin-top:24px">${(c.logos ?? [])
+            .map((l: string) => `<div class="card" style="text-align:center">${escapeHtml(l)}</div>`)
+            .join('')}</div>`
+        : '';
+      const statsHtml = showStats && (c.stats ?? []).length
+        ? `<div class="grid3" style="margin-top:${showLogos ? '16px' : '24px'}">${(c.stats ?? [])
+            .map(
+              (s: { label: string; value: string }) =>
+                `<div class="card" style="text-align:center"><div style="font-size:28px;font-weight:600;color:#0b1020">${escapeHtml(s.value)}</div><div class="muted">${escapeHtml(s.label)}</div></div>`,
+            )
+            .join('')}</div>`
+        : '';
       return `<section class="section"><div class="wrap">
         <div style="text-align:center;color:#5b6478;font-size:12px;text-transform:uppercase;letter-spacing:.08em">${escapeHtml(c.title)}</div>
-        <div class="grid3" style="margin-top:24px">${(c.logos ?? [])
-          .map((l: string) => `<div class="card" style="text-align:center">${escapeHtml(l)}</div>`)
-          .join('')}</div>
+        ${logosHtml}
+        ${statsHtml}
       </div></section>`;
+    }
     case 'pain':
       return `<section class="section"><div class="wrap">
         <h2>${escapeHtml(c.title)}</h2>
@@ -127,8 +147,20 @@ function serializeModule(m: any): string {
         .join('')}</div></section>`;
     case 'cta':
       return `<section class="section"><div class="wrap"><div style="background:linear-gradient(135deg,var(--brand),color-mix(in oklch,var(--brand) 60%,#0b1020));color:#fff;padding:56px;border-radius:calc(var(--radius,16px) * 1.5);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><h3 style="font-size:28px">${escapeHtml(c.headline)}</h3><p style="opacity:.8;margin-top:8px">${escapeHtml(c.subhead)}</p></div><a href="#contact" style="background:#fff;color:#0b1020;padding:14px 22px;border-radius:var(--radius);text-decoration:none;font-weight:500">${escapeHtml(c.button)}</a></div></div></section>`;
-    case 'form':
+    case 'form': {
+      const mode = c.mode ?? 'inline';
+      // External mode: render as a CTA-style card linking to the external
+      // tool (飞书表单 / Typeform / Calendly). No inline inputs, no static
+      // fallback note — the anchor works in the exported HTML as-is. If
+      // externalUrl is empty we still render the card so the layout isn't
+      // jarring, just with href="#contact" as a no-op placeholder.
+      if (mode === 'external') {
+        const href = c.externalUrl && typeof c.externalUrl === 'string' ? c.externalUrl : '#contact';
+        const isExternal = /^https?:\/\//i.test(href);
+        return `<section class="section" id="contact"><div class="wrap" style="max-width:720px"><div class="card" style="padding:40px;text-align:center"><h3>${escapeHtml(c.title)}</h3><p class="muted">${escapeHtml(c.subtitle)}</p><a class="cta" href="${escapeHtml(href)}"${isExternal ? ' target="_blank" rel="noopener"' : ''} style="margin-top:20px">${escapeHtml(c.submitLabel)}</a></div></div></section>`;
+      }
       return `<section class="section" id="contact"><div class="wrap" style="max-width:720px"><div class="card" style="padding:40px"><h3>${escapeHtml(c.title)}</h3><p class="muted">${escapeHtml(c.subtitle)}</p><p class="muted" style="margin-top:16px">(此导出版为静态 HTML。实际提交请接入你的表单服务或改用托管发布。)</p></div></div></section>`;
+    }
     default:
       return '';
   }

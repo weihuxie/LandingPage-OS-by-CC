@@ -491,6 +491,49 @@ export function generateStrategyTemplated(
   return strategy;
 }
 
+// --- Tone-specific module whitelist (Helios-style enterprise-b2b) ------
+//
+// The default SaaS stack is 10 modules: hero → socialProof → pain → solution
+// → benefits → useCase → testimonial → faq → cta → form. That's right for
+// cold SMB traffic that needs pain-agitation and FAQ to remove objections.
+//
+// `enterprise-b2b` (Helios-style) is a different shape entirely: the buyer
+// is arriving warm via sales/brand, so we cut pain/useCase/testimonial/
+// faq and push logos+stats as two separate trust bands sandwiching the
+// product showcase. Form becomes mode='external' — CTA to a飞书/Typeform
+// URL, no inline fields.
+//
+// Unknown tones fall back to the full set (safe default).
+export function moduleSetForTone(
+  tone: ToneKey,
+): { types: ModuleType[]; socialProofVariants: ReadonlyArray<'logos-and-stats' | 'logos-only' | 'stats-only'>; formMode: 'inline' | 'external' } {
+  if (tone === 'enterprise-b2b') {
+    return {
+      // Two socialProof bands — first one for logos, second for stats.
+      // productShowcase carries the product screenshots (the big bet).
+      types: ['hero', 'socialProof', 'productShowcase', 'socialProof', 'cta', 'form'],
+      socialProofVariants: ['logos-only', 'stats-only'],
+      formMode: 'external',
+    };
+  }
+  return {
+    types: [
+      'hero',
+      'socialProof',
+      'pain',
+      'solution',
+      'benefits',
+      'useCase',
+      'testimonial',
+      'faq',
+      'cta',
+      'form',
+    ],
+    socialProofVariants: ['logos-and-stats'],
+    formMode: 'inline',
+  };
+}
+
 // --- Dual narrative module generator (PRD §4.3) -----------------------
 
 export type NarrativeVariant = 'A' | 'B';
@@ -517,6 +560,22 @@ export function generateVariants(
   const baseA = generateModules(inputs, tone, strategy, context);
   const baseB = generateModules(inputs, tone, strategy, context);
 
+  // enterprise-b2b: Helios-style compact stack. Both variants share the
+  // same order — we differentiate only by hero eyebrow (see tintHero).
+  // The extra productShowcase is seeded here because generateModules()
+  // doesn't produce it by default.
+  if (tone === 'enterprise-b2b') {
+    const a = buildEnterpriseB2BStack(baseA, inputs);
+    const b = buildEnterpriseB2BStack(baseB, inputs);
+    tintHeroForVariant(a, 'A', inputs);
+    tintHeroForVariant(b, 'B', inputs);
+    applyStrategyToModules(a, strategy);
+    applyStrategyToModules(b, strategy);
+    applyContextToModules(a, context);
+    applyContextToModules(b, context);
+    return { A: a, B: b };
+  }
+
   // Variant A — pain-first
   const a = reorder(baseA, ['hero', 'socialProof', 'pain', 'solution', 'benefits', 'useCase', 'testimonial', 'faq', 'cta', 'form']);
   tintHeroForVariant(a, 'A', inputs);
@@ -530,6 +589,80 @@ export function generateVariants(
   applyContextToModules(b, context);
 
   return { A: a, B: b };
+}
+
+/**
+ * Build the Helios-style compact stack: hero → logo wall → product
+ * showcase → stats band → cta → external form.
+ *
+ * Reuses the templated modules generateModules() already produced:
+ *   - keeps the hero / cta / form / socialProof it built
+ *   - splits the single socialProof into two (logos-only + stats-only)
+ *   - inserts a productShowcase seeded for the product's locale
+ *   - marks the form mode='external' (externalUrl stays empty for the
+ *     user to fill in the editor — rendering logic handles empty URL)
+ */
+function buildEnterpriseB2BStack(base: PageModule[], inputs: ProductInputs): PageModule[] {
+  const find = (t: ModuleType) => base.find((m) => m.type === t);
+  const hero = find('hero');
+  const socialProof = find('socialProof');
+  const ctaMod = find('cta');
+  const formMod = find('form');
+
+  if (!hero || !socialProof || !ctaMod || !formMod) {
+    // Should never happen — generateModules always emits these. If one
+    // goes missing, fall back to the full stack so the user isn't left
+    // with a blank page.
+    return base;
+  }
+
+  // Clone socialProof into two: logo wall at top, stats band near bottom
+  const logoBand: PageModule = {
+    id: nanoid(8),
+    type: 'socialProof',
+    enabled: true,
+    content: {
+      ...(socialProof.content as any),
+      variant: 'logos-only',
+    },
+  };
+  const statsBand: PageModule = {
+    id: nanoid(8),
+    type: 'socialProof',
+    enabled: true,
+    content: {
+      ...(socialProof.content as any),
+      variant: 'stats-only',
+    },
+  };
+
+  // Seed a productShowcase — this is the module carrying the screenshot
+  // weight in a Helios-style page. User can swap in their real media later.
+  const seeded = seedProductShowcase(inputs);
+  const productShowcase: PageModule = {
+    id: nanoid(8),
+    type: 'productShowcase',
+    enabled: true,
+    content: {
+      title: seeded.title,
+      subtitle: seeded.subtitle,
+      items: seeded.items.slice(0, 2), // Helios uses two side-by-side cards
+    },
+  };
+
+  // Form → external mode. externalUrl stays blank; editor UI prompts user
+  // to paste their 飞书 / Typeform / Calendly link. Renderer falls back to
+  // inline form if externalUrl is empty so partial setups still work.
+  const externalForm: PageModule = {
+    ...formMod,
+    content: {
+      ...(formMod.content as any),
+      mode: 'external',
+      externalUrl: '',
+    },
+  };
+
+  return [hero, logoBand, productShowcase, statsBand, ctaMod, externalForm];
 }
 
 /**

@@ -325,39 +325,66 @@ function VideoEmbedEditor({
 }
 
 function SocialProofEditor({ c, setC }: { c: SocialProofContent; setC: (c: SocialProofContent) => void }) {
+  const variant = c.variant ?? 'logos-and-stats';
+  const VARIANTS: Array<{ key: 'logos-and-stats' | 'logos-only' | 'stats-only'; label: string; hint: string }> = [
+    { key: 'logos-and-stats', label: 'Logos + Stats', hint: '默认：logo 墙在上，数字在下' },
+    { key: 'logos-only', label: 'Logos only', hint: 'Helios 顶部信任带' },
+    { key: 'stats-only', label: 'Stats only', hint: 'Helios 底部数据成果带' },
+  ];
+  const showLogos = variant !== 'stats-only';
+  const showStats = variant !== 'logos-only';
   return (
     <>
       <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
-      <Field label="Logos (comma separated)" value={c.logos.join(', ')} onChange={(v) => setC({ ...c, logos: v.split(',').map((s) => s.trim()).filter(Boolean) })} multiline />
       <div>
-        <div className="label mb-1">Stats</div>
-        <div className="space-y-1.5">
-          {c.stats.map((s, i) => (
-            <div key={i} className="flex gap-1.5">
-              <input
-                className="input"
-                placeholder="Value"
-                value={s.value}
-                onChange={(e) => {
-                  const next = [...c.stats];
-                  next[i] = { ...s, value: e.target.value };
-                  setC({ ...c, stats: next });
-                }}
-              />
-              <input
-                className="input"
-                placeholder="Label"
-                value={s.label}
-                onChange={(e) => {
-                  const next = [...c.stats];
-                  next[i] = { ...s, label: e.target.value };
-                  setC({ ...c, stats: next });
-                }}
-              />
-            </div>
+        <div className="label mb-1.5">Variant</div>
+        <div className="flex flex-wrap gap-1.5">
+          {VARIANTS.map((v) => (
+            <button
+              key={v.key}
+              onClick={() => setC({ ...c, variant: v.key })}
+              title={v.hint}
+              className={`pill ${variant === v.key ? 'border-brand-200 bg-brand-50 text-brand-700' : ''}`}
+            >
+              {v.label}
+            </button>
           ))}
         </div>
       </div>
+      {showLogos && (
+        <Field label="Logos (comma separated)" value={c.logos.join(', ')} onChange={(v) => setC({ ...c, logos: v.split(',').map((s) => s.trim()).filter(Boolean) })} multiline />
+      )}
+      {showStats && (
+        <div>
+          <div className="label mb-1">Stats</div>
+          <div className="space-y-1.5">
+            {c.stats.map((s, i) => (
+              <div key={i} className="flex gap-1.5">
+                <input
+                  className="input"
+                  placeholder="Value"
+                  value={s.value}
+                  onChange={(e) => {
+                    const next = [...c.stats];
+                    next[i] = { ...s, value: e.target.value };
+                    setC({ ...c, stats: next });
+                  }}
+                />
+                <input
+                  className="input"
+                  placeholder="Label"
+                  value={s.label}
+                  onChange={(e) => {
+                    const next = [...c.stats];
+                    next[i] = { ...s, label: e.target.value };
+                    setC({ ...c, stats: next });
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -383,30 +410,67 @@ function CTAEditor({ c, setC }: { c: CTAContent; setC: (c: CTAContent) => void }
 }
 
 function FormEditor({ c, setC }: { c: FormContent; setC: (c: FormContent) => void }) {
+  const mode = c.mode ?? 'inline';
   const toggle = (f: FormContent['fields'][number]) => {
     const has = c.fields.includes(f);
     setC({ ...c, fields: has ? c.fields.filter((x) => x !== f) : [...c.fields, f] });
   };
   const all: FormContent['fields'] = ['name', 'email', 'company', 'phone', 'message'];
+  const urlLooksValid = !c.externalUrl || /^https?:\/\//i.test(c.externalUrl);
   return (
     <>
       <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
       <Field label="Subtitle" value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} />
       <Field label="Submit Label" value={c.submitLabel} onChange={(v) => setC({ ...c, submitLabel: v })} />
       <div>
-        <div className="label mb-1.5">Fields</div>
+        <div className="label mb-1.5">Mode</div>
         <div className="flex flex-wrap gap-1.5">
-          {all.map((f) => (
-            <button
-              key={f}
-              onClick={() => toggle(f)}
-              className={`pill ${c.fields.includes(f) ? 'border-brand-200 bg-brand-50 text-brand-700' : ''}`}
-            >
-              {f}
-            </button>
-          ))}
+          <button
+            onClick={() => setC({ ...c, mode: 'inline' })}
+            title="站内表单，提交到本项目 /api/leads"
+            className={`pill ${mode === 'inline' ? 'border-brand-200 bg-brand-50 text-brand-700' : ''}`}
+          >
+            Inline form
+          </button>
+          <button
+            onClick={() => setC({ ...c, mode: 'external' })}
+            title="跳转飞书/Typeform/Calendly，无站内字段"
+            className={`pill ${mode === 'external' ? 'border-brand-200 bg-brand-50 text-brand-700' : ''}`}
+          >
+            External link
+          </button>
         </div>
       </div>
+      {mode === 'external' ? (
+        <>
+          <Field
+            label="External URL"
+            value={c.externalUrl ?? ''}
+            onChange={(v) => setC({ ...c, externalUrl: v })}
+          />
+          {!urlLooksValid && (
+            <div className="text-[11px] text-amber-600">URL 应以 http:// 或 https:// 开头</div>
+          )}
+          <div className="text-[11px] text-ink-400">
+            粘贴飞书表单 / Typeform / Calendly 链接。Submit Label 会成为按钮文案。
+          </div>
+        </>
+      ) : (
+        <div>
+          <div className="label mb-1.5">Fields</div>
+          <div className="flex flex-wrap gap-1.5">
+            {all.map((f) => (
+              <button
+                key={f}
+                onClick={() => toggle(f)}
+                className={`pill ${c.fields.includes(f) ? 'border-brand-200 bg-brand-50 text-brand-700' : ''}`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </>
   );
 }

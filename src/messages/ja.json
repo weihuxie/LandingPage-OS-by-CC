@@ -130,7 +130,8 @@
       "sales": "セールス強め",
       "friendly": "フレンドリー",
       "saas": "高級 SaaS",
-      "japanese": "日本のビジネス"
+      "japanese": "日本のビジネス",
+      "enterprise-b2b": "エンタープライズ B2B（Helios 風）"
     },
     "saved": "保存済み",
     "saving": "保存中…",

@@ -130,7 +130,8 @@
       "sales": "Sales-driven",
       "friendly": "Friendly",
       "saas": "Premium SaaS",
-      "japanese": "Japanese Business"
+      "japanese": "Japanese Business",
+      "enterprise-b2b": "Enterprise B2B (Helios-style)"
     },
     "saved": "Saved",
     "saving": "Saving…",

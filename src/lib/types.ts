@@ -14,7 +14,12 @@ export type ToneKey =
   | 'sales'
   | 'friendly'
   | 'saas'
-  | 'japanese';
+  | 'japanese'
+  // enterprise-b2b: Helios-style — short, product-screenshot-heavy, no
+  // pain/testimonial/FAQ, logos+stats as separate sections, form as a
+  // CTA-to-external-tool instead of an inline form. See CLAUDE.md §2.3
+  // variant story for why this is a tone, not a separate narrative.
+  | 'enterprise-b2b';
 
 export type ModuleType =
   | 'hero'
@@ -110,10 +115,19 @@ export interface VideoEmbedContent {
   media: MediaRef; // kind='video'
 }
 
+/**
+ * SocialProof render modes. Helios-style pages use two separate socialProof
+ * modules (one logos-only band near the top, one stats-only band near the
+ * bottom) instead of stacking both in one section. 'logos-and-stats' stays
+ * the default so old pages render unchanged.
+ */
+export type SocialProofVariant = 'logos-and-stats' | 'logos-only' | 'stats-only';
+
 export interface SocialProofContent {
   title: string;
   logos: string[];
   stats: { label: string; value: string }[];
+  variant?: SocialProofVariant; // default 'logos-and-stats'
 }
 
 export interface PainContent {
@@ -157,11 +171,23 @@ export interface CTAContent {
   button: string;
 }
 
+/**
+ * Form modes:
+ * - 'inline' (default): render the in-page form, POST to /api/leads.
+ * - 'external': render the CTA button as an anchor pointing at `externalUrl`
+ *   (飞书表单 / Typeform / Calendly / HubSpot Meetings). No inline fields,
+ *   no consent checkbox — the external tool owns lead capture.
+ * Old pages without `mode` render as 'inline' and keep working.
+ */
+export type FormMode = 'inline' | 'external';
+
 export interface FormContent {
   title: string;
   subtitle: string;
   fields: Array<'name' | 'email' | 'company' | 'phone' | 'message'>;
   submitLabel: string;
+  mode?: FormMode;          // default 'inline'
+  externalUrl?: string;     // required when mode='external'
 }
 
 export type ModuleContent =

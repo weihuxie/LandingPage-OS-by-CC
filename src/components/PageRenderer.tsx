@@ -345,23 +345,32 @@ function HeroMedia({
 }
 
 function SocialProof({ content }: { content: SocialProofContent }) {
+  // variant controls which bands show:
+  //   'logos-only'  → logo wall only  (Helios top trust band)
+  //   'stats-only'  → stats grid only (Helios bottom metrics band)
+  //   'logos-and-stats' (default)     → stack both (legacy)
+  const variant = content.variant ?? 'logos-and-stats';
+  const showLogos = variant !== 'stats-only' && content.logos?.length > 0;
+  const showStats = variant !== 'logos-only' && content.stats?.length > 0;
   return (
     <div className="mx-auto max-w-6xl px-6 py-12">
       <div className="text-center text-xs font-medium uppercase tracking-wider text-ink-500">
         {content.title}
       </div>
-      <div className="mt-5 grid grid-cols-3 items-center gap-4 sm:grid-cols-6">
-        {content.logos.map((l, i) => (
-          <div
-            key={i}
-            className="rounded-lg border border-ink-100 bg-white py-4 text-center text-sm font-medium text-ink-500"
-          >
-            {l}
-          </div>
-        ))}
-      </div>
-      {content.stats?.length > 0 && (
-        <div className="mt-8 grid grid-cols-3 gap-3">
+      {showLogos && (
+        <div className="mt-5 grid grid-cols-3 items-center gap-4 sm:grid-cols-6">
+          {content.logos.map((l, i) => (
+            <div
+              key={i}
+              className="rounded-lg border border-ink-100 bg-white py-4 text-center text-sm font-medium text-ink-500"
+            >
+              {l}
+            </div>
+          ))}
+        </div>
+      )}
+      {showStats && (
+        <div className={`grid grid-cols-3 gap-3 ${showLogos ? 'mt-8' : 'mt-5'}`}>
           {content.stats.map((s, i) => (
             <div
               key={i}
