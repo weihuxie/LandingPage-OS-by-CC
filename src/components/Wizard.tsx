@@ -251,7 +251,40 @@ export default function Wizard({ locale }: Props) {
           fileContexts, // file-extracted facts to ground generation
         }),
       });
-      if (!res.ok) throw new Error(`${res.status}`);
+
+      // Non-2xx: pull the error body so we can show the user something
+      // actionable. The POST handler now returns { error, stage,
+      // productId, pageId, message } on save failures, which lets us
+      // tell the user whether their data partially landed.
+      if (!res.ok) {
+        let detail = '';
+        let maybePageId: string | undefined;
+        try {
+          const errBody = await res.json();
+          if (errBody?.pageId) maybePageId = errBody.pageId;
+          const stage = errBody?.stage ? `（${errBody.stage}）` : '';
+          detail = `${stage}${errBody?.message ?? ''}`.trim();
+          if (errBody?.productId) detail += `\n产品 ID: ${errBody.productId}`;
+          if (errBody?.pageId) detail += `\n页面 ID: ${errBody.pageId}`;
+        } catch {
+          // Non-JSON body — fall back to status code
+          detail = `HTTP ${res.status}`;
+        }
+        // If the server got far enough to mint a pageId, offer to open
+        // it anyway — the SCAN-based read path may well have the data.
+        if (maybePageId) {
+          const open = window.confirm(
+            `生成过程中出错：${detail}\n\n服务端可能已保存部分数据。要尝试打开页面看看吗？`,
+          );
+          if (open) {
+            clearDraft();
+            router.push(`/${locale}/projects/${maybePageId}`);
+            return;
+          }
+        }
+        throw new Error(detail || `${res.status}`);
+      }
+
       const data = await res.json();
       if (!data?.id) throw new Error('no-id');
       // Success! Clear draft — we're done.

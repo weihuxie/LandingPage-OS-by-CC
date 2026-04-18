@@ -158,8 +158,44 @@ export async function POST(req: NextRequest) {
   // ever landed in KV. User saw "生成失败" and no new product in the
   // dashboard. Now we persist first; Claude enrichment is a best-effort
   // second save.
-  await saveProduct(product);
-  await saveLandingPage(page);
+  //
+  // Each save is individually try-caught so the error body can carry
+  // product.id / page.id back to the client. This matters because the
+  // old behavior was: saveLandingPage throws → Next.js returns generic
+  // 500 with no body → user had no way to know whether their product
+  // landed. With IDs in the error payload, they can give us the IDs and
+  // we can check KV directly (or the SCAN-based read path will surface
+  // the orphan on the next dashboard load and self-heal).
+  try {
+    await saveProduct(product);
+  } catch (e) {
+    console.error('[projects] saveProduct failed:', e);
+    return NextResponse.json(
+      {
+        error: 'save-failed',
+        stage: 'saveProduct',
+        productId: product.id,
+        pageId: page.id,
+        message: e instanceof Error ? e.message : String(e),
+      },
+      { status: 500 },
+    );
+  }
+  try {
+    await saveLandingPage(page);
+  } catch (e) {
+    console.error('[projects] saveLandingPage (first save) failed:', e);
+    return NextResponse.json(
+      {
+        error: 'save-failed',
+        stage: 'saveLandingPage',
+        productId: product.id,
+        pageId: page.id,
+        message: e instanceof Error ? e.message : String(e),
+      },
+      { status: 500 },
+    );
+  }
 
   // --- SECOND SAVE (best-effort): enrich modules via Claude -------------
   // If this times out or throws, the first save stands and the user sees
@@ -189,7 +225,13 @@ export async function POST(req: NextRequest) {
   const heroReportA = reportHeroTemplate(page.variants.A[body.inputs.locale] ?? [], body.inputs.name);
   const heroReportB = reportHeroTemplate(page.variants.B[body.inputs.locale] ?? [], body.inputs.name);
   page.hydrationFailed = heroReportA.anyTemplate && heroReportB.anyTemplate;
-  await saveLandingPage(page);
+  try {
+    await saveLandingPage(page);
+  } catch (e) {
+    // First save stands; client can still open the editor. Log so we
+    // can tell from Vercel logs if the enrichment save path is flaky.
+    console.error('[projects] saveLandingPage (enrichment save) failed:', e);
+  }
 
-  return NextResponse.json({ id: page.id, slug: page.slug });
+  return NextResponse.json({ id: page.id, slug: page.slug, productId: product.id });
 }

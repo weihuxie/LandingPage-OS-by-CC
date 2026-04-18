@@ -29,6 +29,76 @@ function useKV(): boolean {
   return !!process.env['KV_REST_API_URL'] && !!process.env['KV_REST_API_TOKEN'];
 }
 
+// --- KV reliability helpers -------------------------------------------
+//
+// Root-cause context: Upstash REST KV returns transient 429/503 under
+// cold-connection or rate-spike conditions. The original code used
+// `Promise.all([kv.set(data), kv.sadd(index), kv.set(slug)])` — any one
+// rejection killed the whole save, but previously-committed writes were
+// NOT rolled back. Result: data written without index entry → `smembers`
+// can never find it → dashboard shows nothing → user retries, same
+// race repeats. "Only 1 product saved" = the one time all 3 writes
+// happened to land cleanly.
+//
+// Fix: sequential writes with retry on each, data-FIRST (index entry
+// can't point at nonexistent data), plus self-healing SCAN on the read
+// path to repair any orphaned data that predates this fix.
+
+async function withKVRetry<T>(
+  op: () => Promise<T>,
+  label: string,
+  maxAttempts = 3,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      return await op();
+    } catch (e) {
+      lastErr = e;
+      console.error(`[kv] ${label} attempt ${i + 1}/${maxAttempts} failed:`, e);
+      if (i === maxAttempts - 1) break;
+      // Exponential backoff: ~100ms, 250ms, 625ms. Jitter avoids
+      // synchronized retries across concurrent saves.
+      const base = Math.min(100 * Math.pow(2.5, i), 2000);
+      const jittered = base * (0.75 + Math.random() * 0.5);
+      await new Promise((r) => setTimeout(r, jittered));
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Enumerate every KV key starting with `prefix` via SCAN. Used as the
+ * source-of-truth for `readProducts` / `readLandingPages` so a broken
+ * index set can't hide data. SCAN is incremental; we cap iterations at
+ * 20 to defend against pathological response loops.
+ */
+async function scanKeysByPrefix(prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+  // Upstash scan cursor starts at 0; returns '0' when done.
+  let cursor: string | number = 0;
+  let iterations = 0;
+  do {
+    // @vercel/kv.scan wraps Upstash Redis SCAN. Signature: scan(cursor, { match, count }).
+    // Returns [nextCursor, keys[]]. Count is a HINT, not a hard limit.
+    const result = (await kv.scan(cursor as number, {
+      match: `${prefix}*`,
+      count: 500,
+    })) as [string, string[]] | [number, string[]];
+    const [next, batch] = result;
+    if (Array.isArray(batch)) keys.push(...batch);
+    cursor = next;
+    iterations++;
+    if (iterations > 20) {
+      console.error(
+        `[kv] scanKeysByPrefix(${prefix}) hit 20 iterations; truncating at ${keys.length} keys.`,
+      );
+      break;
+    }
+  } while (cursor !== '0' && cursor !== 0);
+  return keys;
+}
+
 // --- Keys (shared between KV and FS layouts) ---------------------------
 
 const KEY_PROJECTS = 'lp:projects';       // legacy v1
@@ -251,12 +321,43 @@ const SLUG_MAP_KEY_PREFIX = 'lp:v2:slug:';
 
 export async function readProducts(): Promise<Product[]> {
   if (useKV()) {
-    const ids = await kv.smembers(PRODUCT_INDEX_KEY) as string[];
-    if (!ids || ids.length === 0) return [];
+    // SCAN is the authoritative enumeration. Key existence wins over
+    // index-set membership, so orphaned writes (data committed but
+    // sadd failed) still show up.
+    const keys = await scanKeysByPrefix(PRODUCT_KEY_PREFIX);
+    if (keys.length === 0) return [];
     const pipeline = kv.pipeline();
-    for (const id of ids) pipeline.get(PRODUCT_KEY_PREFIX + id);
+    for (const k of keys) pipeline.get(k);
     const results = await pipeline.exec();
-    return (results ?? []).filter((r): r is Product => !!r);
+    const products = (results ?? []).filter((r): r is Product => !!r);
+
+    // Opportunistic index heal: if SCAN found IDs not in the index set,
+    // `sadd` them so the next read is fast. Fire-and-forget so we don't
+    // block the dashboard on a secondary repair.
+    (async () => {
+      try {
+        const indexed = (await kv.smembers(PRODUCT_INDEX_KEY)) as string[];
+        const indexedSet = new Set(indexed ?? []);
+        const missing = products.map((p) => p.id).filter((id) => !indexedSet.has(id));
+        if (missing.length > 0) {
+          console.warn(
+            `[readProducts] heal: repairing ${missing.length} orphan(s) into index:`,
+            missing,
+          );
+          // Sequential rather than `sadd(key, ...missing)` because the
+          // @vercel/kv rest-arg typing rejects plain string[] spreads
+          // (wants a tuple). Heal is a rare path and `missing` is tiny in
+          // practice (1-5 orphans), so the extra round-trips are fine.
+          for (const id of missing) {
+            await kv.sadd(PRODUCT_INDEX_KEY, id);
+          }
+        }
+      } catch (e) {
+        console.error('[readProducts] heal failed:', e);
+      }
+    })();
+
+    return products;
   }
   return (await readFs<Product[]>(KEY_PRODUCTS, []));
 }
@@ -277,8 +378,19 @@ export async function getProduct(id: string): Promise<Product | null> {
 export async function saveProduct(product: Product): Promise<Product> {
   product.updatedAt = Date.now();
   if (useKV()) {
-    await kv.set(PRODUCT_KEY_PREFIX + product.id, product);
-    await kv.sadd(PRODUCT_INDEX_KEY, product.id);
+    // Data first, index second. If data write fails → throw, nothing
+    // committed. If index write fails after N retries → throw, but the
+    // read path's SCAN will find the orphaned product and self-heal the
+    // index. Either way, the dashboard stays consistent instead of
+    // silently hiding the record.
+    await withKVRetry(
+      () => kv.set(PRODUCT_KEY_PREFIX + product.id, product),
+      `saveProduct:${product.id}:set`,
+    );
+    await withKVRetry(
+      () => kv.sadd(PRODUCT_INDEX_KEY, product.id),
+      `saveProduct:${product.id}:sadd`,
+    );
     return product;
   }
   const list = await readFs<Product[]>(KEY_PRODUCTS, []);
@@ -305,12 +417,35 @@ export async function deleteProductAndPages(id: string): Promise<void> {
 
 export async function readLandingPages(productId?: string): Promise<LandingPage[]> {
   if (useKV()) {
-    const ids = await kv.smembers(PAGE_INDEX_KEY) as string[];
-    if (!ids || ids.length === 0) return [];
+    // SCAN as source of truth; see readProducts() comment.
+    const keys = await scanKeysByPrefix(PAGE_KEY_PREFIX);
+    if (keys.length === 0) return [];
     const pipeline = kv.pipeline();
-    for (const id of ids) pipeline.get(PAGE_KEY_PREFIX + id);
+    for (const k of keys) pipeline.get(k);
     const results = await pipeline.exec();
     const all = (results ?? []).filter((r): r is LandingPage => !!r);
+
+    // Opportunistic heal: repair index set from scanned reality.
+    (async () => {
+      try {
+        const indexed = (await kv.smembers(PAGE_INDEX_KEY)) as string[];
+        const indexedSet = new Set(indexed ?? []);
+        const missing = all.map((p) => p.id).filter((id) => !indexedSet.has(id));
+        if (missing.length > 0) {
+          console.warn(
+            `[readLandingPages] heal: repairing ${missing.length} orphan(s) into index:`,
+            missing,
+          );
+          // Sequential — see saveProduct heal for rationale.
+          for (const id of missing) {
+            await kv.sadd(PAGE_INDEX_KEY, id);
+          }
+        }
+      } catch (e) {
+        console.error('[readLandingPages] heal failed:', e);
+      }
+    })();
+
     return productId ? all.filter((p) => p.productId === productId) : all;
   }
   const list = (await readFs<LandingPage[]>(KEY_PAGES, [])) ?? [];
@@ -346,12 +481,36 @@ export async function getLandingPageBySlug(slug: string): Promise<LandingPage | 
 export async function saveLandingPage(page: LandingPage): Promise<LandingPage> {
   page.updatedAt = Date.now();
   if (useKV()) {
-    // Atomic: write page + add to index + update slug map
-    await Promise.all([
-      kv.set(PAGE_KEY_PREFIX + page.id, page),
-      kv.sadd(PAGE_INDEX_KEY, page.id),
-      kv.set(SLUG_MAP_KEY_PREFIX + page.slug, page.id),
-    ]);
+    // Was: Promise.all([set(data), sadd(index), set(slug)]) — any rejection
+    // killed the entire save but let previously-committed writes stand,
+    // producing orphaned data the dashboard couldn't see.
+    //
+    // Now: strict sequence, each step retries 3x with jittered backoff.
+    //   1. DATA — must succeed. If this throws, caller sees real error.
+    //   2. INDEX — retries; if still fails throw (but read path SCAN
+    //      self-heals on next dashboard load).
+    //   3. SLUG MAP — best-effort; slug lookups fall back to scan if
+    //      the map is stale, so we log and swallow rather than poison
+    //      the whole save over a secondary index.
+    await withKVRetry(
+      () => kv.set(PAGE_KEY_PREFIX + page.id, page),
+      `saveLandingPage:${page.id}:set`,
+    );
+    await withKVRetry(
+      () => kv.sadd(PAGE_INDEX_KEY, page.id),
+      `saveLandingPage:${page.id}:sadd`,
+    );
+    try {
+      await withKVRetry(
+        () => kv.set(SLUG_MAP_KEY_PREFIX + page.slug, page.id),
+        `saveLandingPage:${page.id}:slug-map`,
+      );
+    } catch (e) {
+      console.error(
+        `[saveLandingPage] slug-map write failed for ${page.slug}; /p/${page.slug} will use scan fallback:`,
+        e,
+      );
+    }
     return page;
   }
   const list = await readFs<LandingPage[]>(KEY_PAGES, []);

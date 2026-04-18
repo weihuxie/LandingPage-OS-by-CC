@@ -137,9 +137,39 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   };
 
   // --- FIRST SAVE: templated modules, guaranteed persistence -----------
-  await saveLandingPage(page);
+  // Each step try-caught so the error body carries page.id / productId
+  // back to the client — see /api/projects POST for the full rationale.
+  try {
+    await saveLandingPage(page);
+  } catch (e) {
+    console.error('[products/pages] saveLandingPage (first save) failed:', e);
+    return NextResponse.json(
+      {
+        error: 'save-failed',
+        stage: 'saveLandingPage',
+        productId: product.id,
+        pageId: page.id,
+        message: e instanceof Error ? e.message : String(e),
+      },
+      { status: 500 },
+    );
+  }
   product.landingPageIds = [page.id, ...product.landingPageIds.filter((x) => x !== page.id)];
-  await saveProduct(product);
+  try {
+    await saveProduct(product);
+  } catch (e) {
+    console.error('[products/pages] saveProduct (landingPageIds update) failed:', e);
+    return NextResponse.json(
+      {
+        error: 'save-failed',
+        stage: 'saveProduct',
+        productId: product.id,
+        pageId: page.id,
+        message: e instanceof Error ? e.message : String(e),
+      },
+      { status: 500 },
+    );
+  }
 
   // --- SECOND SAVE (best-effort): enrich via Claude --------------------
   // Same pattern as /api/projects — if Claude times out or errors, the
