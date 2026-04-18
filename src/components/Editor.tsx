@@ -60,7 +60,17 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   const [leads] = useState<Lead[]>(initialLeads);
   const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
   const [tab, setTab] = useState<'content' | 'leads' | 'settings'>('content');
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  // Save state machine. 5-state instead of 3 so the UI can distinguish:
+  //   idle   = no pending changes and no last-save timestamp to show yet
+  //   dirty  = user just edited, debounce timer is ticking
+  //   saving = network call in flight
+  //   saved  = latest save succeeded (briefly shown, decays to `idle` with
+  //            lastSavedAt kept so the timestamp badge stays visible)
+  //   error  = last save threw / returned non-2xx — user must retry, and
+  //            we block beforeunload so the edit doesn't silently vanish
+  const [saveState, setSaveState] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(
     project.modules[0]?.id ?? null,
   );
@@ -116,64 +126,80 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
 
   // Snapshot refs so the unmount / beforeunload flushers can read the
   // latest values synchronously without re-registering every render.
-  const saveSnapRef = useRef({ project, page, editingLocale, status });
+  const saveSnapRef = useRef({ project, page, editingLocale, saveState });
   useEffect(() => {
-    saveSnapRef.current = { project, page, editingLocale, status };
+    saveSnapRef.current = { project, page, editingLocale, saveState };
   });
 
   useEffect(() => {
-    if (status !== 'saving') return;
+    if (saveState !== 'dirty') return;
     const timer = setTimeout(async () => {
-      // If v2 page available, save modules to exact (variant, locale) cell
-      if (page) {
-        const res = await fetch(`/api/pages/${page.id}/modules`, {
-          method: 'PATCH',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            variant: project.activeVariant ?? 'A',
-            locale: editingLocale,
-            modules: project.modules,
-          }),
-          // keepalive lets this request complete even if the user navigates
-          // away mid-flight — otherwise the browser aborts and the edit is
-          // silently lost.
-          keepalive: true,
-        });
-        // Read back the server-computed flags (hydrationFailed in particular)
-        // so the banner clears the moment the user edits the hero away from
-        // the template. If we skip this, the banner sticks until full reload.
-        try {
-          const data = await res.json();
-          if (data?.page) setPage(data.page);
-        } catch {
-          // Non-JSON / network failure — leave local state as-is; next save
-          // will retry. Do not toast: autosave should stay silent.
+      setSaveState('saving');
+      setSaveError(null);
+      try {
+        // If v2 page available, save modules to exact (variant, locale) cell
+        if (page) {
+          const res = await fetch(`/api/pages/${page.id}/modules`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              variant: project.activeVariant ?? 'A',
+              locale: editingLocale,
+              modules: project.modules,
+            }),
+            // keepalive lets this request complete even if the user navigates
+            // away mid-flight — otherwise the browser aborts and the edit is
+            // silently lost.
+            keepalive: true,
+          });
+          if (!res.ok) throw new Error(`modules PATCH ${res.status}`);
+          // Read back the server-computed flags (hydrationFailed in particular)
+          // so the banner clears the moment the user edits the hero away from
+          // the template. If we skip this, the banner sticks until full reload.
+          try {
+            const data = await res.json();
+            if (data?.page) setPage(data.page);
+          } catch {
+            // Non-JSON body is fine — the PATCH still succeeded.
+          }
+          // Mirror tone/theme on page too
+          const res2 = await fetch(`/api/pages/${page.id}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ tone: project.tone, theme: project.theme }),
+            keepalive: true,
+          });
+          if (!res2.ok) throw new Error(`page PATCH ${res2.status}`);
+        } else {
+          // Fallback to legacy compat (shouldn't happen post-migration)
+          const res = await fetch(`/api/projects/${project.id}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              modules: project.modules,
+              tone: project.tone,
+              theme: project.theme,
+            }),
+            keepalive: true,
+          });
+          if (!res.ok) throw new Error(`legacy PATCH ${res.status}`);
         }
-        // Mirror tone/theme on page too
-        await fetch(`/api/pages/${page.id}`, {
-          method: 'PATCH',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ tone: project.tone, theme: project.theme }),
-          keepalive: true,
-        });
-      } else {
-        // Fallback to legacy compat (shouldn't happen post-migration)
-        await fetch(`/api/projects/${project.id}`, {
-          method: 'PATCH',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            modules: project.modules,
-            tone: project.tone,
-            theme: project.theme,
-          }),
-          keepalive: true,
-        });
+        setLastSavedAt(Date.now());
+        setSaveState('saved');
+        // Briefly hold the green "✓ 已保存" state so the user sees it,
+        // then fall back to the persistent "● 已保存 · HH:MM:SS" badge
+        // driven by lastSavedAt. Guard against overwriting 'dirty' if the
+        // user typed again during that 1.5s window.
+        setTimeout(() => {
+          setSaveState((s) => (s === 'saved' ? 'idle' : s));
+        }, 1500);
+      } catch (e) {
+        setSaveError(e instanceof Error ? e.message : 'network error');
+        setSaveState('error');
       }
-      setStatus('saved');
-      setTimeout(() => setStatus('idle'), 1200);
     }, 400);
     return () => clearTimeout(timer);
-  }, [status, project, page, editingLocale]);
+  }, [saveState, project, page, editingLocale]);
 
   // Flush any pending 400ms-debounced save the moment the user leaves.
   // Three exit paths must be covered:
@@ -187,7 +213,16 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   useEffect(() => {
     const flush = () => {
       const snap = saveSnapRef.current;
-      if (snap.status !== 'saving' || !snap.page) return;
+      // Flush anytime the latest edit hasn't made it to the server yet.
+      // `dirty` = debounce timer hadn't fired; `saving` = in-flight fetch
+      // started but we want a second keepalive attempt in case unload
+      // aborts the first; `error` = last attempt failed, this is our
+      // last chance before the user leaves.
+      const hasUnsaved =
+        snap.saveState === 'dirty' ||
+        snap.saveState === 'saving' ||
+        snap.saveState === 'error';
+      if (!hasUnsaved || !snap.page) return;
       // Fire-and-forget with keepalive so the browser completes the POST
       // even after the page unloads. keepalive body is capped at ~64KB by
       // the spec, which is plenty for a module array.
@@ -202,19 +237,47 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         keepalive: true,
       }).catch(() => {});
     };
+    // Dialog-prompt only for error state. For dirty/saving we trust the
+    // keepalive flush — the common case (quick nav after edit) shouldn't
+    // hit a confirm dialog every time, that's annoying. But if the LAST
+    // save attempt VISIBLY failed, block unload so the user doesn't walk
+    // away thinking their edit is safe when it isn't.
+    const confirmIfError = (e: BeforeUnloadEvent) => {
+      if (saveSnapRef.current.saveState === 'error') {
+        e.preventDefault();
+        // Chrome requires returnValue to be set to show the dialog; the
+        // actual text is ignored by modern browsers (generic message).
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', confirmIfError);
     window.addEventListener('beforeunload', flush);
     window.addEventListener('pagehide', flush);
     return () => {
       // This cleanup fires both on unmount (soft nav, covers case 1) and
       // when the effect re-runs. Since deps are [], it only runs on unmount.
       flush();
+      window.removeEventListener('beforeunload', confirmIfError);
       window.removeEventListener('beforeunload', flush);
       window.removeEventListener('pagehide', flush);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const touch = () => setStatus('saving');
+  // Mark the editor as having unsaved changes. The save useEffect watches
+  // for 'dirty' and debounces the actual fetch. Separating 'dirty' from
+  // 'saving' lets the UI show "● 待保存" while the debounce timer ticks,
+  // which is a more honest signal than "保存中…" before we've made the call.
+  const touch = () => setSaveState('dirty');
+
+  // Manual retry button target. Re-enters the dirty state, which triggers
+  // the debounced save useEffect. If network is still broken we'll loop
+  // back to 'error' — that's fine, the user can see the red badge stayed
+  // and decide what to do.
+  const retrySave = () => {
+    setSaveError(null);
+    setSaveState('dirty');
+  };
 
   const updateModule = (id: string, patch: Partial<PageModule>) => {
     setProject((p) => ({
@@ -358,9 +421,14 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
 
     const v = project.activeVariant ?? 'A';
 
-    if (status === 'saving') {
+    // Eager flush before leaving the tab if there are unsaved edits.
+    // 'dirty' / 'saving' / 'error' all mean "the server may not have
+    // the latest modules yet". Without this, switching locale tabs
+    // during rapid typing could race the debounced save and the prior
+    // tab's last few keystrokes would be lost.
+    if (saveState === 'dirty' || saveState === 'saving' || saveState === 'error') {
       try {
-        await fetch(`/api/pages/${page.id}/modules`, {
+        const res = await fetch(`/api/pages/${page.id}/modules`, {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
@@ -369,12 +437,22 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             modules: project.modules,
           }),
         });
-        setStatus('saved');
-      } catch {
-        // Non-fatal. The mirror effect above has already cached the
-        // edits in local page state, so the user's UI will still show
-        // them on the next tab switch back. Server will catch up via
-        // the next autosave trigger.
+        if (res.ok) {
+          setLastSavedAt(Date.now());
+          setSaveState('saved');
+          setTimeout(() => {
+            setSaveState((s) => (s === 'saved' ? 'idle' : s));
+          }, 1500);
+        } else {
+          setSaveError(`modules PATCH ${res.status}`);
+          setSaveState('error');
+        }
+      } catch (e) {
+        // Non-fatal for the UI: the mirror effect has cached edits locally
+        // so the user's UI will still show them on the next tab switch
+        // back. Surface the failure via the save badge so they know.
+        setSaveError(e instanceof Error ? e.message : 'network error');
+        setSaveState('error');
       }
     }
 
@@ -955,13 +1033,26 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-ink-500">
-              {status === 'saving'
-                ? t('editor.saving')
-                : status === 'saved'
-                  ? t('editor.saved')
-                  : ''}
-            </span>
+            {/* Persistent save-state badge. Unlike the old "flash for 1.2s
+                then disappear" design, this stays visible so the user can
+                always tell whether the server has accepted the latest edit.
+                Color-coded: gray (dirty / idle), blue (saving), green
+                (saved), red (error — clickable to retry). */}
+            <SaveStateBadge
+              saveState={saveState}
+              lastSavedAt={lastSavedAt}
+              saveError={saveError}
+              onRetry={retrySave}
+              labels={{
+                dirty: t('editor.dirty'),
+                saving: t('editor.saving'),
+                saved: t('editor.saved'),
+                error: t('editor.saveError'),
+                retry: t('editor.retry'),
+                savedAt: t('editor.savedAt'),
+              }}
+            />
+
             <a
               className="btn btn-secondary px-3 py-1.5 text-xs"
               href={`/api/projects/${project.id}/export`}
@@ -1058,4 +1149,106 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
       )}
     </div>
   );
+}
+
+/**
+ * Persistent save-state badge. Rendered in the editor toolbar so the user
+ * always has a visible signal of whether their latest edit has reached the
+ * server. Replaces the old "flash '已保存' for 1.2s then disappear" design,
+ * which left the toolbar blank 99% of the time and gave the user no way to
+ * distinguish "saved" from "never opened network" from "save failed silently".
+ *
+ * State → visual:
+ *   idle (never saved)       → nothing (nothing to report yet)
+ *   idle (saved before)      → gray "● 已保存 · HH:MM:SS"
+ *   dirty                    → gray "● 待保存" (debounce timer ticking)
+ *   saving                   → blue "↻ 保存中…"
+ *   saved                    → green "✓ 已保存" (briefly, then decays to idle)
+ *   error                    → red "⚠ 保存失败" + clickable retry link
+ */
+function SaveStateBadge({
+  saveState,
+  lastSavedAt,
+  saveError,
+  onRetry,
+  labels,
+}: {
+  saveState: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
+  lastSavedAt: number | null;
+  saveError: string | null;
+  onRetry: () => void;
+  labels: {
+    dirty: string;
+    saving: string;
+    saved: string;
+    error: string;
+    retry: string;
+    savedAt: string;
+  };
+}) {
+  const fmt = (ts: number) => {
+    const d = new Date(ts);
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
+
+  if (saveState === 'error') {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] text-red-700"
+        title={saveError ?? undefined}
+      >
+        <span aria-hidden>⚠</span>
+        <span>{labels.error}</span>
+        <button
+          onClick={onRetry}
+          className="ml-0.5 underline hover:no-underline font-medium"
+        >
+          {labels.retry}
+        </button>
+      </span>
+    );
+  }
+
+  if (saveState === 'saving') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11px] text-brand-700">
+        <span className="animate-pulse" aria-hidden>↻</span>
+        <span>{labels.saving}</span>
+      </span>
+    );
+  }
+
+  if (saveState === 'saved') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700">
+        <span aria-hidden>✓</span>
+        <span>{labels.saved}</span>
+        {lastSavedAt && <span className="text-ink-400">· {fmt(lastSavedAt)}</span>}
+      </span>
+    );
+  }
+
+  if (saveState === 'dirty') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-500">
+        <span aria-hidden>●</span>
+        <span>{labels.dirty}</span>
+      </span>
+    );
+  }
+
+  // idle: show the last-saved timestamp if we have one, otherwise nothing
+  // (prevents "● 已保存" lying about a freshly-loaded never-edited page).
+  if (lastSavedAt) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-500">
+        <span className="text-emerald-600" aria-hidden>●</span>
+        <span>
+          {labels.savedAt} {fmt(lastSavedAt)}
+        </span>
+      </span>
+    );
+  }
+  return null;
 }
