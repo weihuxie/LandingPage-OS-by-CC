@@ -75,6 +75,13 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     project.modules[0]?.id ?? null,
   );
   const [copied, setCopied] = useState(false);
+  // `copiedKind` disambiguates which link was just copied so the button in
+  // the overflow menu flashes "已复制" independently. Previously both the
+  // Vercel-link action and the preview-link action shared one `copied` flag
+  // so the second one opened showed "已复制" before the user ever clicked it.
+  const [copiedKind, setCopiedKind] = useState<'vercel' | 'preview' | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [addingLocale, setAddingLocale] = useState(false);
   const [pendingLocale, setPendingLocale] = useState<PageLocale | null>(null);
 
@@ -593,16 +600,6 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     setSelectedModuleId(nextModules[0]?.id ?? null);
   };
 
-  const togglePublish = async () => {
-    const next = !project.published;
-    setProject((p) => ({ ...p, published: next }));
-    await fetch(`/api/projects/${project.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ published: next }),
-    });
-  };
-
   const [deploying, setDeploying] = useState(false);
   const deployToVercel = async (force = false) => {
     setDeploying(true);
@@ -622,15 +619,65 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         const ok = window.confirm(
           `${data.reason ?? 'Hero 仍是模板占位文案。'}\n\n确认仍要发布吗？发布后访客看到的将是与产品无关的通用文案。`,
         );
-        if (ok) await deployToVercel(true);
-        return;
+        if (ok) return await deployToVercel(true);
+        return false;
       }
       if (data?.project) setProject(data.project);
       if (data?.deploy?.status === 'error') {
         alert('Vercel 部署失败：' + (data.deploy.errorMessage ?? 'unknown'));
+        return false;
       }
+      return true;
     } finally {
       setDeploying(false);
+    }
+  };
+
+  // Atomic publish: one click = flag + deploy.
+  // Previously the toolbar had two separate buttons ("部署到 Vercel" and
+  // "公开") so users had to know to click both, in the right order, to
+  // actually make the page live. Users kept publishing without deploying
+  // (so /p/slug was live but no Vercel URL existed) or deploying without
+  // publishing (so Vercel URL worked but the dashboard showed "草稿").
+  //
+  // Now clicking the single "发布" button does both. If the deploy step
+  // fails the quality gate (409 hero-is-template), deployToVercel's own
+  // confirm dialog handles the force-publish branch; if the user backs
+  // out there, we roll published back to false so the UI stays consistent
+  // with reality (nothing was actually deployed).
+  //
+  // Un-publish is flag-only because lib/deploy.ts has no un-deploy helper
+  // — the Vercel deployment URL keeps resolving. That's an honest tradeoff
+  // and documented in the button's title attribute so the user can tell.
+  const togglePublish = async () => {
+    const next = !project.published;
+    // Optimistic flag update so the button reacts instantly.
+    setProject((p) => ({ ...p, published: next }));
+    try {
+      await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ published: next }),
+      });
+    } catch (e) {
+      console.error('[togglePublish] PATCH failed:', e);
+      setProject((p) => ({ ...p, published: !next }));
+      alert('状态切换失败，请重试。');
+      return;
+    }
+    if (next) {
+      // Publishing: also deploy. If deploy returns false (user declined
+      // force, or Vercel errored), roll the flag back so the UI isn't
+      // claiming "已发布" while no usable URL exists.
+      const ok = await deployToVercel(false);
+      if (!ok) {
+        setProject((p) => ({ ...p, published: false }));
+        await fetch(`/api/projects/${project.id}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ published: false }),
+        }).catch(() => {});
+      }
     }
   };
 
@@ -639,15 +686,52 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
       ? `${window.location.origin}/p/${project.slug}`
       : `/p/${project.slug}`;
 
-  const copyLink = async () => {
+  const copyLink = async (kind: 'preview' | 'vercel' = 'preview') => {
+    const url = kind === 'vercel' ? project.deploy?.url ?? publicUrl : publicUrl;
     try {
-      await navigator.clipboard.writeText(publicUrl);
+      await navigator.clipboard.writeText(url);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      setCopiedKind(kind);
+      setTimeout(() => {
+        setCopied(false);
+        setCopiedKind(null);
+      }, 1200);
     } catch {
-      // ignore
+      // ignore — clipboard may be unavailable in iframes / insecure contexts
     }
   };
+
+  // Close overflow menu when clicking outside or pressing Escape. Without
+  // this the menu stays pinned open while the user interacts with the
+  // rest of the toolbar, which felt "stuck."
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  // Smart "查看" URL — prefer the live Vercel deploy URL when we have one,
+  // fall back to the internal /p/<slug> preview. Keeps the toolbar button
+  // count down while still giving the user a single predictable "see it
+  // live" click. We use the RELATIVE `/p/<slug>` form here (not the
+  // absolute `publicUrl`) because `publicUrl` depends on
+  // `window.location.origin` which is only available on the client — using
+  // it in JSX triggers a Next.js hydration mismatch ("Server: /p/...
+  // Client: http://.../p/..."). The absolute form is still used for
+  // clipboard copy (the user wants a pasteable URL), just not for href.
+  const viewUrl = project.deploy?.url ?? `/p/${project.slug}`;
 
   const unusedTypes = ALL_TYPES.filter((t) => !project.modules.some((m) => m.type === t));
 
@@ -1053,52 +1137,109 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               }}
             />
 
+            {/* Toolbar redesign: 4 buttons instead of 6.
+                  - 导出 HTML   (always, no state — pure export)
+                  - 查看 ↗     (smart: Vercel URL if deployed else /p/slug)
+                  - 已发布 / 发布 (atomic — one click = flag + deploy)
+                  - ⋮         (overflow: 复制 Vercel / 复制预览 / 重新部署)
+                The previous 6-button row forced users to know the implicit
+                ordering (deploy → publish → copy-link) and left 已发布
+                looking like a state indicator but actually being a toggle. */}
             <a
               className="btn btn-secondary px-3 py-1.5 text-xs"
               href={`/api/projects/${project.id}/export`}
               download={`${project.slug}.html`}
+              title="下载当前页面的静态 HTML 文件"
             >
               导出 HTML
             </a>
-            <button
+            <a
               className="btn btn-secondary px-3 py-1.5 text-xs"
-              onClick={() => deployToVercel(false)}
-              disabled={deploying}
-              title="将当前页面部署到 Vercel（平台托管 token）"
+              href={viewUrl}
+              target="_blank"
+              rel="noreferrer"
+              title={
+                project.deploy?.url
+                  ? `在新标签页打开 Vercel 上的正式页面\n${project.deploy.url}`
+                  : `在新标签页打开本地预览\n/p/${project.slug}`
+              }
             >
-              {deploying ? '部署中…' : project.deploy?.url ? '重新部署 ▲' : '部署到 Vercel ▲'}
-            </button>
-            {project.deploy?.url && (
-              <a
-                className="pill border-brand-200 bg-brand-50 text-brand-700 text-[11px]"
-                href={project.deploy.url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {project.deploy.provider === 'mock' ? '预览地址' : 'Vercel 地址'} ↗
-              </a>
-            )}
-            {project.published && (
-              <>
-                <button className="btn btn-secondary px-3 py-1.5 text-xs" onClick={copyLink}>
-                  {copied ? t('editor.copied') : t('editor.copyLink')}
-                </button>
-                <a
-                  className="btn btn-secondary px-3 py-1.5 text-xs"
-                  href={`/p/${project.slug}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {t('editor.viewLive')} ↗
-                </a>
-              </>
-            )}
+              查看 ↗
+            </a>
             <button
               className={`btn px-3 py-1.5 text-xs ${project.published ? 'btn-secondary' : 'btn-primary'}`}
               onClick={togglePublish}
+              disabled={deploying}
+              title={
+                deploying
+                  ? '正在部署到 Vercel…'
+                  : project.published
+                    ? '点击取消发布（Vercel 链接会保留，但页面将不再在主列表中显示为"已发布"）'
+                    : '点击发布到 Vercel 并标记为"已发布"'
+              }
             >
-              {project.published ? t('editor.published') + ' ✓' : t('editor.publish')}
+              {deploying
+                ? '发布中…'
+                : project.published
+                  ? `${t('editor.published')} ✓`
+                  : t('editor.publish')}
             </button>
+            <div className="relative" ref={menuRef}>
+              <button
+                className="btn btn-secondary px-2.5 py-1.5 text-xs"
+                onClick={() => setMenuOpen((o) => !o)}
+                aria-label="更多操作"
+                title="更多操作"
+              >
+                ⋮
+              </button>
+              {menuOpen && (
+                <div
+                  className="absolute right-0 top-full z-20 mt-1 min-w-[200px] rounded-xl border border-ink-100 bg-white py-1 shadow-lg"
+                  role="menu"
+                >
+                  <button
+                    className="block w-full px-3 py-2 text-left text-xs text-ink-700 hover:bg-ink-50 disabled:opacity-50"
+                    disabled={!project.deploy?.url}
+                    onClick={() => {
+                      copyLink('vercel');
+                      setMenuOpen(false);
+                    }}
+                  >
+                    {copied && copiedKind === 'vercel'
+                      ? '已复制 Vercel 链接 ✓'
+                      : project.deploy?.url
+                        ? '复制 Vercel 链接'
+                        : '复制 Vercel 链接（尚未部署）'}
+                  </button>
+                  <button
+                    className="block w-full px-3 py-2 text-left text-xs text-ink-700 hover:bg-ink-50"
+                    onClick={() => {
+                      copyLink('preview');
+                      setMenuOpen(false);
+                    }}
+                  >
+                    {copied && copiedKind === 'preview' ? '已复制预览链接 ✓' : '复制预览链接'}
+                  </button>
+                  <div className="my-1 border-t border-ink-100" />
+                  <button
+                    className="block w-full px-3 py-2 text-left text-xs text-ink-700 hover:bg-ink-50 disabled:opacity-50"
+                    disabled={deploying}
+                    onClick={() => {
+                      deployToVercel(false);
+                      setMenuOpen(false);
+                    }}
+                    title={
+                      project.deploy?.url
+                        ? '将当前内容再次推送到已有的 Vercel 部署'
+                        : '首次部署到 Vercel（平台托管 token）'
+                    }
+                  >
+                    {project.deploy?.url ? '重新部署到 Vercel ▲' : '部署到 Vercel ▲'}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
