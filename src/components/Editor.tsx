@@ -114,6 +114,13 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     });
   }, [project.modules, project.activeVariant, editingLocale]);
 
+  // Snapshot refs so the unmount / beforeunload flushers can read the
+  // latest values synchronously without re-registering every render.
+  const saveSnapRef = useRef({ project, page, editingLocale, status });
+  useEffect(() => {
+    saveSnapRef.current = { project, page, editingLocale, status };
+  });
+
   useEffect(() => {
     if (status !== 'saving') return;
     const timer = setTimeout(async () => {
@@ -127,12 +134,17 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             locale: editingLocale,
             modules: project.modules,
           }),
+          // keepalive lets this request complete even if the user navigates
+          // away mid-flight — otherwise the browser aborts and the edit is
+          // silently lost.
+          keepalive: true,
         });
         // Mirror tone/theme on page too
         await fetch(`/api/pages/${page.id}`, {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ tone: project.tone, theme: project.theme }),
+          keepalive: true,
         });
       } else {
         // Fallback to legacy compat (shouldn't happen post-migration)
@@ -144,6 +156,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             tone: project.tone,
             theme: project.theme,
           }),
+          keepalive: true,
         });
       }
       setStatus('saved');
@@ -151,6 +164,45 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     }, 400);
     return () => clearTimeout(timer);
   }, [status, project, page, editingLocale]);
+
+  // Flush any pending 400ms-debounced save the moment the user leaves.
+  // Three exit paths must be covered:
+  //   1. Soft nav (Next.js router.push / <Link>) — fires unmount only
+  //   2. Hard nav (tab close, refresh, back button to non-Next page) —
+  //      fires beforeunload / pagehide, NOT unmount
+  //   3. iOS Safari swipe-back — fires pagehide (beforeunload is unreliable)
+  // Without this, edits made in the last 400ms before leaving are silently
+  // dropped: the setTimeout gets clearTimeout'd by the useEffect cleanup
+  // before ever calling fetch.
+  useEffect(() => {
+    const flush = () => {
+      const snap = saveSnapRef.current;
+      if (snap.status !== 'saving' || !snap.page) return;
+      // Fire-and-forget with keepalive so the browser completes the POST
+      // even after the page unloads. keepalive body is capped at ~64KB by
+      // the spec, which is plenty for a module array.
+      fetch(`/api/pages/${snap.page.id}/modules`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          variant: snap.project.activeVariant ?? 'A',
+          locale: snap.editingLocale,
+          modules: snap.project.modules,
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    };
+    window.addEventListener('beforeunload', flush);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      // This cleanup fires both on unmount (soft nav, covers case 1) and
+      // when the effect re-runs. Since deps are [], it only runs on unmount.
+      flush();
+      window.removeEventListener('beforeunload', flush);
+      window.removeEventListener('pagehide', flush);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const touch = () => setStatus('saving');
 
