@@ -130,9 +130,21 @@ function ModuleBody({
     case 'socialProof':
       return <SocialProof content={module.content as SocialProofContent} />;
     case 'pain':
-      return <Pain content={module.content as PainContent} />;
+      return (
+        <Pain
+          content={module.content as PainContent}
+          locale={pageLocale}
+          market={market}
+        />
+      );
     case 'solution':
-      return <Solution content={module.content as SolutionContent} />;
+      return (
+        <Solution
+          content={module.content as SolutionContent}
+          locale={pageLocale}
+          market={market}
+        />
+      );
     case 'benefits':
       return (
         <Benefits
@@ -142,7 +154,13 @@ function ModuleBody({
         />
       );
     case 'useCase':
-      return <UseCases content={module.content as UseCaseContent} />;
+      return (
+        <UseCases
+          content={module.content as UseCaseContent}
+          locale={pageLocale}
+          market={market}
+        />
+      );
     case 'testimonial':
       return (
         <Testimonials
@@ -434,36 +452,85 @@ function SocialProof({ content }: { content: SocialProofContent }) {
   );
 }
 
-function Pain({ content }: { content: PainContent }) {
+function Pain({
+  content,
+  locale,
+  market,
+}: {
+  content: PainContent;
+  locale: PageLocale;
+  market: MarketCode;
+}) {
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <h2 className="text-3xl font-semibold tracking-tight text-ink-900">{content.title}</h2>
       {content.subtitle && <p className="mt-2 text-ink-500">{content.subtitle}</p>}
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
-        {content.items.map((it, i) => (
-          <div key={i} className="rounded-2xl border border-ink-100 bg-white p-5">
+        {content.items.map((it, i) => {
+          const m = resolveMedia(it.media, locale, market);
+          return (
             <div
-              className="grid h-8 w-8 place-items-center rounded-lg text-sm"
-              style={{ background: 'color-mix(in oklch, var(--brand) 12%, white)', color: 'var(--brand)' }}
+              key={i}
+              className="overflow-hidden rounded-2xl border border-ink-100 bg-white"
             >
-              {i + 1}
+              {m && <BenefitThumb url={m.url} alt={m.alt ?? it.title} />}
+              <div className="p-5">
+                <div
+                  className="grid h-8 w-8 place-items-center rounded-lg text-sm"
+                  style={{ background: 'color-mix(in oklch, var(--brand) 12%, white)', color: 'var(--brand)' }}
+                >
+                  {i + 1}
+                </div>
+                <h3 className="mt-3 font-semibold">{it.title}</h3>
+                <p className="mt-1 text-sm text-ink-500">{it.body}</p>
+              </div>
             </div>
-            <h3 className="mt-3 font-semibold">{it.title}</h3>
-            <p className="mt-1 text-sm text-ink-500">{it.body}</p>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function Solution({ content }: { content: SolutionContent }) {
+function Solution({
+  content,
+  locale,
+  market,
+}: {
+  content: SolutionContent;
+  locale: PageLocale;
+  market: MarketCode;
+}) {
+  const m = resolveMedia(content.media, locale, market);
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <div className="rounded-3xl border border-ink-100 bg-gradient-to-br from-white to-ink-100/30 p-8 sm:p-12">
         <h2 className="text-3xl font-semibold tracking-tight text-ink-900">{content.title}</h2>
         {content.subtitle && <p className="mt-2 text-ink-500">{content.subtitle}</p>}
         <p className="mt-4 max-w-3xl text-ink-700">{content.body}</p>
+        {m && (
+          <div className="mt-8">
+            {isInlineLoopingVideo(m.url) ? (
+              <video
+                className="w-full rounded-2xl border border-ink-100 shadow-soft"
+                src={m.url}
+                muted
+                autoPlay
+                loop
+                playsInline
+                aria-label={m.alt}
+              />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={m.url}
+                alt={m.alt ?? ''}
+                className="w-full rounded-2xl border border-ink-100 shadow-soft"
+                loading="lazy"
+              />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -623,20 +690,62 @@ function BenefitThumb({ url, alt }: { url: string; alt?: string }) {
   );
 }
 
-function UseCases({ content }: { content: UseCaseContent }) {
+function UseCases({
+  content,
+  locale,
+  market,
+}: {
+  content: UseCaseContent;
+  locale: PageLocale;
+  market: MarketCode;
+}) {
+  // Per-item media is optional. If no item carries a screenshot, keep the
+  // compact one-line rows (role on the left, scenario on the right) the
+  // module has always had. As soon as *any* item has media the grid shifts
+  // to a card layout so the screenshot has room — mixing skinny rows with
+  // card rows in the same list looks visually broken.
+  const anyMedia = content.items.some((it) =>
+    resolveMedia(it.media, locale, market),
+  );
+
+  if (!anyMedia) {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-14">
+        <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+        <div className="mt-8 space-y-3">
+          {content.items.map((it, i) => (
+            <div
+              key={i}
+              className="flex flex-col gap-2 rounded-2xl border border-ink-100 bg-white p-5 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="text-sm font-semibold text-ink-900">{it.role}</div>
+              <div className="text-sm text-ink-500">{it.scenario}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
-      <div className="mt-8 space-y-3">
-        {content.items.map((it, i) => (
-          <div
-            key={i}
-            className="flex flex-col gap-2 rounded-2xl border border-ink-100 bg-white p-5 sm:flex-row sm:items-center sm:justify-between"
-          >
-            <div className="text-sm font-semibold text-ink-900">{it.role}</div>
-            <div className="text-sm text-ink-500">{it.scenario}</div>
-          </div>
-        ))}
+      <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {content.items.map((it, i) => {
+          const m = resolveMedia(it.media, locale, market);
+          return (
+            <div
+              key={i}
+              className="overflow-hidden rounded-2xl border border-ink-100 bg-white"
+            >
+              {m && <BenefitThumb url={m.url} alt={m.alt ?? it.role} />}
+              <div className="p-5">
+                <div className="text-sm font-semibold text-ink-900">{it.role}</div>
+                <div className="mt-1 text-sm text-ink-500">{it.scenario}</div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

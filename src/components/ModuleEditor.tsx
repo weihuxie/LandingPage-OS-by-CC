@@ -71,10 +71,10 @@ export default function ModuleEditor({
           <VideoEmbedEditor c={module.content as VideoEmbedContent} setC={setContent} />
         )}
         {module.type === 'socialProof' && <SocialProofEditor c={module.content as SocialProofContent} setC={setContent} />}
-        {module.type === 'pain' && <ListItemsEditor c={module.content as PainContent} setC={setContent} itemFields={['title', 'body']} />}
+        {module.type === 'pain' && <PainEditor c={module.content as PainContent} setC={setContent} />}
         {module.type === 'solution' && <SolutionEditor c={module.content as SolutionContent} setC={setContent} />}
         {module.type === 'benefits' && <BenefitsEditor c={module.content as BenefitsContent} setC={setContent} />}
-        {module.type === 'useCase' && <ListItemsEditor c={module.content as UseCaseContent} setC={setContent} itemFields={['role', 'scenario']} />}
+        {module.type === 'useCase' && <UseCaseEditor c={module.content as UseCaseContent} setC={setContent} />}
         {module.type === 'testimonial' && <TestimonialEditor c={module.content as TestimonialContent} setC={setContent} />}
         {module.type === 'faq' && <ListItemsEditor c={module.content as FAQContent} setC={setContent} itemFields={['q', 'a']} />}
         {module.type === 'cta' && <CTAEditor c={module.content as CTAContent} setC={setContent} />}
@@ -557,6 +557,151 @@ function SolutionEditor({ c, setC }: { c: SolutionContent; setC: (c: SolutionCon
       <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
       <Field label="Subtitle" value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} />
       <Field label="Body" value={c.body} onChange={(v) => setC({ ...c, body: v })} multiline />
+      <MediaField
+        label="配图 (架构图 / 流程图,可选)"
+        value={c.media}
+        onChange={(m) => setC({ ...c, media: m })}
+      />
+    </>
+  );
+}
+
+/**
+ * Dedicated pain editor (replaces the generic ListItemsEditor dispatch as
+ * part of Phase F). Same structural reason as TestimonialEditor: the
+ * generic editor only understands string fields, so it can't surface the
+ * optional `media?: MediaRef` that each pain item now carries. A small
+ * illustration or GIF per pain card makes the anxiety land harder than
+ * text alone, so the upload path has to be first-class in the editor.
+ */
+function PainEditor({ c, setC }: { c: PainContent; setC: (c: PainContent) => void }) {
+  const updateItem = (i: number, patch: Partial<PainContent['items'][number]>) => {
+    const next = [...c.items];
+    next[i] = { ...next[i], ...patch };
+    setC({ ...c, items: next });
+  };
+  const removeItem = (i: number) =>
+    setC({ ...c, items: c.items.filter((_, j) => j !== i) });
+
+  return (
+    <>
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field
+        label="Subtitle"
+        value={c.subtitle ?? ''}
+        onChange={(v) => setC({ ...c, subtitle: v })}
+      />
+      <div className="label">Items</div>
+      <div className="space-y-3">
+        {c.items.map((it, i) => (
+          <div key={i} className="rounded-xl border border-ink-100 p-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <div className="text-xs text-ink-500">#{i + 1}</div>
+              <button
+                onClick={() => removeItem(i)}
+                className="text-xs text-ink-500 hover:text-red-600"
+              >
+                remove
+              </button>
+            </div>
+            <Field
+              label="title"
+              value={it.title ?? ''}
+              onChange={(v) => updateItem(i, { title: v })}
+            />
+            <div className="mt-1.5">
+              <Field
+                label="body"
+                value={it.body ?? ''}
+                onChange={(v) => updateItem(i, { body: v })}
+                multiline
+              />
+            </div>
+            <div className="mt-2">
+              <MediaField
+                label="插画 / GIF (可选)"
+                value={it.media}
+                onChange={(m) => updateItem(i, { media: m })}
+              />
+            </div>
+          </div>
+        ))}
+        <button
+          onClick={() =>
+            setC({ ...c, items: [...c.items, { title: '', body: '' }] })
+          }
+          className="btn btn-secondary w-full text-xs"
+        >
+          + Add item
+        </button>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Dedicated useCase editor — mirrors PainEditor's structure. Each role
+ * can carry an optional screenshot of the dashboard/UI that role actually
+ * uses (e.g. a PM-specific kanban view, a sales-specific pipeline view).
+ * Text-only items keep rendering as one-line rows; items with media get
+ * a thumbnail in the renderer.
+ */
+function UseCaseEditor({ c, setC }: { c: UseCaseContent; setC: (c: UseCaseContent) => void }) {
+  const updateItem = (i: number, patch: Partial<UseCaseContent['items'][number]>) => {
+    const next = [...c.items];
+    next[i] = { ...next[i], ...patch };
+    setC({ ...c, items: next });
+  };
+  const removeItem = (i: number) =>
+    setC({ ...c, items: c.items.filter((_, j) => j !== i) });
+
+  return (
+    <>
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <div className="label">Items</div>
+      <div className="space-y-3">
+        {c.items.map((it, i) => (
+          <div key={i} className="rounded-xl border border-ink-100 p-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <div className="text-xs text-ink-500">#{i + 1}</div>
+              <button
+                onClick={() => removeItem(i)}
+                className="text-xs text-ink-500 hover:text-red-600"
+              >
+                remove
+              </button>
+            </div>
+            <Field
+              label="role"
+              value={it.role ?? ''}
+              onChange={(v) => updateItem(i, { role: v })}
+            />
+            <div className="mt-1.5">
+              <Field
+                label="scenario"
+                value={it.scenario ?? ''}
+                onChange={(v) => updateItem(i, { scenario: v })}
+                multiline
+              />
+            </div>
+            <div className="mt-2">
+              <MediaField
+                label="该角色 UI 截图 (可选)"
+                value={it.media}
+                onChange={(m) => updateItem(i, { media: m })}
+              />
+            </div>
+          </div>
+        ))}
+        <button
+          onClick={() =>
+            setC({ ...c, items: [...c.items, { role: '', scenario: '' }] })
+          }
+          className="btn btn-secondary w-full text-xs"
+        >
+          + Add item
+        </button>
+      </div>
     </>
   );
 }

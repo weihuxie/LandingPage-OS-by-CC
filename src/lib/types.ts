@@ -172,13 +172,25 @@ export interface SocialProofContent {
 export interface PainContent {
   title: string;
   subtitle: string;
-  items: { title: string; body: string }[];
+  /**
+   * `media` on each item is optional and typically a small illustration or
+   * icon-style graphic — GIFs/MP4 loops ("broken-dashboard" kind of vibes)
+   * can reinforce the pain viscerally. Renderers treat it as a thumbnail;
+   * cards without media fall back to the numeric badge they had before.
+   */
+  items: { title: string; body: string; media?: MediaRef }[];
 }
 
 export interface SolutionContent {
   title: string;
   subtitle: string;
   body: string;
+  /**
+   * Optional solution-level hero visual — architecture diagram, flow chart,
+   * or "before vs after" comparison graphic. A single media slot (not per-
+   * item) because the solution module itself is a single narrative beat.
+   */
+  media?: MediaRef;
 }
 
 export type BenefitsLayout = 'cards' | 'alternating' | 'compact';
@@ -191,7 +203,12 @@ export interface BenefitsContent {
 
 export interface UseCaseContent {
   title: string;
-  items: { role: string; scenario: string }[];
+  /**
+   * Per-role media lets each use case carry its own screenshot (e.g. the
+   * "PM 看板" vs "销售 pipeline" vs "客服 SLA" UI each get their actual
+   * dashboard). Optional — items without media render as text-only rows.
+   */
+  items: { role: string; scenario: string; media?: MediaRef }[];
 }
 
 export interface TestimonialContent {

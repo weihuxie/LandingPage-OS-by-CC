@@ -140,14 +140,22 @@ function serializeModule(
       return `<section class="section"><div class="wrap">
         <h2>${escapeHtml(c.title)}</h2>
         <div class="grid3" style="margin-top:24px">${(c.items ?? [])
-          .map(
-            (it: any) =>
-              `<div class="card"><h3>${escapeHtml(it.title)}</h3><p class="muted">${escapeHtml(it.body)}</p></div>`,
-          )
+          .map((it: any) => {
+            const pm = resolveMedia(it.media, locale, market);
+            const thumb = pm
+              ? `<div style="aspect-ratio:16/9;width:100%;overflow:hidden;background:#eef1f8;border-radius:var(--radius) var(--radius) 0 0;margin:-20px -20px 16px -20px;width:calc(100% + 40px)">${renderThumbHtml(pm.url, pm.alt ?? it.title)}</div>`
+              : '';
+            return `<div class="card" style="overflow:hidden">${thumb}<h3>${escapeHtml(it.title)}</h3><p class="muted">${escapeHtml(it.body)}</p></div>`;
+          })
           .join('')}</div>
       </div></section>`;
-    case 'solution':
-      return `<section class="section"><div class="wrap card"><h2>${escapeHtml(c.title)}</h2><p class="muted" style="max-width:720px;margin-top:8px">${escapeHtml(c.body)}</p></div></section>`;
+    case 'solution': {
+      const solMedia = resolveMedia(c.media, locale, market);
+      const solMediaHtml = solMedia
+        ? `<div style="margin-top:24px">${renderMediaHtml(solMedia.url, solMedia.alt, c.media?.kind, c.media?.poster)}</div>`
+        : '';
+      return `<section class="section"><div class="wrap card"><h2>${escapeHtml(c.title)}</h2><p class="muted" style="max-width:720px;margin-top:8px">${escapeHtml(c.body)}</p>${solMediaHtml}</div></section>`;
+    }
     case 'benefits':
       return `<section class="section"><div class="wrap">
         <h2>${escapeHtml(c.title)}</h2>
@@ -161,13 +169,31 @@ function serializeModule(
           })
           .join('')}</div>
       </div></section>`;
-    case 'useCase':
-      return `<section class="section"><div class="wrap"><h2>${escapeHtml(c.title)}</h2><div style="margin-top:24px">${(c.items ?? [])
-        .map(
-          (it: any) =>
-            `<div class="card" style="margin-top:8px"><strong>${escapeHtml(it.role)}</strong><div class="muted">${escapeHtml(it.scenario)}</div></div>`,
-        )
+    case 'useCase': {
+      // Mirror PageRenderer's UseCases: if any item has media, switch the
+      // list from skinny one-line rows to a thumbnail grid so the screenshot
+      // has room. All-text mode keeps the old compact look so pages without
+      // per-role UI shots don't suddenly balloon in height.
+      const ucItems = c.items ?? [];
+      const anyMedia = ucItems.some((it: any) => resolveMedia(it.media, locale, market));
+      if (!anyMedia) {
+        return `<section class="section"><div class="wrap"><h2>${escapeHtml(c.title)}</h2><div style="margin-top:24px">${ucItems
+          .map(
+            (it: any) =>
+              `<div class="card" style="margin-top:8px"><strong>${escapeHtml(it.role)}</strong><div class="muted">${escapeHtml(it.scenario)}</div></div>`,
+          )
+          .join('')}</div></div></section>`;
+      }
+      return `<section class="section"><div class="wrap"><h2>${escapeHtml(c.title)}</h2><div class="grid3" style="margin-top:24px">${ucItems
+        .map((it: any) => {
+          const um = resolveMedia(it.media, locale, market);
+          const thumb = um
+            ? `<div style="aspect-ratio:16/9;width:100%;overflow:hidden;background:#eef1f8;border-radius:var(--radius) var(--radius) 0 0;margin:-20px -20px 16px -20px;width:calc(100% + 40px)">${renderThumbHtml(um.url, um.alt ?? it.role)}</div>`
+            : '';
+          return `<div class="card" style="overflow:hidden">${thumb}<strong>${escapeHtml(it.role)}</strong><div class="muted">${escapeHtml(it.scenario)}</div></div>`;
+        })
         .join('')}</div></div></section>`;
+    }
     case 'testimonial':
       return `<section class="section"><div class="wrap"><h2>${escapeHtml(c.title)}</h2><div class="grid3" style="margin-top:24px">${(c.items ?? [])
         .map((it: { quote: string; author: string; company: string; avatar?: MediaRef }) => {
