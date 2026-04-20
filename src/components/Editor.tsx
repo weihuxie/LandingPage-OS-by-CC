@@ -20,6 +20,187 @@ import ModuleEditor from './ModuleEditor';
 import LocalizationPreviewModal from './LocalizationPreviewModal';
 import type { LocalizationStrategy } from '@/lib/types';
 
+// -----------------------------------------------------------------------
+// Notice (error / warning banner)
+//
+// After the Phase A-F fig-leaf cleanup, routes return structured errors:
+//   503 { code: 'LLM_REQUIRED', missing: 'ANTHROPIC_API_KEY', ... }
+//   503 { code: 'DEPLOY_REQUIRED', missing: 'VC_API_TOKEN', ... }
+//   502 { code: 'LLM_CALL_FAILED', provider: 'claude', ... }
+//   409 { code: 'HERO_IS_TEMPLATE', ... }
+//
+// The editor needs to SHOW these to the user — not alert() (which is
+// ignored), not console (which is invisible), and definitely not a
+// silent no-op (which was the old behavior and the source of "clicked
+// regenerate, nothing changed, no idea why"). The banner lives above
+// the main grid and stays until the user dismisses it, so a regen that
+// fails because ANTHROPIC_API_KEY isn't set produces a visible prompt
+// instead of a ghost click.
+// -----------------------------------------------------------------------
+
+type NoticeKind = 'error' | 'warning' | 'info';
+type NoticeState = {
+  kind: NoticeKind;
+  title: string;
+  message: string;
+  code?: string;
+  missing?: string;
+};
+
+const NOTICE_TITLES: Record<string, string> = {
+  LLM_REQUIRED: '需要配置 LLM API Key',
+  LLM_CALL_FAILED: 'LLM 调用失败',
+  DEPLOY_REQUIRED: '需要配置部署凭据',
+  DEPLOY_FAILED: 'Vercel 部署失败',
+  STORAGE_REQUIRED: '存储后端未配置',
+  HERO_IS_TEMPLATE: '主视觉文案仍是模板',
+  EXTRACTION_FAILED: '内容提取失败',
+  INTERNAL: '服务器内部错误',
+};
+
+async function readStructuredError(res: Response): Promise<NoticeState> {
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+  const code: string = body?.code ?? `HTTP_${res.status}`;
+  const title = NOTICE_TITLES[code] ?? `错误 (${code})`;
+  const missing = body?.missing as string | undefined;
+  let message: string = body?.message ?? body?.reason ?? `HTTP ${res.status}`;
+  if (code === 'LLM_REQUIRED' && missing) {
+    message = `${body?.feature ?? '该操作'} 需要 ${missing}；请在 Vercel / 本地 env 中配置后重试。`;
+  } else if (code === 'DEPLOY_REQUIRED' && missing) {
+    message = `部署需要 ${missing}；请在 Vercel 后台配置 VC_API_TOKEN（以及可选的 VC_TEAM_ID）后重试。`;
+  } else if (code === 'STORAGE_REQUIRED') {
+    message = '生产环境需要 KV（KV_REST_API_URL + KV_REST_API_TOKEN）。当前无可写存储，任何改动不会被持久化。';
+  }
+  return {
+    kind: 'error',
+    title,
+    message,
+    code,
+    missing,
+  };
+}
+
+type NoticeAction = {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  /** When true, button shows a loading label + is implicitly disabled. */
+  running?: boolean;
+  /** Tooltip when disabled — e.g. "需要 ANTHROPIC_API_KEY". */
+  disabledReason?: string;
+};
+
+function NoticeBanner({
+  notice,
+  onDismiss,
+  action,
+}: {
+  notice: NoticeState;
+  onDismiss: () => void;
+  action?: NoticeAction;
+}) {
+  const bgByKind: Record<NoticeKind, string> = {
+    error: 'border-red-200 bg-red-50 text-red-800',
+    warning: 'border-amber-200 bg-amber-50 text-amber-900',
+    info: 'border-sky-200 bg-sky-50 text-sky-900',
+  };
+
+  // Auto-dismiss policy:
+  //   info    → 6s (confirmations / "已添加" / media-gap heads-up)
+  //   warning → 12s (hydrationFailed on-mount — important but not urgent)
+  //   error   → NEVER (user must read + fix + dismiss; auto-dismiss would
+  //             let a failed regen silently disappear, which is the fig
+  //             leaf we just spent 10 phases ripping out).
+  //
+  // Exception: when `action` is present and actively running, do NOT
+  // auto-dismiss — user is waiting on the action to finish; ripping the
+  // banner away mid-run would be disorienting.
+  useEffect(() => {
+    if (notice.kind === 'error') return;
+    if (action?.running) return;
+    const ms = notice.kind === 'info' ? 6000 : 12000;
+    const id = setTimeout(onDismiss, ms);
+    return () => clearTimeout(id);
+  }, [notice, onDismiss, action?.running]);
+
+  const [copied, setCopied] = useState(false);
+  // Copy a compact diagnostic blob so the user can paste it into a bug
+  // report without retyping the code / missing fields. Includes the
+  // message verbatim since it often has the actionable bit (which env
+  // var, which provider, which feature).
+  const copyDiag = async () => {
+    const lines = [
+      `code: ${notice.code ?? '(none)'}`,
+      notice.missing ? `missing: ${notice.missing}` : null,
+      `title: ${notice.title}`,
+      `message: ${notice.message}`,
+      `ts: ${new Date().toISOString()}`,
+    ].filter(Boolean);
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable (iframe / insecure context) — leave silent
+    }
+  };
+
+  return (
+    <div
+      role="alert"
+      className={`border-b ${bgByKind[notice.kind]} px-4 py-2.5`}
+    >
+      <div className="mx-auto flex max-w-screen-2xl items-start justify-between gap-4">
+        <div className="min-w-0 flex-1 text-sm">
+          <div className="font-semibold">{notice.title}</div>
+          <div className="mt-0.5 whitespace-pre-wrap text-xs leading-relaxed opacity-90">
+            {notice.message}
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            {action && (
+              <button
+                className="rounded-md border border-current bg-white/70 px-2.5 py-1 text-xs font-medium hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={action.disabled || action.running}
+                onClick={action.onClick}
+                title={action.disabled ? action.disabledReason : undefined}
+              >
+                {action.running ? '运行中…' : action.label}
+              </button>
+            )}
+            {notice.code && (
+              <div className="flex items-center gap-2 font-mono text-[10px] opacity-70">
+                <span>
+                  code: {notice.code}
+                  {notice.missing ? ` · missing: ${notice.missing}` : ''}
+                </span>
+                <button
+                  className="rounded border border-current px-1.5 py-[1px] opacity-80 hover:opacity-100"
+                  onClick={copyDiag}
+                  title="复制诊断信息到剪贴板（用于提 issue / 粘给运维）"
+                >
+                  {copied ? '已复制 ✓' : '复制诊断'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        <button
+          aria-label="dismiss"
+          onClick={onDismiss}
+          className="shrink-0 rounded-md px-2 py-0.5 text-sm opacity-60 hover:opacity-100"
+          disabled={action?.running}
+          title={action?.running ? '等待操作完成后才能关闭' : undefined}
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
 type Props = {
   locale: string;
   initialProject: Project;
@@ -59,7 +240,15 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   );
   const [leads] = useState<Lead[]>(initialLeads);
   const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
-  const [tab, setTab] = useState<'content' | 'leads' | 'settings'>('content');
+  // Settings modal — replaces the old 3-tab (内容 / 线索 / 设置) left rail.
+  // See the UX review for why tabs-as-modals was a fig leaf of its own:
+  // three mental modes (editing / data / config) stuffed into one sidebar
+  // made the right-pane "selected module editor" ambiguous every time the
+  // user switched tabs. Now the left rail is purely "what you're editing"
+  // (modules + findings) and Settings lives behind a ⚙ that opens a modal.
+  // Leads moved to Dashboard (which is the canonical analytics surface);
+  // we keep a shortcut in the ⋮ overflow menu.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Save state machine. 5-state instead of 3 so the UI can distinguish:
   //   idle   = no pending changes and no last-save timestamp to show yet
   //   dirty  = user just edited, debounce timer is ticking
@@ -84,6 +273,42 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   const menuRef = useRef<HTMLDivElement>(null);
   const [addingLocale, setAddingLocale] = useState(false);
   const [pendingLocale, setPendingLocale] = useState<PageLocale | null>(null);
+  // Capabilities probe (what can this deployment actually do?). Fetched
+  // once on mount from /api/capabilities. Undefined = not yet loaded;
+  // buttons stay enabled in that brief window (optimistic) since the
+  // banner will still catch any failure.
+  const [capabilities, setCapabilities] = useState<{
+    hasClaude: boolean;
+    hasOpenAI: boolean;
+    hasDeploy: boolean;
+    storageEphemeral: boolean;
+  } | null>(null);
+  useEffect(() => {
+    fetch('/api/capabilities')
+      .then((r) => r.json())
+      .then((caps) => setCapabilities(caps))
+      .catch(() => {
+        // Capabilities endpoint itself failing is unusual; leave null
+        // and let per-action banners handle the real errors.
+      });
+  }, []);
+  // Top-of-editor error/warning banner state. Populated by handlers when
+  // a route returns a structured error (LLM_REQUIRED / DEPLOY_REQUIRED /
+  // HERO_IS_TEMPLATE / ...). Also populated on mount if the page arrived
+  // with hydrationFailed=true so the user sees immediately that the
+  // initial Claude hydration didn't run.
+  const [notice, setNotice] = useState<NoticeState | null>(() => {
+    if (initialPage?.hydrationFailed) {
+      return {
+        kind: 'warning',
+        title: '本页 Claude 初始化未成功',
+        message:
+          '模块内容目前是确定性模板，不是 Claude 基于你产品写的。常见原因：ANTHROPIC_API_KEY 未配置、或生成过程超时。配置后对任意模块点「重新生成」即可让 Claude 重写。',
+        code: 'HYDRATION_FAILED',
+      };
+    }
+    return null;
+  });
 
   const selected = useMemo(
     () => project.modules.find((m) => m.id === selectedModuleId) ?? null,
@@ -347,6 +572,13 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         locale: requestLocale,
       }),
     });
+    if (!res.ok) {
+      // Structured LLM error — surface as banner. Old behavior was: silent
+      // no-op. User clicked regenerate, nothing happened, no idea if
+      // Claude failed or the click registered.
+      setNotice(await readStructuredError(res));
+      return;
+    }
     const data = await res.json();
     if (!data?.project) return;
 
@@ -537,6 +769,15 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ locale: newLocale, strategy }),
       });
+      if (!res.ok) {
+        // 503 LLM_REQUIRED (no ANTHROPIC_API_KEY / OPENAI_API_KEY) or
+        // 502 LLM_CALL_FAILED. The locale is NOT added — we show the
+        // banner and leave the user on the current tab. Pre-cleanup
+        // this path silently produced a locale with generic English
+        // templates; now we refuse rather than ship a fake locale.
+        setNotice(await readStructuredError(res));
+        return;
+      }
       const data = await res.json();
       if (data?.page) {
         setPage(data.page);
@@ -547,9 +788,12 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         // (per Q4 design: text is auto-localized; media needs a human pass).
         const gaps = findMediaLocaleGaps(data.page, newLocale);
         if (gaps.length > 0) {
-          alert(
-            `已添加 ${nativeLabel(newLocale)}。有 ${gaps.length} 个资产没有这个语言的版本——切到这个 tab 后，有配图/视频的模块会自动回落到默认版本。\n\n待补语言版本：\n${gaps.slice(0, 5).join('\n')}${gaps.length > 5 ? `\n...还有 ${gaps.length - 5} 个` : ''}`,
-          );
+          setNotice({
+            kind: 'info',
+            title: `已添加 ${nativeLabel(newLocale)} 语言`,
+            message: `有 ${gaps.length} 个媒资（图片/视频）没有 ${nativeLabel(newLocale)} 版本——切到该 tab 时会回落到默认语言的版本。首 5 个：\n${gaps.slice(0, 5).join(' · ')}${gaps.length > 5 ? ` …还有 ${gaps.length - 5} 个` : ''}`,
+            code: 'LOCALE_MEDIA_GAPS',
+          });
         }
       }
     } finally {
@@ -600,33 +844,87 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     setSelectedModuleId(nextModules[0]?.id ?? null);
   };
 
+  const [hydrating, setHydrating] = useState(false);
+  // One-click re-hydrate: run hydrateModulesViaClaude for the current
+  // editing locale. Used from the HYDRATION_FAILED banner action. The
+  // per-module "regenerate" button is still there for surgical edits;
+  // this is the "I just added my API key, do all 5 at once" path.
+  const hydrateNow = async () => {
+    if (!page || hydrating) return;
+    setHydrating(true);
+    try {
+      const res = await fetch(`/api/pages/${page.id}/hydrate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ locale: editingLocale }),
+      });
+      if (!res.ok) {
+        setNotice(await readStructuredError(res));
+        return;
+      }
+      const data = await res.json();
+      if (data?.page) {
+        setPage(data.page);
+        // Repaint the editor with the freshly-hydrated modules for the
+        // locale+variant we were editing. editingLocaleRef guard: if the
+        // user switched tabs during hydrate, don't overwrite what they're
+        // now looking at — same "串显示" protection as regenerate().
+        if (editingLocaleRef.current === editingLocale) {
+          const v = project.activeVariant ?? 'A';
+          const mods = data.page.variants?.[v]?.[editingLocale] ?? [];
+          setProject((p) => ({ ...p, modules: mods }));
+        }
+        const failed = data.hydrationFailed;
+        setNotice({
+          kind: failed ? 'warning' : 'info',
+          title: failed
+            ? 'Hydrate 部分成功 — 仍有模块是模板'
+            : '已用 Claude 重写全部模块',
+          message: failed
+            ? '有模块两次调用后仍匹配模板指纹。通常是产品描述（name / tagline / value）太通用；在 ⚙ 设置里把它们改得更具体后再试一次。'
+            : `locale=${editingLocale} 的 5 个文字模块已由 Claude 基于你的产品输入重写。`,
+          code: failed ? 'HYDRATION_PARTIAL' : 'HYDRATION_OK',
+        });
+      }
+    } catch (e: any) {
+      setNotice({
+        kind: 'error',
+        title: 'Hydrate 请求失败',
+        message: e?.message ?? '网络错误，请重试。',
+        code: 'HYDRATE_NETWORK_ERROR',
+      });
+    } finally {
+      setHydrating(false);
+    }
+  };
+
   const [deploying, setDeploying] = useState(false);
-  const deployToVercel = async (force = false) => {
+  const deployToVercel = async () => {
     setDeploying(true);
     try {
       const res = await fetch(`/api/projects/${project.id}/deploy`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ force }),
       });
-      const data = await res.json();
       // Quality gate: server refuses publish when Hero is still template
-      // copy. Surface the reason in a confirm dialog so the user can either
-      // fix it (recommended) or force-publish with full awareness of what's
-      // going live. We never silently proceed — that's the behavior we are
-      // specifically trying to kill here.
-      if (res.status === 409 && data?.error === 'hero-is-template') {
-        const ok = window.confirm(
-          `${data.reason ?? 'Hero 仍是模板占位文案。'}\n\n确认仍要发布吗？发布后访客看到的将是与产品无关的通用文案。`,
-        );
-        if (ok) return await deployToVercel(true);
+      // copy. The old "force=true" override has been removed — the only
+      // correct fix is to click "重新生成" on the Hero or hand-edit it.
+      // Force-publishing generic template copy is the "3.8 倍 ROI"
+      // failure mode we're explicitly trying to kill.
+      if (res.status === 409) {
+        setNotice(await readStructuredError(res));
         return false;
       }
+      // DEPLOY_REQUIRED (no VC_API_TOKEN) → 503, DEPLOY_FAILED (Vercel
+      // API rejected the upload) → 502. Both surface as a banner; the
+      // old `alert('Vercel 部署失败：...')` is gone because alert() is
+      // modal and the operator can't copy the exact error code.
+      if (!res.ok) {
+        setNotice(await readStructuredError(res));
+        return false;
+      }
+      const data = await res.json();
       if (data?.project) setProject(data.project);
-      if (data?.deploy?.status === 'error') {
-        alert('Vercel 部署失败：' + (data.deploy.errorMessage ?? 'unknown'));
-        return false;
-      }
       return true;
     } finally {
       setDeploying(false);
@@ -662,14 +960,19 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     } catch (e) {
       console.error('[togglePublish] PATCH failed:', e);
       setProject((p) => ({ ...p, published: !next }));
-      alert('状态切换失败，请重试。');
+      setNotice({
+        kind: 'error',
+        title: '状态切换失败',
+        message: '网络请求失败，请重试。',
+        code: 'PUBLISH_TOGGLE_FAILED',
+      });
       return;
     }
     if (next) {
-      // Publishing: also deploy. If deploy returns false (user declined
-      // force, or Vercel errored), roll the flag back so the UI isn't
+      // Publishing: also deploy. If deploy returns false (quality gate
+      // blocked, or Vercel errored), roll the flag back so the UI isn't
       // claiming "已发布" while no usable URL exists.
-      const ok = await deployToVercel(false);
+      const ok = await deployToVercel();
       if (!ok) {
         setProject((p) => ({ ...p, published: false }));
         await fetch(`/api/projects/${project.id}`, {
@@ -736,263 +1039,120 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   const unusedTypes = ALL_TYPES.filter((t) => !project.modules.some((m) => m.type === t));
 
   return (
-    <div className="grid min-h-[calc(100vh-56px)] grid-cols-12 gap-0">
-      {/* Left rail */}
+    <>
+      {notice && (
+        <NoticeBanner
+          notice={notice}
+          onDismiss={() => setNotice(null)}
+          action={
+            // Wire the "立即 hydrate" button only on the mount-time
+            // hydration-failed warning and on the partial-hydrate
+            // follow-up. Other notices (LLM_REQUIRED from a regen click,
+            // DEPLOY_FAILED, etc.) don't get the button — re-clicking
+            // the failed action is the right retry there.
+            notice.code === 'HYDRATION_FAILED' || notice.code === 'HYDRATION_PARTIAL'
+              ? {
+                  label: '立即 hydrate（当前语言）',
+                  onClick: hydrateNow,
+                  disabled: !capabilities?.hasClaude,
+                  running: hydrating,
+                  disabledReason: '需要 ANTHROPIC_API_KEY 才能让 Claude hydrate。',
+                }
+              : undefined
+          }
+        />
+      )}
+      <div className="grid min-h-[calc(100vh-56px)] grid-cols-12 gap-0">
+      {/* Left rail — modules + findings only. Settings moved to a modal
+          accessed from the ⋮ overflow menu; leads moved to Dashboard.
+          See `settingsOpen` state doc comment for the rationale. */}
       <aside className="col-span-12 border-r border-ink-100 bg-white p-4 md:col-span-3 lg:col-span-3">
-        <div className="flex items-center gap-1 rounded-xl border border-ink-100 p-1 text-sm">
-          <button
-            className={`flex-1 rounded-lg px-2 py-1.5 ${tab === 'content' ? 'bg-brand-600 text-white' : 'text-ink-700'}`}
-            onClick={() => setTab('content')}
-          >
-            {t('editor.contentTab')}
-          </button>
-          <button
-            className={`flex-1 rounded-lg px-2 py-1.5 ${tab === 'leads' ? 'bg-brand-600 text-white' : 'text-ink-700'}`}
-            onClick={() => setTab('leads')}
-          >
-            {t('editor.leadsTab')}
-          </button>
-          <button
-            className={`flex-1 rounded-lg px-2 py-1.5 ${tab === 'settings' ? 'bg-brand-600 text-white' : 'text-ink-700'}`}
-            onClick={() => setTab('settings')}
-          >
-            {t('editor.settingsTab')}
-          </button>
-        </div>
-
-        {tab === 'content' && (
-          <div className="mt-4">
-            <div className="label mb-1.5">{t('editor.modules')}</div>
-            <ul className="space-y-1">
-              {project.modules.map((m, i) => (
-                <li
-                  key={m.id}
-                  className={`group flex items-center gap-2 rounded-xl border p-2 text-sm ${
-                    selectedModuleId === m.id
-                      ? 'border-brand-300 bg-brand-50'
-                      : 'border-ink-100 hover:bg-ink-100/40'
-                  }`}
+        <div className="mt-0">
+          <div className="label mb-1.5">{t('editor.modules')}</div>
+          <ul className="space-y-1">
+            {project.modules.map((m, i) => (
+              <li
+                key={m.id}
+                className={`group flex items-center gap-2 rounded-xl border p-2 text-sm ${
+                  selectedModuleId === m.id
+                    ? 'border-brand-300 bg-brand-50'
+                    : 'border-ink-100 hover:bg-ink-100/40'
+                }`}
+              >
+                <button
+                  className="flex-1 text-left"
+                  onClick={() => setSelectedModuleId(m.id)}
                 >
-                  <button
-                    className="flex-1 text-left"
-                    onClick={() => setSelectedModuleId(m.id)}
-                  >
-                    <span className="mr-1.5 inline-block h-5 w-5 rounded-md bg-brand-100 text-center text-[11px] leading-5 text-brand-700">
-                      {i + 1}
-                    </span>
-                    {t(`editor.moduleTypes.${m.type}`)}
-                  </button>
-                  <button
-                    title={t('editor.moveUp')}
-                    onClick={() => move(m.id, -1)}
-                    className="opacity-0 group-hover:opacity-100 text-ink-500 hover:text-ink-900"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    title={t('editor.moveDown')}
-                    onClick={() => move(m.id, 1)}
-                    className="opacity-0 group-hover:opacity-100 text-ink-500 hover:text-ink-900"
-                  >
-                    ↓
-                  </button>
-                  <button
-                    title={t('editor.deleteModule')}
-                    onClick={() => remove(m.id)}
-                    className="opacity-0 group-hover:opacity-100 text-ink-500 hover:text-red-600"
-                  >
-                    ×
-                  </button>
-                </li>
-              ))}
-            </ul>
+                  <span className="mr-1.5 inline-block h-5 w-5 rounded-md bg-brand-100 text-center text-[11px] leading-5 text-brand-700">
+                    {i + 1}
+                  </span>
+                  {t(`editor.moduleTypes.${m.type}`)}
+                </button>
+                <button
+                  title={t('editor.moveUp')}
+                  onClick={() => move(m.id, -1)}
+                  className="opacity-0 group-hover:opacity-100 text-ink-500 hover:text-ink-900"
+                >
+                  ↑
+                </button>
+                <button
+                  title={t('editor.moveDown')}
+                  onClick={() => move(m.id, 1)}
+                  className="opacity-0 group-hover:opacity-100 text-ink-500 hover:text-ink-900"
+                >
+                  ↓
+                </button>
+                <button
+                  title={t('editor.deleteModule')}
+                  onClick={() => remove(m.id)}
+                  className="opacity-0 group-hover:opacity-100 text-ink-500 hover:text-red-600"
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
 
-            {unusedTypes.length > 0 && (
-              <div className="mt-4">
-                <div className="label mb-1.5">{t('editor.addModule')}</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {unusedTypes.map((type) => (
-                    <button
-                      key={type}
-                      onClick={() => addModule(type)}
-                      className="pill hover:bg-brand-50 hover:border-brand-200 hover:text-brand-700"
-                    >
-                      + {t(`editor.moduleTypes.${type}`)}
-                    </button>
-                  ))}
-                </div>
+          {unusedTypes.length > 0 && (
+            <div className="mt-4">
+              <div className="label mb-1.5">{t('editor.addModule')}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {unusedTypes.map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => addModule(type)}
+                    className="pill hover:bg-brand-50 hover:border-brand-200 hover:text-brand-700"
+                  >
+                    + {t(`editor.moduleTypes.${type}`)}
+                  </button>
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
-            {findings.length > 0 && (
-              <div className="mt-5">
-                <div className="label mb-1.5">视觉红线 · {findings.length} 条</div>
-                <ul className="space-y-1.5">
-                  {findings.map((f, i) => (
-                    <li
-                      key={i}
-                      className={`rounded-xl border p-2.5 text-[11px] leading-relaxed ${
-                        f.severity === 'error'
-                          ? 'border-red-200 bg-red-50 text-red-700'
-                          : f.severity === 'warn'
-                            ? 'border-amber-200 bg-amber-50 text-amber-800'
-                            : 'border-ink-100 bg-ink-100/40 text-ink-700'
-                      }`}
-                    >
-                      <span className="mr-1 font-mono">{f.rule}</span>
-                      <span>{f.message}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-
-        {tab === 'leads' && (
-          <div className="mt-4">
-            <div className="label mb-1.5">{t('leads.title')}</div>
-            {leads.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-ink-100 p-4 text-xs text-ink-500">
-                {t('leads.empty')}
-              </div>
-            ) : (
-              <ul className="space-y-2">
-                {leads.map((l) => (
-                  <li key={l.id} className="rounded-xl border border-ink-100 p-3 text-xs">
-                    <div className="font-medium">{l.name || '—'}</div>
-                    <div className="text-ink-500">{l.email || '—'}</div>
-                    {l.company && <div className="text-ink-500">{l.company}</div>}
-                    {l.message && (
-                      <div className="mt-1 text-ink-700">“{l.message}”</div>
-                    )}
-                    <div className="mt-1 text-[11px] text-ink-300">
-                      {new Date(l.createdAt).toLocaleString()}
-                    </div>
+          {findings.length > 0 && (
+            <div className="mt-5">
+              <div className="label mb-1.5">视觉红线 · {findings.length} 条</div>
+              <ul className="space-y-1.5">
+                {findings.map((f, i) => (
+                  <li
+                    key={i}
+                    className={`rounded-xl border p-2.5 text-[11px] leading-relaxed ${
+                      f.severity === 'error'
+                        ? 'border-red-200 bg-red-50 text-red-700'
+                        : f.severity === 'warn'
+                          ? 'border-amber-200 bg-amber-50 text-amber-800'
+                          : 'border-ink-100 bg-ink-100/40 text-ink-700'
+                    }`}
+                  >
+                    <span className="mr-1 font-mono">{f.rule}</span>
+                    <span>{f.message}</span>
                   </li>
                 ))}
               </ul>
-            )}
-          </div>
-        )}
-
-        {tab === 'settings' && (
-          <div className="mt-4 space-y-4">
-            <div>
-              <div className="label mb-1.5">风格</div>
-              <div className="grid grid-cols-1 gap-1.5">
-                {Object.values(STYLE_PRESETS).map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => changeStyle(s.id)}
-                    className={`rounded-xl border p-2.5 text-left text-xs ${
-                      project.theme.styleId === s.id
-                        ? 'border-brand-300 bg-brand-50'
-                        : 'border-ink-100 hover:bg-ink-100/40'
-                    }`}
-                  >
-                    <div className="text-sm font-medium">{s.name}</div>
-                    <div className="mt-0.5 text-[11px] text-ink-500">{s.mood}</div>
-                  </button>
-                ))}
-              </div>
             </div>
-            <div>
-              <div className="label mb-1.5">{t('editor.tone')}</div>
-              <select
-                className="input"
-                value={project.tone}
-                onChange={(e) => changeTone(e.target.value as ToneKey)}
-              >
-                {TONES.map((tn) => (
-                  <option key={tn} value={tn}>
-                    {t(`editor.tones.${tn}`)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="label mb-1.5">主色</div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={project.theme.primary}
-                  onChange={(e) => {
-                    setProject((p) => ({
-                      ...p,
-                      theme: { ...p.theme, primary: e.target.value },
-                    }));
-                    touch();
-                  }}
-                  className="h-10 w-12 rounded-lg border border-ink-100"
-                />
-                <input
-                  className="input"
-                  value={project.theme.primary}
-                  onChange={(e) => {
-                    setProject((p) => ({
-                      ...p,
-                      theme: { ...p.theme, primary: e.target.value },
-                    }));
-                    touch();
-                  }}
-                />
-              </div>
-            </div>
-            <div>
-              <div className="label mb-1.5">发布模式</div>
-              <div className="flex gap-1 rounded-xl border border-ink-100 p-1 text-xs">
-                <button
-                  className={`flex-1 rounded-lg px-2 py-1.5 ${project.publishMode === 'single' ? 'bg-brand-600 text-white' : ''}`}
-                  onClick={async () => {
-                    setProject((p) => ({ ...p, publishMode: 'single' }));
-                    await fetch(`/api/projects/${project.id}`, {
-                      method: 'PATCH',
-                      headers: { 'content-type': 'application/json' },
-                      body: JSON.stringify({ publishMode: 'single' }),
-                    });
-                  }}
-                >
-                  单方案
-                </button>
-                <button
-                  className={`flex-1 rounded-lg px-2 py-1.5 ${project.publishMode === 'ab-split' ? 'bg-brand-600 text-white' : ''}`}
-                  onClick={async () => {
-                    setProject((p) => ({ ...p, publishMode: 'ab-split' }));
-                    await fetch(`/api/projects/${project.id}`, {
-                      method: 'PATCH',
-                      headers: { 'content-type': 'application/json' },
-                      body: JSON.stringify({ publishMode: 'ab-split' }),
-                    });
-                  }}
-                >
-                  A/B 分流
-                </button>
-              </div>
-              {project.publishMode === 'ab-split' && (
-                <div className="mt-2 text-xs text-ink-500">
-                  访客按 cookie 粘性分流到 A / B，看板自动推荐胜出方案。
-                </div>
-              )}
-            </div>
-            <div className="rounded-xl border border-ink-100 p-3 text-xs text-ink-500">
-              <div className="font-medium text-ink-700">AI {t('editor.strategyPanel')}</div>
-              <ul className="mt-2 space-y-1.5">
-                {project.strategy.goal.slice(0, 3).map((g, i) => (
-                  <li key={i}>• {g}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="rounded-xl border border-ink-100 p-3 text-xs text-ink-500">
-              <div className="font-medium text-ink-700">LLM 路由（PRD §4.1）</div>
-              <ul className="mt-2 space-y-0.5">
-                <li>• Gemini 1.5 Pro — 长文档摄取</li>
-                <li>• Claude 3.5 Sonnet — 结构化文案</li>
-                <li>• GPT-4o — 多语言语境转换</li>
-              </ul>
-            </div>
-          </div>
-        )}
+          )}
+        </div>
       </aside>
 
       {/* Middle: preview */}
@@ -1166,6 +1326,27 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             >
               查看 ↗
             </a>
+            {/* 发布模式 — inline dropdown, right next to Deploy. Was buried
+                in the old 设置 tab; moving it here makes the causal chain
+                (A/B split ↔ Deploy behaviour) visible at the moment of
+                the decision instead of in a different part of the UI. */}
+            <select
+              className="input h-[30px] w-auto px-2 py-0 text-[11px]"
+              value={project.publishMode}
+              title="发布模式"
+              onChange={async (e) => {
+                const mode = e.target.value as 'single' | 'ab-split';
+                setProject((p) => ({ ...p, publishMode: mode }));
+                await fetch(`/api/projects/${project.id}`, {
+                  method: 'PATCH',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({ publishMode: mode }),
+                });
+              }}
+            >
+              <option value="single">单方案</option>
+              <option value="ab-split">A/B 分流</option>
+            </select>
             <button
               className={`btn px-3 py-1.5 text-xs ${project.published ? 'btn-secondary' : 'btn-primary'}`}
               onClick={togglePublish}
@@ -1195,9 +1376,26 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               </button>
               {menuOpen && (
                 <div
-                  className="absolute right-0 top-full z-20 mt-1 min-w-[200px] rounded-xl border border-ink-100 bg-white py-1 shadow-lg"
+                  className="absolute right-0 top-full z-20 mt-1 min-w-[220px] rounded-xl border border-ink-100 bg-white py-1 shadow-lg"
                   role="menu"
                 >
+                  <button
+                    className="block w-full px-3 py-2 text-left text-xs text-ink-700 hover:bg-ink-50"
+                    onClick={() => {
+                      setSettingsOpen(true);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    ⚙ 设置（风格 · 语气 · 主色）
+                  </button>
+                  <a
+                    className="block w-full px-3 py-2 text-left text-xs text-ink-700 hover:bg-ink-50"
+                    href={`/${locale}/dashboard`}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    📬 线索（{leads.length}） → Dashboard
+                  </a>
+                  <div className="my-1 border-t border-ink-100" />
                   <button
                     className="block w-full px-3 py-2 text-left text-xs text-ink-700 hover:bg-ink-50 disabled:opacity-50"
                     disabled={!project.deploy?.url}
@@ -1226,7 +1424,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
                     className="block w-full px-3 py-2 text-left text-xs text-ink-700 hover:bg-ink-50 disabled:opacity-50"
                     disabled={deploying}
                     onClick={() => {
-                      deployToVercel(false);
+                      deployToVercel();
                       setMenuOpen(false);
                     }}
                     title={
@@ -1269,6 +1467,11 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             module={selected}
             onChange={(patch) => updateModule(selected.id, patch)}
             onRegenerate={() => regenerate(selected.id)}
+            regenerateDisabledReason={
+              capabilities && !capabilities.hasClaude
+                ? '需要 ANTHROPIC_API_KEY 才能让 Claude 重写文案。'
+                : null
+            }
           />
         ) : (
           <div className="rounded-xl border border-dashed border-ink-100 p-6 text-center text-sm text-ink-500">
@@ -1288,6 +1491,277 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
           onClose={() => setPendingLocale(null)}
         />
       )}
+    </div>
+    {settingsOpen && (
+      <SettingsModal
+        project={project}
+        productId={page?.productId}
+        tones={TONES}
+        onChangeStyle={changeStyle}
+        onChangeTone={changeTone}
+        onChangeColor={(hex) => {
+          setProject((p) => ({ ...p, theme: { ...p.theme, primary: hex } }));
+          touch();
+        }}
+        onProductInfoChange={(patch) => {
+          // Mirror the saved product fields back into project.inputs so the
+          // regenerate path uses fresh values immediately without a reload.
+          // Backend (/api/projects/[id] PATCH) reads from Product anyway,
+          // but the UI label and any subsequent client-side computation
+          // need to see the new values right away.
+          setProject((p) => ({
+            ...p,
+            inputs: {
+              ...p.inputs,
+              name: patch.name ?? p.inputs.name,
+              tagline: patch.tagline ?? p.inputs.tagline,
+              value: patch.value ?? p.inputs.value,
+            },
+          }));
+        }}
+        tLabels={{
+          tone: t('editor.tone'),
+          strategyPanel: t('editor.strategyPanel'),
+          tones: TONES.reduce(
+            (acc, tn) => ({ ...acc, [tn]: t(`editor.tones.${tn}`) }),
+            {} as Record<string, string>,
+          ),
+        }}
+        onClose={() => setSettingsOpen(false)}
+      />
+    )}
+    </>
+  );
+}
+
+// Extracted settings modal. Contains everything that used to be in the
+// left rail's 设置 tab: style preset, tone, primary color, AI strategy
+// summary, LLM routing legend. Lives OUTSIDE the editor grid so it can
+// overlay the full viewport without wrestling with the aside's col-span.
+//
+// Design-intent note: publishMode (single / ab-split) is NOT here — it
+// moved to an inline dropdown right before the Deploy button, because
+// the single-most-confusing thing about the old 3-tab design was that
+// 发布模式 affected Deploy but lived in a totally different UI region.
+// Co-locating them is the fix.
+function SettingsModal({
+  project,
+  productId,
+  tones,
+  onChangeStyle,
+  onChangeTone,
+  onChangeColor,
+  onProductInfoChange,
+  tLabels,
+  onClose,
+}: {
+  project: Project;
+  productId?: string;
+  tones: ToneKey[];
+  onChangeStyle: (id: StyleId) => void;
+  onChangeTone: (t: ToneKey) => void;
+  onChangeColor: (hex: string) => void;
+  onProductInfoChange: (patch: { name?: string; tagline?: string; value?: string }) => void;
+  tLabels: { tone: string; strategyPanel: string; tones: Record<string, string> };
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  // Local draft for product info so the user can edit without triggering
+  // a network call on every keystroke. Save on blur / explicit save click.
+  const [pName, setPName] = useState(project.inputs.name ?? '');
+  const [pTagline, setPTagline] = useState(project.inputs.tagline ?? '');
+  const [pValue, setPValue] = useState(project.inputs.value ?? '');
+  const [productSaving, setProductSaving] = useState<'idle' | 'saving' | 'saved' | 'error'>(
+    'idle',
+  );
+  const [productError, setProductError] = useState<string | null>(null);
+
+  const saveProductInfo = async () => {
+    if (!productId) return;
+    const patch: { name?: string; tagline?: string; value?: string } = {};
+    if (pName !== project.inputs.name) patch.name = pName;
+    if (pTagline !== project.inputs.tagline) patch.tagline = pTagline;
+    if (pValue !== project.inputs.value) patch.value = pValue;
+    if (Object.keys(patch).length === 0) return;
+    setProductSaving('saving');
+    setProductError(null);
+    try {
+      const res = await fetch(`/api/products/${productId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        // Try to extract structured error body
+        let msg = `HTTP ${res.status}`;
+        try {
+          const b = await res.json();
+          msg = b?.message ?? b?.error ?? msg;
+        } catch {}
+        setProductSaving('error');
+        setProductError(msg);
+        return;
+      }
+      onProductInfoChange(patch);
+      setProductSaving('saved');
+      setTimeout(() => setProductSaving('idle'), 1400);
+    } catch (e: any) {
+      setProductSaving('error');
+      setProductError(e?.message ?? 'network error');
+    }
+  };
+  return (
+    <div
+      className="fixed inset-0 z-30 flex items-start justify-center overflow-y-auto bg-ink-900/40 px-4 py-10"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="w-full max-w-lg rounded-2xl border border-ink-100 bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <div className="text-base font-semibold">设置</div>
+          <button
+            className="rounded-md px-2 py-0.5 text-lg text-ink-500 hover:text-ink-900"
+            aria-label="关闭"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+        <div className="mt-4 space-y-4">
+          {/* Product info — editable. Lets the user fix a generic
+              name/tagline/value (the root cause of Claude output
+              matching template fingerprints) without leaving the editor.
+              Saves via PATCH /api/products/[id]; next regenerate picks
+              up the fresh values because the backend reads Product
+              fresh on each PATCH. */}
+          {productId ? (
+            <div className="rounded-xl border border-ink-100 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="label">产品信息</div>
+                {productSaving === 'saving' && (
+                  <span className="text-[11px] text-ink-500">保存中…</span>
+                )}
+                {productSaving === 'saved' && (
+                  <span className="text-[11px] text-emerald-700">已保存 ✓</span>
+                )}
+                {productSaving === 'error' && (
+                  <span className="text-[11px] text-red-700">保存失败：{productError}</span>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div>
+                  <label className="text-[11px] text-ink-500">产品名</label>
+                  <input
+                    className="input"
+                    value={pName}
+                    onChange={(e) => setPName(e.target.value)}
+                    onBlur={saveProductInfo}
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-ink-500">Tagline</label>
+                  <input
+                    className="input"
+                    value={pTagline}
+                    onChange={(e) => setPTagline(e.target.value)}
+                    onBlur={saveProductInfo}
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-ink-500">核心价值（Claude 生成的锚点）</label>
+                  <textarea
+                    className="input"
+                    rows={3}
+                    value={pValue}
+                    onChange={(e) => setPValue(e.target.value)}
+                    onBlur={saveProductInfo}
+                  />
+                  <p className="mt-1 text-[10px] leading-relaxed text-ink-500">
+                    越具体越好。通用描述（"帮助团队提升效率"）会让 Claude 退回到模板；
+                    产品特定信息（"把 11 小时/周手工录入变成自动同步"）才抓得住锚点。
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <div>
+            <div className="label mb-1.5">风格</div>
+            <div className="grid grid-cols-1 gap-1.5">
+              {Object.values(STYLE_PRESETS).map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => onChangeStyle(s.id)}
+                  className={`rounded-xl border p-2.5 text-left text-xs ${
+                    project.theme.styleId === s.id
+                      ? 'border-brand-300 bg-brand-50'
+                      : 'border-ink-100 hover:bg-ink-100/40'
+                  }`}
+                >
+                  <div className="text-sm font-medium">{s.name}</div>
+                  <div className="mt-0.5 text-[11px] text-ink-500">{s.mood}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="label mb-1.5">{tLabels.tone}</div>
+            <select
+              className="input"
+              value={project.tone}
+              onChange={(e) => onChangeTone(e.target.value as ToneKey)}
+            >
+              {tones.map((tn) => (
+                <option key={tn} value={tn}>
+                  {tLabels.tones[tn]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <div className="label mb-1.5">主色</div>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={project.theme.primary}
+                onChange={(e) => onChangeColor(e.target.value)}
+                className="h-10 w-12 rounded-lg border border-ink-100"
+              />
+              <input
+                className="input"
+                value={project.theme.primary}
+                onChange={(e) => onChangeColor(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="rounded-xl border border-ink-100 p-3 text-xs text-ink-500">
+            <div className="font-medium text-ink-700">AI {tLabels.strategyPanel}</div>
+            <ul className="mt-2 space-y-1.5">
+              {project.strategy.goal.slice(0, 3).map((g, i) => (
+                <li key={i}>• {g}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="rounded-xl border border-ink-100 p-3 text-xs text-ink-500">
+            <div className="font-medium text-ink-700">LLM 路由（PRD §4.1）</div>
+            <ul className="mt-2 space-y-0.5">
+              <li>• Gemini 1.5 Pro — 长文档摄取</li>
+              <li>• Claude Opus 4 — 结构化文案</li>
+              <li>• GPT-4o — 多语言语境转换</li>
+            </ul>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
