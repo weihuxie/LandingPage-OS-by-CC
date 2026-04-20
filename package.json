@@ -6,7 +6,11 @@
     "dev": "next dev -p 3000",
     "build": "rm -rf .next && next build",
     "start": "next start -p 3000",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "playwright test",
+    "test:api": "playwright test --project=api",
+    "test:e2e": "playwright test --project=e2e",
+    "test:ui": "playwright test --ui"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.89.0",
@@ -24,6 +28,7 @@
     "zustand": "4.5.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/node": "20.14.0",
     "@types/pdf-parse": "^1.1.5",
     "@types/react": "18.3.3",
