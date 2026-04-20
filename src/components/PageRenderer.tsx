@@ -28,6 +28,7 @@ import {
   youtubeEmbedUrl,
   vimeoEmbedUrl,
   loomEmbedUrl,
+  isInlineLoopingVideo,
 } from '@/lib/media';
 
 type Props = {
@@ -133,7 +134,13 @@ function ModuleBody({
     case 'solution':
       return <Solution content={module.content as SolutionContent} />;
     case 'benefits':
-      return <Benefits content={module.content as BenefitsContent} />;
+      return (
+        <Benefits
+          content={module.content as BenefitsContent}
+          locale={pageLocale}
+          market={market}
+        />
+      );
     case 'useCase':
       return <UseCases content={module.content as UseCaseContent} />;
     case 'testimonial':
@@ -340,6 +347,24 @@ function HeroMedia({
       </div>
     );
   }
+  // Non-video kind (image / gif / logo). If the URL is actually an inline
+  // video format (.mp4 / .webm / .mov) — which happens when a user pastes
+  // a lightweight demo loop into a GIF slot — render as an autoplaying
+  // looping <video>, so they get the "GIF experience" at ~10% of the
+  // file size. Otherwise standard <img> (browsers auto-loop real GIFs).
+  if (isInlineLoopingVideo(resolved.url)) {
+    return (
+      <video
+        className="w-full rounded-2xl border border-ink-100 shadow-soft"
+        src={resolved.url}
+        muted
+        autoPlay
+        loop
+        playsInline
+        aria-label={resolved.alt}
+      />
+    );
+  }
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
@@ -444,7 +469,15 @@ function Solution({ content }: { content: SolutionContent }) {
   );
 }
 
-function Benefits({ content }: { content: BenefitsContent }) {
+function Benefits({
+  content,
+  locale,
+  market,
+}: {
+  content: BenefitsContent;
+  locale: PageLocale;
+  market: MarketCode;
+}) {
   const layout: BenefitsLayout = content.layout ?? 'cards';
 
   // ---- cards (三列卡片，当前默认) ----
@@ -453,13 +486,22 @@ function Benefits({ content }: { content: BenefitsContent }) {
       <div className="mx-auto max-w-6xl px-6 py-14">
         <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
         <div className="mt-8 grid gap-4 sm:grid-cols-3">
-          {content.items.map((b, i) => (
-            <div key={i} className="rounded-2xl border border-ink-100 bg-white p-5">
-              <div className="h-1 w-8 rounded-full" style={{ background: 'var(--brand)' }} />
-              <h3 className="mt-3 font-semibold">{b.title}</h3>
-              <p className="mt-1 text-sm text-ink-500">{b.body}</p>
-            </div>
-          ))}
+          {content.items.map((b, i) => {
+            const m = resolveMedia(b.media, locale, market);
+            return (
+              <div
+                key={i}
+                className="overflow-hidden rounded-2xl border border-ink-100 bg-white"
+              >
+                {m && <BenefitThumb url={m.url} alt={m.alt ?? b.title} />}
+                <div className="p-5">
+                  <div className="h-1 w-8 rounded-full" style={{ background: 'var(--brand)' }} />
+                  <h3 className="mt-3 font-semibold">{b.title}</h3>
+                  <p className="mt-1 text-sm text-ink-500">{b.body}</p>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     );
@@ -481,14 +523,38 @@ function Benefits({ content }: { content: BenefitsContent }) {
                   <p className="mt-2 text-ink-500">{b.body}</p>
                 </div>
                 <div className={textFirst ? '' : 'md:order-1'}>
-                  {b.media?.url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={b.media.url} alt={b.media.alt ?? ''} className="w-full rounded-2xl border border-ink-100 shadow-soft" loading="lazy" />
-                  ) : (
-                    <div className="grid aspect-video place-items-center rounded-2xl border border-dashed border-ink-100 bg-ink-100/30 text-xs text-ink-300">
-                      配图可选
-                    </div>
-                  )}
+                  {(() => {
+                    const rm = resolveMedia(b.media, locale, market);
+                    if (!rm) {
+                      return (
+                        <div className="grid aspect-video place-items-center rounded-2xl border border-dashed border-ink-100 bg-ink-100/30 text-xs text-ink-300">
+                          配图可选
+                        </div>
+                      );
+                    }
+                    if (isInlineLoopingVideo(rm.url)) {
+                      return (
+                        <video
+                          className="w-full rounded-2xl border border-ink-100 shadow-soft"
+                          src={rm.url}
+                          muted
+                          autoPlay
+                          loop
+                          playsInline
+                          aria-label={rm.alt}
+                        />
+                      );
+                    }
+                    return (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={rm.url}
+                        alt={rm.alt ?? ''}
+                        className="w-full rounded-2xl border border-ink-100 shadow-soft"
+                        loading="lazy"
+                      />
+                    );
+                  })()}
                 </div>
               </div>
             );
@@ -518,6 +584,41 @@ function Benefits({ content }: { content: BenefitsContent }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Small thumbnail for a Benefits `cards` item (default layout). Picks
+ * `<video loop muted autoplay>` for `.mp4` / `.webm` / `.mov` URLs and
+ * `<img>` for everything else (static images + real GIF format). Fixed
+ * 16:9 aspect so cards line up visually regardless of source aspect.
+ */
+function BenefitThumb({ url, alt }: { url: string; alt?: string }) {
+  if (isInlineLoopingVideo(url)) {
+    return (
+      <div className="aspect-video w-full overflow-hidden bg-ink-100/40">
+        <video
+          className="h-full w-full object-cover"
+          src={url}
+          muted
+          autoPlay
+          loop
+          playsInline
+          aria-label={alt}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="aspect-video w-full overflow-hidden bg-ink-100/40">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={alt ?? ''}
+        className="h-full w-full object-cover"
+        loading="lazy"
+      />
     </div>
   );
 }

@@ -6,7 +6,14 @@ import type {
   MediaRef,
 } from './types';
 import { resolveSocialProofLogo } from './types';
-import { resolveMedia } from './media';
+import {
+  resolveMedia,
+  isInlineLoopingVideo,
+  detectVideoHost,
+  youtubeEmbedUrl,
+  vimeoEmbedUrl,
+  loomEmbedUrl,
+} from './media';
 import { STYLE_PRESETS, cssVarsForStyle } from './styles';
 
 /**
@@ -84,13 +91,19 @@ function serializeModule(
 ): string {
   const c = m.content;
   switch (m.type) {
-    case 'hero':
+    case 'hero': {
+      const heroMedia = resolveMedia(c.media, locale, market);
+      const mediaHtml = heroMedia
+        ? `<div style="margin-top:40px;max-width:960px;margin-left:auto;margin-right:auto">${renderMediaHtml(heroMedia.url, heroMedia.alt, c.media?.kind, c.media?.poster)}</div>`
+        : '';
       return `<section class="hero"><div class="wrap">
         <span class="eyebrow">${escapeHtml(c.eyebrow)}</span>
         <h1 class="h1">${escapeHtml(c.headline)}</h1>
         <p class="sub">${escapeHtml(c.subhead)}</p>
         <a class="cta" href="#contact">${escapeHtml(c.primaryCta)}</a>
+        ${mediaHtml}
       </div></section>`;
+    }
     case 'socialProof': {
       // variant controls which bands render:
       //   'logos-only'     → logo wall, no stats
@@ -139,10 +152,13 @@ function serializeModule(
       return `<section class="section"><div class="wrap">
         <h2>${escapeHtml(c.title)}</h2>
         <div class="grid3" style="margin-top:24px">${(c.items ?? [])
-          .map(
-            (it: any) =>
-              `<div class="card"><h3>${escapeHtml(it.title)}</h3><p class="muted">${escapeHtml(it.body)}</p></div>`,
-          )
+          .map((it: any) => {
+            const bm = resolveMedia(it.media, locale, market);
+            const thumb = bm
+              ? `<div style="aspect-ratio:16/9;width:100%;overflow:hidden;background:#eef1f8;border-radius:var(--radius) var(--radius) 0 0;margin:-20px -20px 16px -20px;width:calc(100% + 40px)">${renderThumbHtml(bm.url, bm.alt ?? it.title)}</div>`
+              : '';
+            return `<div class="card" style="overflow:hidden">${thumb}<h3>${escapeHtml(it.title)}</h3><p class="muted">${escapeHtml(it.body)}</p></div>`;
+          })
           .join('')}</div>
       </div></section>`;
     case 'useCase':
@@ -188,6 +204,59 @@ function serializeModule(
     default:
       return '';
   }
+}
+
+/**
+ * Hero-scale media renderer for the static export. Mirrors PageRenderer's
+ * HeroMedia component — same three branches (hosted video iframe, inline
+ * mp4 video, img) — but emits raw HTML strings because this file powers
+ * `GET /api/projects/:id/export` + Vercel deploy and can't import JSX.
+ *
+ * Branch decision:
+ *   kind === 'video'                 → iframe (YouTube/Vimeo/Loom) or <video> (mp4)
+ *   kind !== 'video' + inline video  → <video loop muted autoplay> (modern-GIF path)
+ *   otherwise                        → <img> (static image or real .gif file)
+ */
+function renderMediaHtml(
+  url: string,
+  alt: string | undefined,
+  kind: string | undefined,
+  poster: string | undefined,
+): string {
+  const safeAlt = escapeHtml(alt ?? '');
+  const frame = 'border-radius:var(--radius);border:1px solid #e6e9f0;width:100%';
+  if (kind === 'video') {
+    const host = detectVideoHost(url);
+    if (host === 'mp4') {
+      return `<video src="${escapeHtml(url)}" ${poster ? `poster="${escapeHtml(poster)}" ` : ''}muted autoplay loop playsinline style="${frame}"></video>`;
+    }
+    const embed =
+      host === 'youtube'
+        ? youtubeEmbedUrl(url)
+        : host === 'vimeo'
+          ? vimeoEmbedUrl(url)
+          : host === 'loom'
+            ? loomEmbedUrl(url)
+            : url;
+    return `<div style="aspect-ratio:16/9;${frame};overflow:hidden"><iframe src="${escapeHtml(embed)}" title="${safeAlt || 'Demo video'}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen loading="lazy" style="width:100%;height:100%;border:0"></iframe></div>`;
+  }
+  if (isInlineLoopingVideo(url)) {
+    return `<video src="${escapeHtml(url)}" muted autoplay loop playsinline aria-label="${safeAlt}" style="${frame}"></video>`;
+  }
+  return `<img src="${escapeHtml(url)}" alt="${safeAlt}" loading="lazy" style="${frame}" />`;
+}
+
+/**
+ * Thumbnail-scale media for Benefits cards. Same GIF/MP4 detection as
+ * `renderMediaHtml`, but always aspect-ratio:16/9 + object-cover so every
+ * card in the grid lines up regardless of source aspect.
+ */
+function renderThumbHtml(url: string, alt: string): string {
+  const safeAlt = escapeHtml(alt);
+  if (isInlineLoopingVideo(url)) {
+    return `<video src="${escapeHtml(url)}" muted autoplay loop playsinline aria-label="${safeAlt}" style="width:100%;height:100%;object-fit:cover;display:block"></video>`;
+  }
+  return `<img src="${escapeHtml(url)}" alt="${safeAlt}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block" />`;
 }
 
 /**

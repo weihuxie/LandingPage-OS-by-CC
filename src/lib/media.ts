@@ -52,3 +52,22 @@ export function loomEmbedUrl(url: string): string {
   const m = url.match(/loom\.com\/share\/([A-Za-z0-9]+)/);
   return m?.[1] ? `https://www.loom.com/embed/${m[1]}` : url;
 }
+
+/**
+ * "Modern GIF" detection: an `.mp4` / `.webm` / `.mov` URL used in a context
+ * where the user chose `image` / `gif` / `logo` (i.e. *not* `video`).
+ *
+ * Why this matters: a raw MP4 file pasted into an image slot used to render
+ * as `<img src="x.mp4">`, which silently does nothing. The industry trick
+ * is to use `<video loop muted autoplay playsinline>` for these files —
+ * same visual effect as a GIF but 10× smaller at the same quality. This
+ * lets us accept MP4 in GIF slots and render it correctly without making
+ * users understand the distinction.
+ *
+ * Returns true for `.mp4` / `.webm` / `.mov` (with optional query string),
+ * and `false` for `.gif` / `.png` / `.jpg` / `.svg` / data URLs / etc.
+ */
+export function isInlineLoopingVideo(url: string | undefined | null): boolean {
+  if (!url) return false;
+  return /\.(mp4|webm|mov)(\?|#|$)/i.test(url);
+}

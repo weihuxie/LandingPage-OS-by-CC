@@ -108,6 +108,13 @@ export default function MediaField({
             onChange={(e) => set({ poster: e.target.value })}
           />
         )}
+        {(value?.kind ?? defaultKind) === 'gif' && (
+          <p className="rounded-md bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-800">
+            💡 提示：贴 <code>.mp4</code> / <code>.webm</code> 外链会自动渲染成
+            无声循环视频（体积约为同等质量 GIF 的 1/10）。真正的{' '}
+            <code>.gif</code> 文件也可以直接上传（≤5MB）。
+          </p>
+        )}
 
         <button
           type="button"
