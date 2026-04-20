@@ -5,6 +5,7 @@ import { unstable_noStore as noStore } from 'next/cache';
 import { getProduct, readLandingPages } from '@/lib/storage';
 import { nativeLabel } from '@/lib/i18n-detect';
 import ProductPagesList from '@/components/ProductPagesList';
+import DeleteButton from '@/components/DeleteButton';
 
 // `revalidate = 0` + noStore() are required in addition to force-dynamic
 // to opt this route's Upstash-backed KV reads out of Next.js 14's
@@ -52,12 +53,34 @@ export default async function ProductDetailPage({
           </div>
           <p className="mt-3 max-w-2xl text-sm text-ink-700">{product.tagline}</p>
         </div>
-        <Link
-          href={`/${params.locale}/new?productId=${product.id}`}
-          className="btn btn-primary"
-        >
-          + 新建落地页
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/${params.locale}/new?productId=${product.id}`}
+            className="btn btn-primary"
+          >
+            + 新建落地页
+          </Link>
+          {/* Destructive action kept in the same strip as create, but
+              styled as a plain-text link so it doesn't compete visually
+              with the primary CTA. Cascade scope is spelled out in the
+              confirm dialog, matching the pattern in ProductCard. */}
+          <DeleteButton
+            endpoint={`/api/products/${product.id}`}
+            confirmTitle={`删除产品「${product.name}」？`}
+            confirmDetail={
+              pages.length > 0
+                ? `会连同以下 ${pages.length} 张落地页一起永久删除：\n` +
+                  pages
+                    .map((p) => `· ${p.name}（${p.availableLocales.join(' · ')}）`)
+                    .join('\n')
+                : '该产品下目前没有落地页。'
+            }
+            onDeletedHref={`/${params.locale}/dashboard`}
+            className="text-sm text-red-600 hover:text-red-700 hover:underline disabled:opacity-50"
+          >
+            删除产品
+          </DeleteButton>
+        </div>
       </div>
 
       <ProductPagesList locale={params.locale} pages={pages} />

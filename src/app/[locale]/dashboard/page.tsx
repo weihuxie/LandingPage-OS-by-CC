@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { readProducts, readLandingPages } from '@/lib/storage';
 import { providerStatus } from '@/lib/llm';
 import { storageBackend } from '@/lib/storage';
+import ProductCard from '@/components/ProductCard';
 
 // `dynamic = 'force-dynamic'` alone was NOT enough.
 //
@@ -97,49 +98,14 @@ export default async function Dashboard({
         </div>
       ) : (
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {products.map((p) => {
-            const myPages = pagesByProduct.get(p.id) ?? [];
-            const published = myPages.filter((pg) => pg.published);
-            const totalViews = myPages.reduce((s, pg) => s + (pg.stats?.views ?? 0), 0);
-            const totalLeads = myPages.reduce((s, pg) => s + (pg.stats?.leads ?? 0), 0);
-            const locales = Array.from(
-              new Set(myPages.flatMap((pg) => pg.availableLocales)),
-            );
-            return (
-              <Link
-                key={p.id}
-                href={`/${locale}/products/${p.id}`}
-                className="card block p-5 transition hover:border-brand-200 hover:shadow-soft"
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="text-sm text-ink-500">{p.category || ' '}</div>
-                    <h3 className="mt-1 text-lg font-semibold">{p.name}</h3>
-                  </div>
-                  <div
-                    className="h-6 w-6 rounded-md"
-                    style={{ background: p.theme.primary }}
-                    aria-hidden
-                  />
-                </div>
-                <p className="mt-2 line-clamp-2 text-sm text-ink-500">{p.tagline}</p>
-                <div className="mt-4 flex flex-wrap gap-1.5 text-xs">
-                  <span className="pill">
-                    📄 {myPages.length} 页面 · {published.length} 已发布
-                  </span>
-                  {locales.length > 0 && (
-                    <span className="pill">🌐 {locales.join(' · ')}</span>
-                  )}
-                </div>
-                <div className="mt-4 flex items-center justify-between text-xs text-ink-500">
-                  <span>
-                    📊 {totalViews.toLocaleString()} UV · {totalLeads.toLocaleString()} leads
-                  </span>
-                  <span className="text-brand-700">打开产品 →</span>
-                </div>
-              </Link>
-            );
-          })}
+          {products.map((p) => (
+            <ProductCard
+              key={p.id}
+              locale={locale}
+              product={p}
+              pages={pagesByProduct.get(p.id) ?? []}
+            />
+          ))}
         </div>
       )}
     </div>

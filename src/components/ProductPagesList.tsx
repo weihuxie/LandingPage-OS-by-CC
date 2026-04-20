@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import type { LandingPage } from '@/lib/types';
 import { nativeLabel } from '@/lib/i18n-detect';
+import DeleteButton from './DeleteButton';
 
 export default function ProductPagesList({
   locale,
@@ -72,6 +73,25 @@ export default function ProductPagesList({
                 >
                   编辑
                 </Link>
+                {/* Per-page delete. Scoped to this single LandingPage —
+                    all locale variants under it go together, which the
+                    confirm dialog states explicitly so users don't
+                    confuse it with "remove one locale tab" (handled
+                    inside the Editor via deleteLocale). */}
+                <DeleteButton
+                  endpoint={`/api/pages/${p.id}`}
+                  confirmTitle={`删除落地页「${p.name}」？`}
+                  confirmDetail={
+                    p.availableLocales.length > 1
+                      ? `该页面的所有语言版本（${p.availableLocales
+                          .map(nativeLabel)
+                          .join(' · ')}）都会被一起清除。`
+                      : undefined
+                  }
+                  className="btn btn-secondary px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+                >
+                  删除
+                </DeleteButton>
               </div>
             </div>
           </div>
