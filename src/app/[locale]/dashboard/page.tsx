@@ -44,15 +44,29 @@ export default async function Dashboard({
         </Link>
       </div>
 
-      {products.length === 0 && (
-        // New-install hint to set keys, only shown before any product exists.
-        llm.claude === 'mock' && (
-          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            <strong>LLM 跑在降级模板上。</strong> 在 Vercel 项目环境变量里加{' '}
-            <code className="rounded bg-white px-1 py-0.5">ANTHROPIC_API_KEY</code>{' '}
-            后重新部署，即可启用真 Claude + prompt caching。
-          </div>
-        )
+      {/* Persistent ops banner whenever critical capabilities are missing.
+          Pre-cleanup this banner was gated on `products.length === 0`, so
+          it disappeared the moment the user created their first product —
+          and the rest of the app silently shipped template output. Now
+          it stays as long as the keys aren't set. */}
+      {llm.claude === 'missing' && (
+        <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+          <strong>ANTHROPIC_API_KEY 未配置。</strong> 生成策略、重新生成文案、添加新语言都会返回 503。请在 Vercel Project Settings → Environment Variables 里加{' '}
+          <code className="rounded bg-white px-1 py-0.5">ANTHROPIC_API_KEY</code>{' '}
+          后重新部署。
+        </div>
+      )}
+      {llm.openai === 'missing' && (
+        <div className="mt-2 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+          <strong>OPENAI_API_KEY 未配置。</strong> 添加新语言的 GPT-4o 本地化pass 会失败，操作被拒绝。
+        </div>
+      )}
+      {storage === 'fs' && (
+        <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <strong>当前用本地文件作为存储。</strong> 如果这是生产环境（Vercel），数据会在 lambda 冷启动时丢失。请配置{' '}
+          <code className="rounded bg-white px-1 py-0.5">KV_REST_API_URL</code> + {' '}
+          <code className="rounded bg-white px-1 py-0.5">KV_REST_API_TOKEN</code>。
+        </div>
       )}
       {products.length === 0 ? (
         <div className="card mt-8 p-10 text-center text-ink-500">
@@ -110,13 +124,25 @@ export default async function Dashboard({
 }
 
 function StatusPill({ label, value }: { label: string; value: string }) {
-  const live = value === 'live';
+  const configured = value === 'configured';
+  // Red-on-missing is intentional. Old styling was neutral grey with the
+  // word "mock", which blended into the UI chrome and let operators
+  // deploy without noticing that half the LLM stack wasn't wired. Red +
+  // "未配置" is the loudest signal short of a full-screen modal.
   return (
     <span
-      className={`pill ${live ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-ink-100 bg-ink-50 text-ink-500'}`}
-      title={live ? 'Real API key configured' : 'Falling back to deterministic templates'}
+      className={`pill ${
+        configured
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          : 'border-red-300 bg-red-50 text-red-800'
+      }`}
+      title={
+        configured
+          ? 'Real API key configured'
+          : 'Key not set — any feature requiring this provider will return 503'
+      }
     >
-      {live ? '🟢' : '⚪️'} {label}：{live ? 'live' : 'mock'}
+      {configured ? '🟢' : '🔴'} {label}：{configured ? '已配置' : '未配置'}
     </span>
   );
 }

@@ -18,10 +18,10 @@
 
 ### 1.1 把代码推到 GitHub
 
-在 `ai-studio/` 目录下：
+在 `LandingPage/` 目录下：
 
 ```bash
-cd "/Applications/claude code/ai-studio"
+cd "/Applications/claude code/LandingPage"
 
 git init
 git add .
@@ -195,7 +195,7 @@ PRD v5.1 §2 的规划就是这个。步骤：
 
 ```bash
 # 1. 初次部署
-cd "/Applications/claude code/ai-studio"
+cd "/Applications/claude code/LandingPage"
 git init && git add . && git commit -m "init"
 git remote add origin git@github.com:you/landingpage-os.git
 git push -u origin main

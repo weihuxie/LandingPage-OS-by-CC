@@ -6,13 +6,16 @@
  *   GPT-4o            → multilingual localization + cultural self-check
  *
  * Keys are platform-hosted (ENV). Users never configure.
- * If a key is missing, the adapter falls back to deterministic templated output
- * (so the app remains fully functional in dev and self-hosted environments).
  *
- * NOTE: strategy generation is wired directly in `ai.ts` via `llm-claude.ts`
- * (bypasses this generic dispatcher so we can use structured-JSON outputs and
- * prompt caching without making this router generic-over-schema). This file
- * remains the entry-point for modules / localization / ingestion.
+ * HISTORY: this dispatcher used to fall back to a `mockAdapter` when a key
+ * was missing, and the whole app was designed around "run on deterministic
+ * templates in dev". That policy produced the "generate regens but returns
+ * wrong-locale template" bug reported by the user — CLAUDE.md §4 now says
+ * fail loud. This file is kept for `providerStatus()` (read by the
+ * dashboard to colour its health strip) but no hot path calls `dispatch()`
+ * anymore: strategy / module-regen / hydrate / localize all go through
+ * `lib/llm-claude.ts` and `lib/llm-openai.ts` directly, which THROW
+ * LLMRequiredError instead of silently returning a mock response.
  */
 
 export type LLMTask =
@@ -114,13 +117,29 @@ export async function dispatch<T>(req: LLMRequest): Promise<LLMResponse<T>> {
 
 // --- Introspection (used by /api/health and admin debug panel) ----------
 
-export function providerStatus() {
+/**
+ * Provider status strings that the dashboard renders as coloured pills.
+ *
+ * 'configured' → key is set; adapter will run.
+ * 'missing'    → key not set; any action that requires this provider
+ *                will throw LLMRequiredError and return 503 to the UI.
+ *
+ * Pre-cleanup this returned 'live' | 'mock'. 'mock' was misleading — it
+ * implied there was a functioning mock mode shipping useful output, but
+ * hot-path callers now throw instead. The dashboard renders 'missing'
+ * in red so an operator who glances at the page knows immediately that
+ * the deployment is half-configured.
+ */
+export type ProviderStatus = 'configured' | 'missing';
+export function providerStatus(): {
+  claude: ProviderStatus;
+  gemini: ProviderStatus;
+  openai: ProviderStatus;
+} {
   const h = hasKey();
   return {
-    // strategy.generate is live when Claude key exists; other Claude tasks
-    // still fall through to templates until each is wired.
-    claude: h.claude ? 'live' : 'mock',
-    gemini: h.gemini ? 'live' : 'mock',
-    openai: h.openai ? 'live' : 'mock',
+    claude: h.claude ? 'configured' : 'missing',
+    gemini: h.gemini ? 'configured' : 'missing',
+    openai: h.openai ? 'configured' : 'missing',
   };
 }

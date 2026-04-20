@@ -1,12 +1,28 @@
 /**
  * Extract concrete facts from free-form user input (pastedContent, URL HTML,
- * uploaded document text). No LLM required — regex + heuristics — but the
- * output shape is the same one the LLM adapters will fill, so swapping in
- * Claude/Gemini later means replacing this function, not the callers.
+ * uploaded document text). The sync regex path is always available; the
+ * async path additionally tries Gemini 1.5 Pro for higher-quality pulls on
+ * long documents.
+ *
+ * Provenance (post-fig-leaf cleanup): ExtractedContext now carries an
+ * `extractor` tag so downstream code and the UI can tell whether the
+ * output came from Gemini or from regex. Pre-cleanup, a silent fall-back
+ * from Gemini to regex was indistinguishable in callers — users couldn't
+ * tell if their pasted whitepaper got the "AI extraction" treatment or a
+ * regex scrape of the same text. `extractor` makes that honest; the UI
+ * can surface a badge and the operator can tell from logs whether their
+ * Gemini key is actually in play.
  */
+
+export type ExtractorEngine = 'regex' | 'gemini';
 
 export interface ExtractedContext {
   sourceKinds: Array<'paste' | 'url' | 'file'>;
+
+  /** Which engine produced this context. */
+  extractor?: ExtractorEngine;
+  /** When extractor='regex' on the async path, why Gemini was skipped. */
+  extractorReason?: string;
 
   // Named customers / company names mentioned
   namedCustomers: string[];
@@ -151,14 +167,16 @@ function extractSummary(text: string): string {
 
 /**
  * Main entry: given some free-form text, produce a structured context.
+ * Always tagged `extractor: 'regex'`.
  */
 export function extractFromText(
   text: string,
   source: 'paste' | 'url' | 'file',
 ): ExtractedContext {
-  if (!text || text.trim().length < 10) return EMPTY;
+  if (!text || text.trim().length < 10) return { ...EMPTY, extractor: 'regex' };
   return {
     sourceKinds: [source],
+    extractor: 'regex',
     namedCustomers: extractNamedCustomers(text),
     metrics: extractMetrics(text),
     features: extractFeatures(text),
@@ -170,31 +188,66 @@ export function extractFromText(
 }
 
 /**
- * Async: try Gemini long-doc ingestion first; fall back to regex.
- * Gemini only engages for text > GEMINI_MIN_CHARS (see llm-gemini.ts) —
- * short pastes aren't worth the round trip.
+ * Async: try Gemini long-doc ingestion first; fall back to regex on known
+ * not-configured conditions.
  *
- * This is the PREFERRED entry point when the caller is already in an async
- * context. The sync extractFromText remains available for truly synchronous
- * paths (none currently; kept for test ergonomics).
+ * Contract:
+ *   - extractor='gemini' when Gemini actually ran and returned data.
+ *   - extractor='regex' when we used regex — either because the text was
+ *     below the Gemini threshold (not worth the call), OR because Gemini
+ *     threw LLMRequiredError (no key configured). In the no-key case we
+ *     set `extractorReason` so the UI / ops logs can distinguish
+ *     "too short to bother" from "production is missing GEMINI_API_KEY".
+ *   - LLMCallError (a real Gemini call failure — HTTP / parse / schema) is
+ *     PROPAGATED, not swallowed. That's the honest signal: a configured
+ *     Gemini that errors out is an ops problem the operator should see,
+ *     not a silent degrade to regex.
  */
 export async function extractFromTextSmart(
   text: string,
   source: 'paste' | 'url' | 'file',
 ): Promise<ExtractedContext> {
-  if (!text || text.trim().length < 10) return EMPTY;
+  if (!text || text.trim().length < 10) return { ...EMPTY, extractor: 'regex' };
   // Lazy-import to keep the module graph light for callers that only use
-  // the sync regex path (e.g. tests). Zero runtime cost when Gemini key
-  // is absent — llm-gemini.ts returns null immediately.
+  // the sync regex path (e.g. tests).
   const { extractViaGemini } = await import('./llm-gemini');
-  const gemini = await extractViaGemini(text, source);
-  if (gemini) return gemini;
-  return extractFromText(text, source);
+  const { LLMRequiredError } = await import('./errors');
+  try {
+    const gemini = await extractViaGemini(text, source);
+    if (gemini) return { ...gemini, extractor: 'gemini' };
+    // null = routing decision (text too short for Gemini). Use regex; tag why.
+    const regex = extractFromText(text, source);
+    return {
+      ...regex,
+      extractorReason: 'text-below-gemini-threshold',
+    };
+  } catch (e) {
+    if (e instanceof LLMRequiredError) {
+      // No Gemini key configured — fall back to regex but record the
+      // reason so the UI can show a subtle badge "using regex (Gemini
+      // key not configured)" instead of pretending this is full-fat AI
+      // extraction.
+      const regex = extractFromText(text, source);
+      return {
+        ...regex,
+        extractorReason: 'gemini-key-missing',
+      };
+    }
+    // LLMCallError and anything else → propagate. A configured Gemini
+    // that errored out is an ops problem that should surface to the
+    // route handler (which will 502), not a silent regex fallback.
+    throw e;
+  }
 }
 
 /**
  * Merge multiple contexts (paste + multiple URLs + multiple files) into one.
  * Deduplicates by string equality; preserves order of first appearance.
+ *
+ * Provenance merge rule: if ANY input used Gemini, the merged context is
+ * tagged 'gemini'. extractorReason is preserved only from the highest-
+ * fidelity input that had one (the Gemini-failure reason is more
+ * actionable than "text-below-threshold" on another input).
  */
 export function mergeContexts(ctxs: ExtractedContext[]): ExtractedContext {
   const dedupe = (arr: string[][]) => {
@@ -211,8 +264,14 @@ export function mergeContexts(ctxs: ExtractedContext[]): ExtractedContext {
   };
   const allSources = new Set<'paste' | 'url' | 'file'>();
   for (const c of ctxs) for (const s of c.sourceKinds) allSources.add(s);
+  const anyGemini = ctxs.some((c) => c.extractor === 'gemini');
+  const firstReason = ctxs
+    .map((c) => c.extractorReason)
+    .find((r): r is string => !!r);
   return {
     sourceKinds: [...allSources],
+    extractor: anyGemini ? 'gemini' : 'regex',
+    ...(firstReason && !anyGemini ? { extractorReason: firstReason } : {}),
     namedCustomers: dedupe(ctxs.map((c) => c.namedCustomers)).slice(0, 10),
     metrics: dedupe(ctxs.map((c) => c.metrics)).slice(0, 10),
     features: dedupe(ctxs.map((c) => c.features)).slice(0, 10),

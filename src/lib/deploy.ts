@@ -1,13 +1,23 @@
 /**
  * Vercel one-click deploy (PRD v5.1 §6).
  *
- * Platform-hosted token via VERCEL_TOKEN env var; users never configure.
- * If the token is missing, returns a mock URL so local/dev flows stay functional.
+ * Platform-hosted token via VC_API_TOKEN env var; users never configure.
+ *
+ * History: this used to return a MOCK URL like `https://slug.mock-vercel.app`
+ * when no VC_API_TOKEN was set, so "deploy" looked like it worked in local
+ * dev without any credentials. In production that path was a 遮羞布: the
+ * user clicked "Deploy", saw `https://slug.mock-vercel.app` open in a new
+ * tab, and couldn't tell whether the deploy was real or fake. Now we
+ * throw DeployRequiredError when the token is missing — the route handler
+ * maps to 503 and the UI surfaces "Deploy requires VC_API_TOKEN" so the
+ * operator knows exactly what's missing. For local-dev sanity, run against
+ * a personal Vercel token rather than relying on a mock fallback.
  *
  * Docs: https://vercel.com/docs/rest-api/endpoints/deployments#create-a-new-deployment
  */
 
 import type { DeployRecord } from './types';
+import { DeployRequiredError } from './errors';
 
 const VERCEL_API = 'https://api.vercel.com';
 
@@ -25,16 +35,9 @@ export async function deployToVercel(input: DeployInput): Promise<DeployResult> 
   const token = process.env.VC_API_TOKEN;
   const teamId = input.teamId ?? process.env.VC_TEAM_ID;
 
-  // Mock mode (no token) — returns a deterministic stub URL so the UX works
-  // end-to-end without real credentials. Real production drops in a token.
+  // Fail loud — no mock fallback. See function header comment.
   if (!token) {
-    return {
-      provider: 'mock',
-      url: `https://${input.slug}.mock-vercel.app`,
-      deploymentId: 'dpl_mock_' + input.slug,
-      deployedAt: Date.now(),
-      status: 'ready',
-    };
+    throw new DeployRequiredError('VC_API_TOKEN');
   }
 
   // Real Vercel deployment

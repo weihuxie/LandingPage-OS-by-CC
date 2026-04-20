@@ -13,7 +13,15 @@
  * through unchanged — their content is either user-authored (testimonials
  * from the asset library) or schema-shaped (form field names).
  *
- * Graceful fallback: null → caller keeps the templated version.
+ * Error policy (post-fig-leaf cleanup):
+ *   - No key → throw LLMRequiredError. Silent "add locale without the
+ *     OpenAI polish pass" used to let generic templates ship as the
+ *     locale's "native" copy; that's the exact fig leaf we removed.
+ *   - Call / parse failure → throw LLMCallError. The route handler maps
+ *     these to 502/503 so the user sees why the add-locale button failed.
+ *   - Module type not in OPENAI_MODULE_TYPES → return null. That's a
+ *     structural routing decision (form / testimonial aren't localized
+ *     via GPT), not a degradation.
  */
 
 import OpenAI from 'openai';
@@ -24,6 +32,7 @@ import type {
   ToneKey,
   ModuleType,
 } from './types';
+import { LLMRequiredError, LLMCallError } from './errors';
 
 export function hasOpenAIKey(): boolean {
   // eslint-disable-next-line dot-notation
@@ -74,8 +83,18 @@ This is NOT translation. It is NATIVE REWRITING. The goal is: if a native speake
 Return a SINGLE JSON object matching the same schema as the input content. No markdown fences, no commentary.`;
 
 /**
- * Localize a single module's content. Returns the full module with a new
- * .content; returns null on failure (caller keeps the templated version).
+ * Localize a single module's content via GPT-4o.
+ *
+ * Returns:
+ *   - PageModule with rewritten content on success.
+ *   - null ONLY when the module type isn't one we route through GPT
+ *     (form, testimonial, socialProof, faq — these are user-authored
+ *     from the asset library). Routing, not failure.
+ *
+ * Throws:
+ *   - LLMRequiredError('localize-gpt', 'OPENAI_API_KEY') when no key.
+ *   - LLMCallError('gpt', 'localize-gpt', cause) on empty response,
+ *     malformed JSON, or SDK errors.
  */
 export async function localizeModuleViaGpt(
   module: PageModule,
@@ -83,7 +102,10 @@ export async function localizeModuleViaGpt(
   market: MarketCode,
   tone: ToneKey,
 ): Promise<PageModule | null> {
-  if (!hasOpenAIKey()) return null;
+  if (!hasOpenAIKey()) {
+    throw new LLMRequiredError('localize-gpt', 'OPENAI_API_KEY');
+  }
+  // "Not my job" — caller keeps the source module unchanged.
   if (!OPENAI_MODULE_TYPES.has(module.type)) return null;
 
   const client = new OpenAI();
@@ -111,9 +133,23 @@ export async function localizeModuleViaGpt(
       response_format: { type: 'json_object' },
     });
     const text = resp.choices[0]?.message?.content;
-    if (!text) return null;
+    if (!text) {
+      throw new LLMCallError(
+        'gpt',
+        'localize-gpt',
+        undefined,
+        `GPT-4o returned empty content for ${module.type} → ${toLocale}`,
+      );
+    }
     const parsed = JSON.parse(text);
-    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed || typeof parsed !== 'object') {
+      throw new LLMCallError(
+        'gpt',
+        'localize-gpt',
+        undefined,
+        `GPT-4o returned non-object for ${module.type} → ${toLocale}: ${text.slice(0, 200)}`,
+      );
+    }
 
     // Merge — preserve fields GPT might not have returned (media, layout,
     // bullets arrays if they came back wrong length, etc.)
@@ -122,21 +158,29 @@ export async function localizeModuleViaGpt(
       content: { ...(module.content as any), ...parsed },
     };
   } catch (e: any) {
+    if (e instanceof LLMCallError || e instanceof LLMRequiredError) throw e;
     console.error(
       `[openai] localize failed (${module.type} → ${toLocale}):`,
       e?.message ?? e,
     );
-    return null;
+    throw new LLMCallError('gpt', 'localize-gpt', e);
   }
 }
 
 /**
- * Parallel-localize a list of modules. Modules we don't route (form, etc.)
- * pass through unchanged. Failures per-module fall back to the templated
- * version.
+ * Parallel-localize a list of modules.
  *
- * Runs in parallel via Promise.all — a full variant is ~5 localizable
- * modules, so even with 2s/call we're bound by the slowest, not the sum.
+ * Throws:
+ *   - LLMRequiredError('localize-gpt', 'OPENAI_API_KEY') when no key.
+ *     The previous silent pass-through (returning the source modules
+ *     unchanged when no key was configured) is the fig leaf: it made
+ *     "add Japanese locale" appear to succeed while the output was
+ *     still the English/default-locale template. Now the route handler
+ *     returns 503 and the UI surfaces the missing-key state.
+ *   - Propagates LLMCallError from individual module calls. Promise.all
+ *     short-circuits on first rejection — intentional: if one module
+ *     fails we want the whole add-locale to fail loud rather than ship
+ *     a half-localized page.
  */
 export async function localizeModulesViaGpt(
   modules: PageModule[],
@@ -144,10 +188,15 @@ export async function localizeModulesViaGpt(
   market: MarketCode,
   tone: ToneKey,
 ): Promise<PageModule[]> {
-  if (!hasOpenAIKey()) return modules;
+  if (!hasOpenAIKey()) {
+    throw new LLMRequiredError('localize-gpt', 'OPENAI_API_KEY');
+  }
   return Promise.all(
     modules.map(async (m) => {
       const localized = await localizeModuleViaGpt(m, toLocale, market, tone);
+      // null = module type not routed through GPT (form / testimonial /
+      // etc.); keep source unchanged. Not a degradation — those modules
+      // are user-authored from the asset library.
       return localized ?? m;
     }),
   );

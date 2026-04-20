@@ -22,9 +22,19 @@ type Props = {
   module: PageModule;
   onChange: (patch: Partial<PageModule>) => void;
   onRegenerate: () => void;
+  // When Claude isn't configured (no ANTHROPIC_API_KEY), the regenerate
+  // button is greyed out + carries a tooltip instead of letting the user
+  // click and then see a 503 banner. Undefined = no gating info from
+  // parent (treat as "allow" — backward compat).
+  regenerateDisabledReason?: string | null;
 };
 
-export default function ModuleEditor({ module, onChange, onRegenerate }: Props) {
+export default function ModuleEditor({
+  module,
+  onChange,
+  onRegenerate,
+  regenerateDisabledReason,
+}: Props) {
   const t = useTranslations();
 
   const setContent = (c: any) => onChange({ content: c });
@@ -41,8 +51,10 @@ export default function ModuleEditor({ module, onChange, onRegenerate }: Props) 
         </div>
       </div>
       <button
-        className="btn btn-secondary w-full text-xs"
+        className="btn btn-secondary w-full text-xs disabled:cursor-not-allowed disabled:opacity-50"
         onClick={onRegenerate}
+        disabled={!!regenerateDisabledReason}
+        title={regenerateDisabledReason ?? undefined}
       >
         ↻ {t('editor.regenerateCopy')}
       </button>

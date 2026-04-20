@@ -19,6 +19,13 @@ import { extractSiteContent } from '@/lib/brand';
 import { reportHeroTemplate } from '@/lib/template-detection';
 import { defaultStyleForMarket } from '@/lib/styles';
 import { makeSlug } from '@/lib/slug';
+import {
+  errorResponse,
+  LLMRequiredError,
+  LLMCallError,
+  StorageRequiredError,
+  DeployRequiredError,
+} from '@/lib/errors';
 import type {
   LandingPage,
   Product,
@@ -42,6 +49,28 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  try {
+    return await postImpl(req);
+  } catch (e) {
+    // Outer net for typed errors that escape the nested try/catches —
+    // primarily StorageRequiredError from the first readProducts() call
+    // (happens BEFORE any existing save-failure catch). Also handles
+    // LLM errors that somehow bubble up without being caught locally.
+    // Unknown errors rethrow so Next.js does its own 500 rendering.
+    if (
+      e instanceof LLMRequiredError ||
+      e instanceof LLMCallError ||
+      e instanceof StorageRequiredError ||
+      e instanceof DeployRequiredError
+    ) {
+      const { status, body } = errorResponse(e);
+      return NextResponse.json(body, { status });
+    }
+    throw e;
+  }
+}
+
+async function postImpl(req: NextRequest) {
   const body = (await req.json()) as {
     inputs: ProductInputs;
     strategy?: StrategySummary;
@@ -76,7 +105,23 @@ export async function POST(req: NextRequest) {
   }
   const context = ctxs.length ? mergeContexts(ctxs) : undefined;
 
-  const strategy = body.strategy ?? (await generateStrategy(body.inputs, context));
+  // Strategy — if the caller didn't provide one, we MUST generate via Claude.
+  // Failure here is terminal: without a strategy the rest of the pipeline
+  // produces meaningless output, so we return 503 instead of silently
+  // dropping to generateStrategyTemplated. Pre-fig-leaf cleanup this call
+  // used to fall through to template bullets and the user never knew.
+  let strategy: StrategySummary;
+  if (body.strategy) {
+    strategy = body.strategy;
+  } else {
+    try {
+      strategy = await generateStrategy(body.inputs, context);
+    } catch (e) {
+      console.error('[projects] strategy generation failed:', e);
+      const { status, body: errBody } = errorResponse(e);
+      return NextResponse.json(errBody, { status });
+    }
+  }
   // Generate templated variants synchronously. Claude enrichment happens
   // AFTER the first save — see the save-first-enrich-after pattern below.
   const variants = generateVariants(body.inputs, tone, strategy, context);
@@ -198,9 +243,14 @@ export async function POST(req: NextRequest) {
   }
 
   // --- SECOND SAVE (best-effort): enrich modules via Claude -------------
-  // If this times out or throws, the first save stands and the user sees
-  // templated copy in the editor. They can still hit "regenerate" on any
-  // module to re-attempt the Claude call per-module.
+  // Page is already persisted with templates above. If hydration fails
+  // (no API key, timeout, Claude 502, malformed JSON) we DO NOT hide
+  // the failure — we persist hydrationFailed=true AND return a structured
+  // `warning` the UI renders as a red banner. Returning 200 with the
+  // pageId is still correct: the user's page exists and is editable;
+  // we just couldn't enrich it. The warning tells them why so they can
+  // fix the key and click regenerate per-module.
+  let hydrationWarning: ReturnType<typeof errorResponse>['body'] | null = null;
   try {
     const enriched = await hydrateModulesViaClaude(
       { A: variants.A, B: variants.B },
@@ -212,19 +262,23 @@ export async function POST(req: NextRequest) {
     page.variants.A[body.inputs.locale] = enriched.A;
     page.variants.B[body.inputs.locale] = enriched.B;
   } catch (e) {
-    console.error('[projects] Claude enrichment failed; template content stays:', e);
+    console.error('[projects] Claude enrichment failed:', e);
+    if (e instanceof LLMRequiredError || e instanceof LLMCallError) {
+      hydrationWarning = errorResponse(e).body;
+    } else {
+      hydrationWarning = errorResponse(e).body; // unknown → generic internal
+    }
   }
 
   // --- Template-residue check ------------------------------------------
-  // Whether or not hydrateModulesViaClaude threw, walk the saved variants
-  // and see if the hero headline / bullets still match ai.ts's known
-  // fallback strings. If BOTH variants still look like templates, mark
-  // the page so the editor shows a warning and deploy can refuse.
-  // Silent degradation was the single biggest quality hole — see
-  // CLAUDE.md §4 and the user-reported "3.8 倍 ROI" incident.
+  // Also run the hero-template heuristic so a Claude "success" that still
+  // produced template-looking output (schema matched but content was
+  // literally the L[locale] default) is caught too. If Claude threw
+  // above, hydrationWarning is already set; this check only adds the
+  // flag for the "success-but-still-template" case.
   const heroReportA = reportHeroTemplate(page.variants.A[body.inputs.locale] ?? [], body.inputs.name);
   const heroReportB = reportHeroTemplate(page.variants.B[body.inputs.locale] ?? [], body.inputs.name);
-  page.hydrationFailed = heroReportA.anyTemplate && heroReportB.anyTemplate;
+  page.hydrationFailed = !!hydrationWarning || (heroReportA.anyTemplate && heroReportB.anyTemplate);
   try {
     await saveLandingPage(page);
   } catch (e) {
@@ -233,5 +287,12 @@ export async function POST(req: NextRequest) {
     console.error('[projects] saveLandingPage (enrichment save) failed:', e);
   }
 
-  return NextResponse.json({ id: page.id, slug: page.slug, productId: product.id });
+  return NextResponse.json({
+    id: page.id,
+    slug: page.slug,
+    productId: product.id,
+    // Present only when hydration failed. Frontend renders a dismissible
+    // red banner tied to this field (see Editor.tsx hydration-warning UI).
+    ...(hydrationWarning ? { warning: hydrationWarning } : {}),
+  });
 }

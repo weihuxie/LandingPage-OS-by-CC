@@ -11,6 +11,13 @@ import { extractFromTextSmart, mergeContexts } from '@/lib/extract';
 import { extractSiteContent } from '@/lib/brand';
 import { defaultStyleForMarket } from '@/lib/styles';
 import { makeSlug } from '@/lib/slug';
+import {
+  errorResponse,
+  LLMRequiredError,
+  LLMCallError,
+  StorageRequiredError,
+} from '@/lib/errors';
+import { reportHeroTemplate } from '@/lib/template-detection';
 import type {
   LandingPage,
   MarketCode,
@@ -34,7 +41,23 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
  * Create a new LandingPage under a product.
  * Generates the primary language variants; other languages added separately.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
+  try {
+    return await postImpl(req, ctx);
+  } catch (e) {
+    if (
+      e instanceof LLMRequiredError ||
+      e instanceof LLMCallError ||
+      e instanceof StorageRequiredError
+    ) {
+      const { status, body } = errorResponse(e);
+      return NextResponse.json(body, { status });
+    }
+    throw e;
+  }
+}
+
+async function postImpl(req: NextRequest, { params }: { params: { id: string } }) {
   const product = await getProduct(params.id);
   if (!product) return NextResponse.json({ error: 'product not found' }, { status: 404 });
 
@@ -84,7 +107,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     } catch {}
   }
 
-  const strategy = await generateStrategy(inputs, context);
+  // Strategy generation — Claude only (no template fallback). If Claude
+  // is not configured or the call fails, we return 503 instead of silently
+  // shipping a generic SaaS-playbook strategy. The product is not created
+  // in this branch; the client retries after fixing the key.
+  let strategy;
+  try {
+    strategy = await generateStrategy(inputs, context);
+  } catch (e) {
+    console.error('[products/pages] strategy generation failed:', e);
+    const { status, body: errBody } = errorResponse(e);
+    return NextResponse.json(errBody, { status });
+  }
   // Templated variants first — Claude enrichment runs AFTER the first save
   // below, so a Vercel timeout during Claude calls can't lose the product.
   const variants = generateVariants(inputs, tone, strategy, context);
@@ -173,7 +207,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   // --- SECOND SAVE (best-effort): enrich via Claude --------------------
   // Same pattern as /api/projects — if Claude times out or errors, the
-  // templated page from the first save remains usable in the editor.
+  // templated page from the first save remains usable. We mark
+  // hydrationFailed=true, persist, and return a structured `warning` in
+  // the response so the editor shows a red banner instead of pretending
+  // the AI ran.
+  let hydrationWarning: ReturnType<typeof errorResponse>['body'] | null = null;
   try {
     const enriched = await hydrateModulesViaClaude(
       { A: variants.A, B: variants.B },
@@ -184,10 +222,28 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
     page.variants.A[body.defaultLocale] = enriched.A;
     page.variants.B[body.defaultLocale] = enriched.B;
-    await saveLandingPage(page);
   } catch (e) {
-    console.error('[products/pages] Claude enrichment failed; template content stays:', e);
+    console.error('[products/pages] Claude enrichment failed:', e);
+    if (e instanceof LLMRequiredError || e instanceof LLMCallError) {
+      hydrationWarning = errorResponse(e).body;
+    } else {
+      hydrationWarning = errorResponse(e).body;
+    }
   }
 
-  return NextResponse.json({ page });
+  // Same hero-template heuristic as /api/projects: a Claude "success" that
+  // still produced template-looking hero copy gets flagged too.
+  const heroReportA = reportHeroTemplate(page.variants.A[body.defaultLocale] ?? [], product.name);
+  const heroReportB = reportHeroTemplate(page.variants.B[body.defaultLocale] ?? [], product.name);
+  page.hydrationFailed = !!hydrationWarning || (heroReportA.anyTemplate && heroReportB.anyTemplate);
+  try {
+    await saveLandingPage(page);
+  } catch (e) {
+    console.error('[products/pages] saveLandingPage (enrichment save) failed:', e);
+  }
+
+  return NextResponse.json({
+    page,
+    ...(hydrationWarning ? { warning: hydrationWarning } : {}),
+  });
 }

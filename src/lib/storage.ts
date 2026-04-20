@@ -13,6 +13,7 @@ import path from 'path';
 import { kv } from '@vercel/kv';
 import type { Project, Lead, AssetLibrary, Product, LandingPage, Brand } from './types';
 import { migrateProjectToV2, projectViewFromV2 } from './migrate-v2';
+import { StorageRequiredError } from './errors';
 
 /**
  * CRITICAL: Detect KV availability at RUNTIME, not build time.
@@ -27,6 +28,24 @@ import { migrateProjectToV2, projectViewFromV2 } from './migrate-v2';
 function useKV(): boolean {
   // eslint-disable-next-line dot-notation
   return !!process.env['KV_REST_API_URL'] && !!process.env['KV_REST_API_TOKEN'];
+}
+
+/**
+ * On Vercel, `/tmp/.data` is PER-LAMBDA and ephemeral: writes succeed then
+ * disappear on next cold start. The old `DATA_DIR = ... /tmp/.data` fallback
+ * was a 遮羞布 — "local dev works, Vercel probably works too" — that let
+ * operators deploy to prod without KV and find out days later that half
+ * their data was gone. We now refuse the FS path on Vercel. Local dev
+ * (VERCEL !== '1') still writes to `.data/` unchanged.
+ */
+function isVercel(): boolean {
+  // eslint-disable-next-line dot-notation
+  return process.env['VERCEL'] === '1';
+}
+function assertStorageOk(): void {
+  if (isVercel() && !useKV()) {
+    throw new StorageRequiredError();
+  }
 }
 
 // --- KV reliability helpers -------------------------------------------
@@ -152,6 +171,7 @@ async function ensureFsDir() {
 }
 
 async function readFs<T>(key: string, fallback: T): Promise<T> {
+  assertStorageOk(); // refuse FS path on Vercel — see isVercel/useKV note
   await ensureFsDir();
   const file = fsPath(key);
   try {
@@ -163,6 +183,7 @@ async function readFs<T>(key: string, fallback: T): Promise<T> {
 }
 
 async function writeFs<T>(key: string, value: T): Promise<void> {
+  assertStorageOk(); // refuse FS path on Vercel — see isVercel/useKV note
   await ensureFsDir();
   const file = fsPath(key);
   await fs.writeFile(file, JSON.stringify(value, null, 2), 'utf8');

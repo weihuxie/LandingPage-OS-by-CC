@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "ai-studio",
+      "name": "LandingPage",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "cwd": "/Applications/claude code/ai-studio",
+      "cwd": "/Applications/claude code/LandingPage",
       "port": 3000
     }
   ]

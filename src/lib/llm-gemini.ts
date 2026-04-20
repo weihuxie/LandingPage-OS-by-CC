@@ -10,12 +10,22 @@
  * caller (strategy generation, product-page POST, projects POST) consumes
  * it without change.
  *
- * Graceful fallback: if key is missing, or the call fails, or the response
- * doesn't parse, return null. Caller falls back to the regex extractor.
+ * Error policy (post-fig-leaf cleanup):
+ *   - No key → throw LLMRequiredError('extract', 'GEMINI_API_KEY'). The
+ *     orchestrator in extract.ts catches this specifically and logs /
+ *     tags the output source as "regex" so the UI can surface that
+ *     Gemini wasn't consulted. Silent null-on-no-key was cheap but it
+ *     meant the operator could deploy to prod without a Gemini key and
+ *     never notice that long-document ingestion was degraded.
+ *   - Text below GEMINI_MIN_CHARS → return null. That's intentional
+ *     routing ("regex is fine for short texts"), not degradation.
+ *   - API / parse failure → throw LLMCallError so the route handler
+ *     reports a 502 instead of silently dropping to regex.
  */
 
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import type { ExtractedContext } from './extract';
+import { LLMRequiredError, LLMCallError } from './errors';
 
 export function hasGeminiKey(): boolean {
   // eslint-disable-next-line dot-notation
@@ -88,7 +98,11 @@ export async function extractViaGemini(
   text: string,
   source: 'paste' | 'url' | 'file',
 ): Promise<ExtractedContext | null> {
-  if (!hasGeminiKey()) return null;
+  if (!hasGeminiKey()) {
+    throw new LLMRequiredError('extract', 'GEMINI_API_KEY');
+  }
+  // Routing decision — short texts don't benefit from Gemini; return null
+  // and the caller uses regex. Not a failure.
   if (!text || text.length < GEMINI_MIN_CHARS) return null;
 
   // eslint-disable-next-line dot-notation
@@ -112,7 +126,14 @@ export async function extractViaGemini(
     const parsed = JSON.parse(raw);
 
     // Minimal validation — schema guards most of this, but be defensive.
-    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed || typeof parsed !== 'object') {
+      throw new LLMCallError(
+        'gemini',
+        'extract',
+        undefined,
+        `Gemini returned non-object for ${source}: ${raw.slice(0, 200)}`,
+      );
+    }
 
     return {
       sourceKinds: [source],
@@ -127,7 +148,8 @@ export async function extractViaGemini(
       textLength: text.length,
     };
   } catch (e: any) {
+    if (e instanceof LLMCallError || e instanceof LLMRequiredError) throw e;
     console.error('[gemini] extract failed:', e?.message ?? e);
-    return null;
+    throw new LLMCallError('gemini', 'extract', e);
   }
 }

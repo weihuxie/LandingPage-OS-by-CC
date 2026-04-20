@@ -30,6 +30,13 @@ import type {
 } from '@/lib/types';
 import { projectViewFromV2 } from '@/lib/migrate-v2';
 import { reportHeroTemplate } from '@/lib/template-detection';
+import {
+  errorResponse,
+  LLMRequiredError,
+  LLMCallError,
+  StorageRequiredError,
+  DeployRequiredError,
+} from '@/lib/errors';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -42,7 +49,24 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
   return NextResponse.json({ project });
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
+  try {
+    return await patchImpl(req, ctx);
+  } catch (e) {
+    if (
+      e instanceof LLMRequiredError ||
+      e instanceof LLMCallError ||
+      e instanceof StorageRequiredError ||
+      e instanceof DeployRequiredError
+    ) {
+      const { status, body } = errorResponse(e);
+      return NextResponse.json(body, { status });
+    }
+    throw e;
+  }
+}
+
+async function patchImpl(req: NextRequest, { params }: { params: { id: string } }) {
   const page = await getLandingPage(params.id);
   if (!page) return NextResponse.json({ error: 'not found' }, { status: 404 });
   const product = await getProduct(page.productId);
@@ -97,53 +121,68 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     uploadedFileNames: [],
   };
 
-  if (body.editStrategy) page.strategy = body.editStrategy;
-  if (body.regenerateStrategyAll) page.strategy = await generateStrategy(inputs);
-  else if (body.regenerateStrategyBlock) {
-    const fresh = await generateStrategy(inputs);
-    const key = body.regenerateStrategyBlock as StrategyBlock;
-    page.strategy = { ...page.strategy, [key]: fresh[key] };
-  } else if (body.regenerateStrategyLine) {
-    const { block, index } = body.regenerateStrategyLine as { block: StrategyBlock; index: number };
-    const fresh = await generateStrategy(inputs);
-    const next = [...page.strategy[block]];
-    if (fresh[block][index] !== undefined) next[index] = fresh[block][index];
-    page.strategy = { ...page.strategy, [block]: next };
-  }
-
-  if (body.rebuildVariantsFromStrategy) {
-    const fresh = generateVariants(inputs, page.tone, page.strategy);
-    page.variants.A[page.defaultLocale] = fresh.A;
-    page.variants.B[page.defaultLocale] = fresh.B;
-  }
-
-  if (body.switchVariant) page.activeVariant = body.switchVariant;
-
-  if (body.newStyleId) {
-    page.theme = { ...page.theme, styleId: body.newStyleId };
-  }
-
-  if (body.regenerateModuleId) {
-    const v = page.activeVariant;
-    // Regenerate in the locale slot the user is actually viewing — NOT
-    // always the defaultLocale. Before this fix, clicking 重新生成 while
-    // on the 日本語 tab regenerated the zh-CN slot in Chinese and the ja
-    // slot was never touched — so the Japanese tab ended up displaying
-    // Chinese copy, and the module IDs shifted under the client's feet.
-    const mods = page.variants[v][targetLocale] ?? [];
-    const idx = mods.findIndex((m) => m.id === body.regenerateModuleId);
-    if (idx !== -1) {
-      const tone = body.newTone ?? page.tone;
-      mods[idx] = await regenerateModule(
-        mods[idx],
-        inputs,
-        tone,
-        page.strategy,
-        targetLocale,
-      );
-      page.variants[v][targetLocale] = mods;
-      if (body.newTone) page.tone = tone;
+  // All LLM-touching branches share this try/catch: any of them can throw
+  // LLMRequiredError (missing key) or LLMCallError (API / parse / schema).
+  // Before this was added, a regenerate on the 日本語 tab with no API key
+  // fell through to the JA template which inlined the Chinese product
+  // value verbatim — the reported bug. Now the route returns 503 / 502
+  // with a structured body and the editor shows a visible error banner.
+  try {
+    if (body.editStrategy) page.strategy = body.editStrategy;
+    if (body.regenerateStrategyAll) page.strategy = await generateStrategy(inputs);
+    else if (body.regenerateStrategyBlock) {
+      const fresh = await generateStrategy(inputs);
+      const key = body.regenerateStrategyBlock as StrategyBlock;
+      page.strategy = { ...page.strategy, [key]: fresh[key] };
+    } else if (body.regenerateStrategyLine) {
+      const { block, index } = body.regenerateStrategyLine as { block: StrategyBlock; index: number };
+      const fresh = await generateStrategy(inputs);
+      const next = [...page.strategy[block]];
+      if (fresh[block][index] !== undefined) next[index] = fresh[block][index];
+      page.strategy = { ...page.strategy, [block]: next };
     }
+
+    if (body.rebuildVariantsFromStrategy) {
+      const fresh = generateVariants(inputs, page.tone, page.strategy);
+      page.variants.A[page.defaultLocale] = fresh.A;
+      page.variants.B[page.defaultLocale] = fresh.B;
+    }
+
+    if (body.switchVariant) page.activeVariant = body.switchVariant;
+
+    if (body.newStyleId) {
+      page.theme = { ...page.theme, styleId: body.newStyleId };
+    }
+
+    if (body.regenerateModuleId) {
+      const v = page.activeVariant;
+      // Regenerate in the locale slot the user is actually viewing — NOT
+      // always the defaultLocale. Before this fix, clicking 重新生成 while
+      // on the 日本語 tab regenerated the zh-CN slot in Chinese and the ja
+      // slot was never touched — so the Japanese tab ended up displaying
+      // Chinese copy, and the module IDs shifted under the client's feet.
+      const mods = page.variants[v][targetLocale] ?? [];
+      const idx = mods.findIndex((m) => m.id === body.regenerateModuleId);
+      if (idx !== -1) {
+        const tone = body.newTone ?? page.tone;
+        mods[idx] = await regenerateModule(
+          mods[idx],
+          inputs,
+          tone,
+          page.strategy,
+          targetLocale,
+        );
+        page.variants[v][targetLocale] = mods;
+        if (body.newTone) page.tone = tone;
+      }
+    }
+  } catch (e) {
+    if (e instanceof LLMRequiredError || e instanceof LLMCallError) {
+      console.error('[projects/[id]] LLM call failed:', e);
+      const { status, body: errBody } = errorResponse(e);
+      return NextResponse.json(errBody, { status });
+    }
+    throw e; // non-LLM error: let Next.js default 500 handler deal with it
   }
 
   if (body.modules) {

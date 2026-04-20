@@ -86,6 +86,12 @@ export default function Wizard({ locale }: Props) {
   const [inputs, setInputs] = useState<ProductInputs>(draft?.inputs ?? defaultInputs(locale));
   const [refUrl, setRefUrl] = useState('');
   const [strategy, setStrategy] = useState<StrategySummary | null>(draft?.strategy ?? null);
+  // 'claude' when /api/strategy succeeded via real LLM.
+  // 'template' when the user opted in to the deterministic template
+  // strategy after the claude path returned 503 (no ANTHROPIC_API_KEY).
+  // Drives the "模板策略（未经 Claude）" banner on the review step so
+  // users know the strategy they're editing isn't AI-generated.
+  const [strategyMode, setStrategyMode] = useState<'claude' | 'template' | null>(null);
   const [extractedContext, setExtractedContext] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [brandProbe, setBrandProbe] = useState<{
@@ -122,8 +128,68 @@ export default function Wizard({ locale }: Props) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ inputs, fileContexts }),
       });
+      if (!res.ok) {
+        // 503 LLM_REQUIRED / 502 LLM_CALL_FAILED. Pre-cleanup the wizard
+        // silently dropped to a template strategy on any failure; now
+        // we stop the wizard cold so the user sees exactly what's
+        // misconfigured — AND give them an explicit opt-in to continue
+        // with a template strategy. Either path makes the outcome visible
+        // (wizard banner + editor banner) so the user can't confuse
+        // template output with AI output.
+        let msg = `HTTP ${res.status}`;
+        let missing: string | undefined;
+        let code: string | undefined;
+        try {
+          const body = await res.json();
+          msg = body?.message ?? msg;
+          missing = body?.missing;
+          code = body?.code;
+        } catch {}
+
+        // For LLM_REQUIRED (key missing), offer the template fallback.
+        // For LLM_CALL_FAILED (configured but errored) we don't —
+        // that's a transient problem where retry is the right answer,
+        // template would paper over the real issue.
+        if (code === 'LLM_REQUIRED') {
+          const proceed = window.confirm(
+            `Claude 未配置（${missing ?? 'ANTHROPIC_API_KEY'}）。\n\n` +
+              `可以先用「模板策略」建出来 —— 策略不是 AI 写的、是通用套路，` +
+              `但产品信息会被保存。进编辑器后可以改，配置 Key 后点击任意模块的「重新生成」即可让 Claude 接手。\n\n` +
+              `确定用模板策略继续？`,
+          );
+          if (!proceed) {
+            setLoading(false);
+            return;
+          }
+          const tmplRes = await fetch('/api/strategy', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ inputs, fileContexts, mode: 'template' }),
+          });
+          if (!tmplRes.ok) {
+            setLoading(false);
+            alert('即使用模板策略也失败了。请重试或检查控制台。');
+            return;
+          }
+          const data = await tmplRes.json();
+          setStrategy(data.strategy);
+          setStrategyMode('template');
+          setExtractedContext(data.context ?? null);
+          setLoading(false);
+          setStep((s) => Math.min(totalSteps - 1, s + 1));
+          return;
+        }
+
+        setLoading(false);
+        alert(
+          `策略生成失败：${msg}${missing ? `\n缺少配置：${missing}` : ''}\n\n` +
+            `检查控制台或 Vercel 日志；修好后回到第 3 步再试。`,
+        );
+        return;
+      }
       const data = await res.json();
       setStrategy(data.strategy);
+      setStrategyMode(data.mode ?? 'claude');
       setExtractedContext(data.context ?? null);
       setLoading(false);
     }
@@ -262,8 +328,14 @@ export default function Wizard({ locale }: Props) {
         try {
           const errBody = await res.json();
           if (errBody?.pageId) maybePageId = errBody.pageId;
+          // The structured error body may carry `code` / `missing` from
+          // lib/errors.ts (LLM_REQUIRED / DEPLOY_REQUIRED / ...) OR the
+          // older `stage` field from the two-save save-failures. Read
+          // both so the user sees the most actionable info available.
+          const codeLine = errBody?.code ? `[${errBody.code}]` : '';
+          const missingLine = errBody?.missing ? ` 缺少 ${errBody.missing}` : '';
           const stage = errBody?.stage ? `（${errBody.stage}）` : '';
-          detail = `${stage}${errBody?.message ?? ''}`.trim();
+          detail = `${codeLine}${stage}${errBody?.message ?? ''}${missingLine}`.trim();
           if (errBody?.productId) detail += `\n产品 ID: ${errBody.productId}`;
           if (errBody?.pageId) detail += `\n页面 ID: ${errBody.pageId}`;
         } catch {
@@ -605,6 +677,17 @@ export default function Wizard({ locale }: Props) {
               <h2 className="text-lg font-semibold">{t('wizard.step4.title')}</h2>
               <p className="text-sm text-ink-500">{t('wizard.step4.desc')}</p>
             </div>
+            {strategyMode === 'template' && (
+              <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                <div className="font-medium">📋 当前是「模板策略」，不是 Claude 写的</div>
+                <p className="mt-1 leading-relaxed">
+                  你选择了用通用 SaaS 策略模板继续。下面的 4 段都是套路化的，
+                  不针对你的具体产品。进编辑器后可以随时改；配置{' '}
+                  <code className="rounded bg-white px-1 py-0.5">ANTHROPIC_API_KEY</code>{' '}
+                  后点任意模块的「重新生成」即可让 Claude 按你的产品输入重写。
+                </p>
+              </div>
+            )}
             {extractedContext && extractedContext.textLength > 0 && (
               <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-4">
                 <div className="mb-2 flex items-center gap-2 text-xs font-medium text-brand-700">

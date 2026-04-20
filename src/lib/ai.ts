@@ -12,6 +12,7 @@ import type {
 import { nanoid } from 'nanoid';
 import type { ExtractedContext } from './extract';
 import { generateStrategyViaClaude, regenerateModuleViaClaude } from './llm-claude';
+import { findTemplateModules } from './template-detection';
 
 /**
  * Guard against users pasting a multi-paragraph "core value" into the hero
@@ -311,24 +312,31 @@ const marketStrategyText = (market: MarketCode, locale: LocaleCode): string[] =>
 // --- Strategy generator -------------------------------------------------
 
 /**
- * Async entry: try Claude (real API with prompt caching) first.
- * If the API key is missing OR the call fails, fall back to the deterministic
- * templated generator — the rest of the pipeline never sees the difference.
+ * Strategy generation — Claude only. No template fallback.
  *
- * All existing callers should `await generateStrategy(...)`.
+ * History: this function used to auto-fall-back to generateStrategyTemplated
+ * when no ANTHROPIC_API_KEY was set, which meant the product shipped generic
+ * SaaS-playbook strategy under the "AI-generated strategy" label. The user
+ * called that a 遮羞布 (fig leaf). Now the adapter throws LLMRequiredError /
+ * LLMCallError and this function propagates — the route handler maps to
+ * 503/502 with a structured body so the UI can surface WHY strategy
+ * generation failed instead of pretending it succeeded.
+ *
+ * generateStrategyTemplated is still exported for tests and for callers
+ * who explicitly OPT IN to template output (e.g. seed data). It is no
+ * longer reached automatically.
  */
 export async function generateStrategy(
   inputs: ProductInputs,
   context?: ExtractedContext,
 ): Promise<StrategySummary> {
-  const live = await generateStrategyViaClaude(inputs, context);
-  if (live) return live;
-  return generateStrategyTemplated(inputs, context);
+  return generateStrategyViaClaude(inputs, context);
 }
 
 /**
- * Deterministic template-based strategy — used as fallback when Claude is
- * unavailable and kept exported for tests / offline dev.
+ * Deterministic template-based strategy. Exported for tests / seed data /
+ * explicit template-mode callers. NOT invoked automatically on LLM failure
+ * anymore — see generateStrategy doc comment.
  */
 export function generateStrategyTemplated(
   inputs: ProductInputs,
@@ -1047,9 +1055,21 @@ export function seedVideoEmbed(inputs: ProductInputs) {
 // --- Regenerate copy (per-module) --------------------------------------
 
 /**
- * Async: try Claude for the 5 text-heavy modules (hero/pain/benefits/solution/
- * cta), otherwise fall through to the template path. Caller must pass the
- * current page strategy + locale so Claude has the context it needs.
+ * Regenerate a module. Claude handles the 5 text-heavy types
+ * (hero/pain/benefits/solution/cta); for everything else (form, testimonial,
+ * socialProof, faq, useCase) we return a refreshed TEMPLATE because those
+ * modules are schema-shaped / user-authored from the asset library — there
+ * is no "AI rewrite" to do.
+ *
+ * History: this function used to auto-fall-back to regenerateModuleTemplated
+ * when Claude returned null for ANY reason (missing key / API error /
+ * malformed JSON). That fig leaf produced the reported bug: user clicked
+ * "regenerate copy" on the 日本語 tab with no ANTHROPIC_API_KEY set, fell
+ * through to the Japanese template whose `headlineTmpl(name, value)` inlined
+ * the Chinese product value verbatim, resulting in Chinese text in a
+ * Japanese hero. Now regenerateModuleViaClaude throws on failures; this
+ * function only falls through to template when Claude explicitly returns
+ * null (i.e. the module type is not AI-handled — a routing decision).
  *
  * We MERGE the returned fields onto existing content instead of replacing —
  * that preserves layout, media, bullets we don't own, etc.
@@ -1069,6 +1089,9 @@ export async function regenerateModule(
       tone,
       locale,
     );
+    // live === null ONLY when the module type is outside Claude's handled
+    // set (form / testimonial / etc.). Actual failures throw and propagate
+    // to the route handler for structured 502/503 translation.
     if (live) {
       return {
         ...module,
@@ -1124,10 +1147,14 @@ export function regenerateModuleTemplated(
 // At Opus 4.6 cached rates: ~$0.01 per page creation. Latency is bounded
 // by the slowest of the 5 — typically ~3-6s end-to-end.
 //
-// Fail-safe: if Claude returns null for any module (no key, API error,
-// malformed JSON), that module keeps its templated content. A catastrophic
-// all-null return leaves the templated variants untouched — user never
-// sees an error, they see templates, same as the pre-LLM behavior.
+// Error policy (post-fig-leaf cleanup): Promise.all short-circuits on the
+// first rejected promise. Any adapter-level error (missing API key,
+// network failure, malformed JSON) propagates directly to the caller.
+// The old per-module try/catch + "null patch falls back to template"
+// pattern is gone — it let hydration "succeed" with a half-template page
+// and no visible signal that something had gone wrong. Route handlers
+// now catch at the boundary and mark page.hydrationFailed=true so the
+// UI shows a warning banner pointing the user at the missing capability.
 
 export async function hydrateModulesViaClaude(
   variants: { A: PageModule[]; B: PageModule[] },
@@ -1138,22 +1165,27 @@ export async function hydrateModulesViaClaude(
 ): Promise<{ A: PageModule[]; B: PageModule[] }> {
   const TYPES: ModuleType[] = ['hero', 'pain', 'benefits', 'solution', 'cta'];
 
+  // No per-module try/catch — Promise.all short-circuits on first rejection,
+  // LLMRequiredError / LLMCallError propagate to the route handler.
   const rewrites = await Promise.all(
     TYPES.map(async (t) => {
-      try {
-        const r = await regenerateModuleViaClaude(t, inputs, strategy, tone, locale);
-        return [t, r] as const;
-      } catch (e) {
-        // regenerateModuleViaClaude already logs; swallow so Promise.all
-        // doesn't collapse all 5 on one failure.
-        return [t, null] as const;
-      }
+      const r = await regenerateModuleViaClaude(t, inputs, strategy, tone, locale);
+      return [t, r] as const;
     }),
   );
 
   const patchByType = new Map<ModuleType, Record<string, unknown>>();
   for (const [t, r] of rewrites) {
-    if (r && typeof r === 'object') patchByType.set(t, r as Record<string, unknown>);
+    // r === null means the adapter doesn't handle this type. For TYPES
+    // (hero/pain/benefits/solution/cta) Claude handles all 5, so null
+    // here would be a programming error (adapter + orchestrator out of
+    // sync). Log and skip the patch rather than crashing — downstream
+    // render still works with the templated content for that module.
+    if (r && typeof r === 'object') {
+      patchByType.set(t, r as Record<string, unknown>);
+    } else {
+      console.warn(`[hydrate] Claude returned null patch for type=${t}; keeping template for that module.`);
+    }
   }
   if (patchByType.size === 0) return variants;
 
@@ -1171,5 +1203,61 @@ export async function hydrateModulesViaClaude(
       return { ...m, content: merged as unknown as PageModule['content'] } as PageModule;
     });
 
-  return { A: apply(variants.A), B: apply(variants.B) };
+  let hydratedA = apply(variants.A);
+  let hydratedB = apply(variants.B);
+
+  // --- Post-validation: template-fingerprint check, ALL 5 module types --
+  //
+  // Last-line defence. Claude can technically return a 200 + well-formed
+  // tool_use payload whose output matches one of the L[locale] template
+  // strings verbatim — e.g. Claude copying the template's benefits
+  // headline "Why teams switch" when product inputs are too generic.
+  // We detect via findTemplateModules() (covers hero / pain / solution /
+  // benefits / cta) and retry EACH flagged type individually. Retries
+  // are targeted so a template-looking cta doesn't cost us another hero
+  // call. After retry, if ANY type is still template, we throw — the
+  // caller's two-save pattern flags hydrationFailed=true and the editor
+  // shows the banner with the exact failing types.
+  //
+  // Important: we use the A-variant output for the check because Claude
+  // runs ONCE per type and the same patch is applied to both variants.
+  // If the patch produces template on A, it produces template on B too.
+  // No need to double-check.
+  const stillTemplate = findTemplateModules(hydratedA, inputs.name);
+  if (stillTemplate.length > 0) {
+    const types = stillTemplate.map((r) => r.type);
+    console.warn(
+      `[hydrate] post-validation: ${types.join(', ')} matched template fingerprint on locale=${locale}; retrying those types.`,
+    );
+    const retries = await Promise.all(
+      types.map(async (t) => {
+        const r = await regenerateModuleViaClaude(t, inputs, strategy, tone, locale);
+        return [t, r] as const;
+      }),
+    );
+    for (const [t, r] of retries) {
+      if (r && typeof r === 'object') {
+        patchByType.set(t, r as Record<string, unknown>);
+      }
+    }
+    hydratedA = apply(variants.A);
+    hydratedB = apply(variants.B);
+    const stillTemplateAfterRetry = findTemplateModules(hydratedA, inputs.name);
+    if (stillTemplateAfterRetry.length > 0) {
+      // Still template after per-type retry. Product inputs are too
+      // thin to ground Claude, OR the strategy summary lacks anchors.
+      // Throw with the exact list so the banner can tell the user
+      // WHICH modules need attention.
+      const { LLMCallError } = await import('./errors');
+      const badTypes = stillTemplateAfterRetry.map((r) => r.type).join(' / ');
+      throw new LLMCallError(
+        'claude',
+        'module-hydrate',
+        undefined,
+        `模块 ${badTypes} 两次调用后仍匹配模板指纹（${locale}）。通常说明产品输入（name / tagline / value）过于通用，Claude 抓不到产品特定锚点。建议在 wizard 里补充更具体的产品描述后重新生成。`,
+      );
+    }
+  }
+
+  return { A: hydratedA, B: hydratedB };
 }

@@ -10,12 +10,14 @@
  * This module knows the exact strings ai.ts emits. Callers can:
  *   - flag a LandingPage as `hydrationFailed` right after create/add-locale
  *   - lint every active variant before deploy
- *   - warn in the editor when the hero is still 100% template
+ *   - warn in the editor when ANY hydrated module is still 100% template
  *
- * Keep in sync with: lossPhrase(), outcomePhrase(), L[locale].headlineTmpl
+ * Keep in sync with: lossPhrase(), outcomePhrase(), L[locale].headlineTmpl,
+ * L[locale].painTitle / painItems, L[locale].solutionTitle / solutionBody,
+ * L[locale].benefitsTitle / benefits, L[locale].ctaHeadline / ctaSub
  * in src/lib/ai.ts.
  */
-import type { PageModule, PageLocale } from './types';
+import type { PageModule, PageLocale, ModuleType } from './types';
 
 /** Fingerprints for Variant A (pain-driven) and Variant B (benefit-driven)
  *  hero headlines that get stamped when no product.value is extracted AND
@@ -126,6 +128,215 @@ export function scanPageForTemplateHeroes(
       if (!mods) continue;
       const report = reportHeroTemplate(mods, name);
       if (report.anyTemplate) out.push({ variant: v, locale, report });
+    }
+  }
+  return out;
+}
+
+// =====================================================================
+// Non-hero module template fingerprints (Phase: hydrate reliability)
+// =====================================================================
+//
+// The old post-hydrate check was hero-only. Claude can return template-
+// looking pain/benefits/cta copy just as easily — a user with thin
+// product inputs would get "Why teams switch" as their benefits title
+// (straight out of ai.ts L.en.benefitsTitle) with no red flag anywhere.
+// The per-module fingerprints below let hydrateModulesViaClaude retry
+// (or surface) EACH module that came back template, not just hero.
+//
+// MAINTENANCE: every time ai.ts L[locale] adds/changes a static string
+// used by generateModules, mirror the change here. A missing fingerprint
+// means a template string ships live undetected.
+
+// --- PAIN ----------------------------------------------------------------
+
+const TEMPLATE_PAIN_TITLES: readonly string[] = [
+  'The old way isn’t working',
+  '旧的做法已经不管用',
+  '舊的做法已經不管用',
+  '従来のやり方では限界です',
+];
+const TEMPLATE_PAIN_ITEM_TITLES: readonly string[] = [
+  // en
+  'Manual work eats your week',
+  'Tools don’t talk to each other',
+  'Slow feedback loops',
+  // zh-CN
+  '手工活吃掉整周',
+  '工具之间不互通',
+  '反馈链路太长',
+  // zh-TW
+  '手動作業吃掉整週',
+  '工具之間不互通',
+  '回饋鏈路太長',
+  // ja
+  '手作業が週を奪う',
+  'ツール同士がつながらない',
+  'フィードバックが遅い',
+];
+
+// --- SOLUTION ------------------------------------------------------------
+
+const TEMPLATE_SOLUTION_TITLES: readonly string[] = [
+  'A single place that just works',
+  '一个地方把事情做完',
+  '一個地方把事情做完',
+  'ひとつの場所で完結',
+];
+const TEMPLATE_SOLUTION_BODIES: readonly string[] = [
+  'Bring your product info, audience, and materials — get a localized, conversion-ready page. Edit anything, publish, collect leads.',
+  '输入产品信息、受众和资料 — 拿到一张本地化、围绕转化的落地页。随时编辑、发布、收集线索。',
+  '輸入產品資訊、受眾與資料 — 取得一張在地化、以轉化為核心的落地頁。隨時編輯、發布、收集名單。',
+  '製品情報・ターゲット・資料を渡せば、ローカライズ済み・コンバージョン設計済みのページが手に入ります。編集・公開・リード獲得まで。',
+];
+
+// --- BENEFITS ------------------------------------------------------------
+
+const TEMPLATE_BENEFITS_TITLES: readonly string[] = [
+  'Why teams switch',
+  '为什么团队会切换过来',
+  '為什麼團隊會切換過來',
+  'なぜ乗り換えるのか',
+];
+const TEMPLATE_BENEFITS_ITEM_TITLES: readonly string[] = [
+  // en
+  'Faster time-to-page',
+  'Localized, not translated',
+  'Conversion-first modules',
+  // zh-CN
+  '更快的上线速度',
+  '本地化而非翻译',
+  '以转化为导向的模块',
+  // zh-TW
+  '更快的上線速度',
+  '在地化而非翻譯',
+  '以轉化為導向的模組',
+  // ja
+  'ページが早く立ち上がる',
+  '翻訳ではなくローカライズ',
+  'コンバージョン起点のモジュール',
+];
+
+// --- CTA -----------------------------------------------------------------
+//
+// We fingerprint headline + subhead but NOT button. Button labels come
+// from ctaLabels[goal] (e.g. "Book a Demo" / "预约演示") — those are
+// industry-standard phrases Claude may legitimately emit even on well-
+// grounded output. Checking them would produce false positives.
+
+const TEMPLATE_CTA_HEADLINES: readonly string[] = [
+  'Ready to ship your page?',
+  '准备好上线了吗？',
+  '準備好上線了嗎?',
+  '公開の準備はできていますか?',
+];
+const TEMPLATE_CTA_SUBHEADS: readonly string[] = [
+  'Start with a single product — add more any time.',
+  '从一个产品开始，之后随时加。',
+  '從一個產品開始,之後隨時加。',
+  'まずは 1 製品から。いつでも追加できます。',
+];
+
+// --- Per-module predicates -----------------------------------------------
+//
+// Each returns true when the module's content still clearly matches a
+// template fingerprint. The heuristic is "title matches OR the body
+// shape matches" — either alone is strong enough to flag. Partial
+// rewrites (Claude returned title but not items) still get caught
+// because the unrewritten field keeps its template value through the
+// patch-merge in hydrateModulesViaClaude.
+
+export function isPainTemplate(content: unknown): boolean {
+  const c = content as { title?: string; items?: Array<{ title?: string }> } | null;
+  if (!c) return false;
+  if (c.title && TEMPLATE_PAIN_TITLES.includes(c.title.trim())) return true;
+  const items = c.items ?? [];
+  if (items.length > 0) {
+    const allTemplate = items.every(
+      (it) => typeof it.title === 'string' && TEMPLATE_PAIN_ITEM_TITLES.includes(it.title.trim()),
+    );
+    if (allTemplate) return true;
+  }
+  return false;
+}
+
+export function isSolutionTemplate(content: unknown): boolean {
+  const c = content as { title?: string; body?: string } | null;
+  if (!c) return false;
+  if (c.title && TEMPLATE_SOLUTION_TITLES.includes(c.title.trim())) return true;
+  if (c.body && TEMPLATE_SOLUTION_BODIES.includes(c.body.trim())) return true;
+  return false;
+}
+
+export function isBenefitsTemplate(content: unknown): boolean {
+  const c = content as { title?: string; items?: Array<{ title?: string }> } | null;
+  if (!c) return false;
+  if (c.title && TEMPLATE_BENEFITS_TITLES.includes(c.title.trim())) return true;
+  const items = c.items ?? [];
+  if (items.length > 0) {
+    const allTemplate = items.every(
+      (it) => typeof it.title === 'string' && TEMPLATE_BENEFITS_ITEM_TITLES.includes(it.title.trim()),
+    );
+    if (allTemplate) return true;
+  }
+  return false;
+}
+
+export function isCtaTemplate(content: unknown): boolean {
+  const c = content as { headline?: string; subhead?: string } | null;
+  if (!c) return false;
+  if (c.headline && TEMPLATE_CTA_HEADLINES.includes(c.headline.trim())) return true;
+  if (c.subhead && TEMPLATE_CTA_SUBHEADS.includes(c.subhead.trim())) return true;
+  return false;
+}
+
+// --- Unified entry -------------------------------------------------------
+
+export interface ModuleTemplateReport {
+  type: ModuleType;
+  isTemplate: boolean;
+  /** Short human-readable reason, for logs / banner diagnostics. */
+  reason?: string;
+}
+
+/**
+ * Return a list of module types whose content still matches a template
+ * fingerprint. Types not in the hydrate set (form / socialProof / ...)
+ * are never flagged — they're user-authored or schema-shaped, not
+ * AI-generated, so "template" doesn't apply.
+ */
+export function findTemplateModules(
+  modules: PageModule[],
+  name: string,
+): ModuleTemplateReport[] {
+  const out: ModuleTemplateReport[] = [];
+  for (const m of modules) {
+    switch (m.type) {
+      case 'hero': {
+        const r = reportHeroTemplate(modules, name);
+        if (r.anyTemplate) {
+          const parts: string[] = [];
+          if (r.headline) parts.push('headline');
+          if (r.bullets) parts.push('bullets');
+          out.push({ type: 'hero', isTemplate: true, reason: parts.join('+') });
+        }
+        break;
+      }
+      case 'pain':
+        if (isPainTemplate(m.content)) out.push({ type: 'pain', isTemplate: true });
+        break;
+      case 'solution':
+        if (isSolutionTemplate(m.content)) out.push({ type: 'solution', isTemplate: true });
+        break;
+      case 'benefits':
+        if (isBenefitsTemplate(m.content)) out.push({ type: 'benefits', isTemplate: true });
+        break;
+      case 'cta':
+        if (isCtaTemplate(m.content)) out.push({ type: 'cta', isTemplate: true });
+        break;
+      // hero handled separately — can't switch-case duplicate
+      default:
+        break;
     }
   }
   return out;

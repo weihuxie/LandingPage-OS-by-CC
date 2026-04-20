@@ -4,6 +4,12 @@ import { generateVariants, hydrateModulesViaClaude } from '@/lib/ai';
 import { pickTopTestimonials, testimonialsToModuleItems } from '@/lib/testimonial-match';
 import { localizeModulesViaGpt } from '@/lib/llm-openai';
 import { reportHeroTemplate } from '@/lib/template-detection';
+import {
+  errorResponse,
+  LLMRequiredError,
+  LLMCallError,
+  StorageRequiredError,
+} from '@/lib/errors';
 import type { LandingPage, PageLocale, LocalizationStrategy } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -18,7 +24,23 @@ export const maxDuration = 60;
  * Optionally accepts a user-approved LocalizationStrategy to apply market-
  * specific style / module order / form changes as part of the add.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
+  try {
+    return await postImpl(req, ctx);
+  } catch (e) {
+    if (
+      e instanceof LLMRequiredError ||
+      e instanceof LLMCallError ||
+      e instanceof StorageRequiredError
+    ) {
+      const { status, body } = errorResponse(e);
+      return NextResponse.json(body, { status });
+    }
+    throw e;
+  }
+}
+
+async function postImpl(req: NextRequest, { params }: { params: { id: string } }) {
   const page = await getLandingPage(params.id);
   if (!page) return NextResponse.json({ error: 'page not found' }, { status: 404 });
   const product = await getProduct(page.productId);
@@ -116,26 +138,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
   }
 
-  // First pass — route hero/pain/benefits/solution/cta through Claude
-  // tool-use for PRODUCT-SPECIFIC, LOCALE-NATIVE rewriting. This mirrors
-  // what the default-locale creation path does in products/[id]/pages.
+  // Two-pass localization: Claude rewrites text-heavy modules natively
+  // in the target locale; GPT-4o polishes anything Claude doesn't own
+  // (form labels, testimonial text, faq). BOTH passes must succeed or
+  // we refuse to add the locale — a half-localized locale would be the
+  // exact "looks-right-is-actually-wrong" fig leaf we removed.
   //
-  // Why this matters: without Claude hydration, the add-locale path
-  // previously took the deterministic English templates out of
-  // generateVariants() and handed them to GPT-4o to "translate into ja".
-  // GPT-4o's source was generic boilerplate ("save hours", "boost ROI"),
-  // so its output was also generic — the default locale would show the
-  // user's actual product (WINPILOT / 商机评估 / 赢单概率) because it
-  // got Claude-hydrated on first save, but the ja tab would collapse
-  // back to "節約時間 / ROIを上げる" because the source material for the
-  // GPT translation never mentioned the product specifically.
-  //
-  // Claude hydration writes natively in the target locale using product
-  // inputs + strategy as the grounding signal, so "Japanese tab" now
-  // reads like a Japanese copywriter wrote it for THIS product — not
-  // like a translator localized a generic SaaS template.
-  let hydratedA = variants.A;
-  let hydratedB = variants.B;
+  // Previously, Claude failure was swallowed and GPT was asked to
+  // "translate" the generic English templates into Japanese, producing
+  // "節約時間 / ROIを上げる" boilerplate even though the default locale
+  // had product-specific Claude output. That discrepancy is what made
+  // users think Claude wrote the page — the default locale felt native,
+  // the Japanese locale felt like a GPT translation. Now we fail loud:
+  // either the pipeline fully succeeds (both Claude + GPT) or the
+  // locale is not added and the UI shows why.
+  const targetMarketForLocalize = body.strategy?.targetMarket ?? page.targetMarket;
+  let localizedA, localizedB;
   try {
     const claudeOut = await hydrateModulesViaClaude(
       { A: variants.A, B: variants.B },
@@ -144,26 +162,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       page.tone,
       locale,
     );
-    hydratedA = claudeOut.A;
-    hydratedB = claudeOut.B;
+    [localizedA, localizedB] = await Promise.all([
+      localizeModulesViaGpt(claudeOut.A, locale, targetMarketForLocalize, page.tone),
+      localizeModulesViaGpt(claudeOut.B, locale, targetMarketForLocalize, page.tone),
+    ]);
   } catch (e) {
-    console.error(
-      '[locales] Claude hydration failed; will rely on GPT-4o fallback for all modules:',
-      e,
-    );
+    if (e instanceof LLMRequiredError || e instanceof LLMCallError) {
+      console.error('[locales] LLM pipeline failed; locale NOT added:', e);
+      const { status, body: errBody } = errorResponse(e);
+      return NextResponse.json(errBody, { status });
+    }
+    throw e;
   }
-
-  // Second pass — GPT-4o localization covers the modules Claude does
-  // NOT rewrite (socialProof / useCase / testimonial text / faq / form
-  // labels). When Claude hydration succeeded, the 5 text-heavy modules
-  // are already in the target locale, so GPT-4o mostly passes them
-  // through with minor refinement. When Claude hydration failed, this
-  // pass is the entire localization layer.
-  const targetMarketForLocalize = body.strategy?.targetMarket ?? page.targetMarket;
-  const [localizedA, localizedB] = await Promise.all([
-    localizeModulesViaGpt(hydratedA, locale, targetMarketForLocalize, page.tone),
-    localizeModulesViaGpt(hydratedB, locale, targetMarketForLocalize, page.tone),
-  ]);
 
   page.variants.A[locale] = localizedA;
   page.variants.B[locale] = localizedB;

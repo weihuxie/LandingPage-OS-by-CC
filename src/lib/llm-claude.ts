@@ -16,11 +16,17 @@
  *    worth extra thought tokens.
  *
  * 4. JSON-schema outputs keep the response parseable without prompt-level
- *    pleading. If the model refuses, we return null and the caller falls
- *    back to the deterministic template.
+ *    pleading. If the model refuses or the call fails, we throw a typed
+ *    error (LLMRequiredError / LLMCallError from lib/errors). NO silent
+ *    null-return / template fallback — that was the fig leaf that let
+ *    the "regenerate on 日本語 tab returns Chinese" bug ship.
  *
- * Only generate.strategy is wired so far. Module generation and localization
- * stay on templates until we see real-user output quality on strategy first.
+ * 5. "Not my job" return null is still allowed: when the requested module
+ *    type is not in CLAUDE_MODULE_TYPES (e.g. form / socialProof), we
+ *    return null because those are user-authored from the asset library,
+ *    not generated. That's a routing decision, not a failure. Caller is
+ *    expected to branch on null for type routing, and to let errors
+ *    bubble up to the route handler.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -37,6 +43,7 @@ import type {
   CTAContent,
 } from './types';
 import type { ExtractedContext } from './extract';
+import { LLMRequiredError, LLMCallError } from './errors';
 
 /** Module types we wire through Claude; anything else falls back to template. */
 const CLAUDE_MODULE_TYPES: ReadonlySet<ModuleType> = new Set([
@@ -249,14 +256,20 @@ const STRATEGY_TOOL = {
 
 /**
  * Produce a StrategySummary via real Claude API call.
- * Returns null when the key is missing or the call fails — caller falls back
- * to the deterministic template path in ai.ts.
+ *
+ * Throws:
+ *   - LLMRequiredError('strategy', 'ANTHROPIC_API_KEY') when no key.
+ *   - LLMCallError('claude', 'strategy', cause) when the SDK call fails,
+ *     the response has no tool_use / text block, or the payload is
+ *     malformed. Route handlers map to 502/503 via errorResponse().
  */
 export async function generateStrategyViaClaude(
   inputs: ProductInputs,
   context?: ExtractedContext,
-): Promise<StrategySummary | null> {
-  if (!hasClaudeKey()) return null;
+): Promise<StrategySummary> {
+  if (!hasClaudeKey()) {
+    throw new LLMRequiredError('strategy', 'ANTHROPIC_API_KEY');
+  }
 
   const client = new Anthropic();
 
@@ -361,20 +374,28 @@ Verbatim rules:
       }
       console.error('[claude] strategy: tool_use shape mismatch. Keys:',
         Object.keys((parsed ?? {}) as object).join(','));
+      // Fall through to text-block fallback below; if that also fails
+      // we throw LLMCallError so the route returns 502.
     }
 
     // Fallback: some SDK versions / settings may still return text. Parse it.
     const textBlock = response.content.find((b) => b.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
-      console.error('[claude] strategy: no tool_use or text block. Content types:',
-        response.content.map((b) => b.type).join(','));
-      return null;
+      throw new LLMCallError(
+        'claude',
+        'strategy',
+        undefined,
+        `Claude returned no tool_use or text block. Content types: ${response.content.map((b) => b.type).join(',')}`,
+      );
     }
     const parsed = extractJsonObject<StrategySummary>(textBlock.text);
     if (!parsed) {
-      console.error('[claude] strategy: could not extract JSON from text fallback. Raw (first 400):',
-        textBlock.text.slice(0, 400));
-      return null;
+      throw new LLMCallError(
+        'claude',
+        'strategy',
+        undefined,
+        `Claude text fallback was not parseable JSON. Raw (first 400): ${textBlock.text.slice(0, 400)}`,
+      );
     }
     if (
       !Array.isArray(parsed.audience) ||
@@ -382,15 +403,21 @@ Verbatim rules:
       !Array.isArray(parsed.narrative) ||
       !Array.isArray(parsed.local)
     ) {
-      console.error('[claude] strategy: JSON missing required arrays. Keys:',
-        Object.keys(parsed as object).join(','));
-      return null;
+      throw new LLMCallError(
+        'claude',
+        'strategy',
+        undefined,
+        `Claude JSON missing required arrays. Keys: ${Object.keys(parsed as object).join(',')}`,
+      );
     }
     return parsed;
   } catch (e: any) {
+    // Preserve our own typed errors; wrap everything else in LLMCallError
+    // so the route handler can translate to a 502 with structured body.
+    if (e instanceof LLMCallError || e instanceof LLMRequiredError) throw e;
     console.error('[claude] strategy generation failed:',
       e?.status ?? '', e?.message ?? e);
-    return null;
+    throw new LLMCallError('claude', 'strategy', e);
   }
 }
 
@@ -577,14 +604,20 @@ export type ClaudeModuleContent =
   | CTAContent;
 
 /**
- * Returns the new content object for a module (keyed off type), or null if:
- *   - no API key
- *   - module type isn't in our Claude-routed set
- *   - the API call fails or returns malformed JSON
+ * Rewrite a module's content via Claude.
  *
- * Caller merges: `{ ...module, content: { ...module.content, ...returned } }`
- * so fields we don't own (layout, media, bullets length guards, etc.) are
- * preserved verbatim.
+ * Returns:
+ *   - Partial<ClaudeModuleContent> on success; caller merges over existing.
+ *   - null ONLY when the module type isn't one we handle (form / faq /
+ *     testimonial etc. — user-authored from the asset library). That's a
+ *     routing decision, not a failure.
+ *
+ * Throws:
+ *   - LLMRequiredError('module-regen', 'ANTHROPIC_API_KEY') when no key.
+ *   - LLMCallError('claude', 'module-regen', cause) when the SDK call
+ *     fails or the payload is malformed. Silent null-return on failure
+ *     used to produce Japanese templates (wrong-script copy) when the
+ *     user clicked "Regenerate copy" — we don't do that anymore.
  */
 export async function regenerateModuleViaClaude(
   type: ModuleType,
@@ -593,7 +626,10 @@ export async function regenerateModuleViaClaude(
   tone: ToneKey,
   locale: PageLocale,
 ): Promise<Partial<ClaudeModuleContent> | null> {
-  if (!hasClaudeKey()) return null;
+  if (!hasClaudeKey()) {
+    throw new LLMRequiredError('module-regen', 'ANTHROPIC_API_KEY');
+  }
+  // "Not my job" — the caller routes unsupported types to its own path.
   if (!CLAUDE_MODULE_TYPES.has(type)) return null;
 
   const client = new Anthropic();
@@ -638,7 +674,10 @@ export async function regenerateModuleViaClaude(
     input_schema: MODULE_SCHEMAS[type] as any,
   };
 
-  try {
+  // Single attempt — one HTTP call + parse. Kept as a local function so
+  // the retry loop below can invoke it multiple times without rebuilding
+  // the (moderately expensive) system prompt / user prompt / tool spec.
+  async function attempt(): Promise<Partial<ClaudeModuleContent> | null> {
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
@@ -663,25 +702,63 @@ export async function regenerateModuleViaClaude(
       const parsed = toolUse.input as Partial<ClaudeModuleContent>;
       if (parsed && typeof parsed === 'object') return parsed;
       console.error(`[claude] module ${type}: tool_use input not an object`);
+      // Fall through to text-block fallback; if that also fails we throw.
     }
 
     // Fallback: text block (shouldn't happen with forced tool_choice).
     const textBlock = response.content.find((b) => b.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
-      console.error(`[claude] module ${type}: no tool_use or text block. Content types:`,
-        response.content.map((b) => b.type).join(','));
-      return null;
+      throw new LLMCallError(
+        'claude',
+        'module-regen',
+        undefined,
+        `Module ${type}: Claude returned no tool_use or text block. Content types: ${response.content.map((b) => b.type).join(',')}`,
+      );
     }
     const parsed = extractJsonObject<Partial<ClaudeModuleContent>>(textBlock.text);
     if (!parsed || typeof parsed !== 'object') {
-      console.error(`[claude] module ${type}: could not extract JSON from text fallback. Raw (first 300):`,
-        textBlock.text.slice(0, 300));
-      return null;
+      throw new LLMCallError(
+        'claude',
+        'module-regen',
+        undefined,
+        `Module ${type}: Claude text fallback not parseable JSON. Raw (first 300): ${textBlock.text.slice(0, 300)}`,
+      );
     }
     return parsed;
-  } catch (e: any) {
-    console.error(`[claude] module regen failed (${type}):`,
-      e?.status ?? '', e?.message ?? e);
-    return null;
   }
+
+  // One retry on transient failures. "Transient" = network errors or
+  // HTTP statuses that Anthropic documents as retryable (429 rate limit,
+  // 5xx server errors). 4xx validation errors (400 bad request, 401
+  // auth, 403 permission) are the prompt's fault — retrying won't help,
+  // they need a code change. Before this loop was added, a single 429
+  // on one of the 5 parallel hydrate calls would tank the whole
+  // page-create, even though Anthropic retries usually succeed within
+  // a few hundred ms.
+  const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+  const MAX_ATTEMPTS = 2;
+  let lastErr: unknown = undefined;
+  for (let tryN = 1; tryN <= MAX_ATTEMPTS; tryN++) {
+    try {
+      return await attempt();
+    } catch (e: any) {
+      lastErr = e;
+      // Our own LLMCallError from schema/parse failure — don't retry.
+      // Claude produced a response, it just didn't match our tool schema;
+      // retrying with the same prompt gets the same shape back.
+      if (e instanceof LLMCallError || e instanceof LLMRequiredError) break;
+      const status: number | undefined = e?.status;
+      const isRetryable = !status /* network */ || RETRYABLE_STATUSES.has(status);
+      if (tryN === MAX_ATTEMPTS || !isRetryable) break;
+      const delay = 400 + Math.random() * 300; // 400-700ms jitter
+      console.warn(
+        `[claude] module ${type} attempt ${tryN} failed (status=${status ?? 'network'}); retrying in ${delay.toFixed(0)}ms`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  if (lastErr instanceof LLMCallError || lastErr instanceof LLMRequiredError) throw lastErr;
+  console.error(`[claude] module regen failed (${type}) after ${MAX_ATTEMPTS} attempts:`,
+    (lastErr as any)?.status ?? '', (lastErr as any)?.message ?? lastErr);
+  throw new LLMCallError('claude', 'module-regen', lastErr);
 }
