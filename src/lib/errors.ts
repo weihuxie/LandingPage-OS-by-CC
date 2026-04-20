@@ -130,6 +130,32 @@ export class ExtractionFailedError extends Error {
   }
 }
 
+/**
+ * User tried to upload an asset (image for a hero, logo, testimonial
+ * avatar, etc.) but the server has no persistent blob store configured.
+ *
+ * Behavior matrix (same fail-loud shape as storage / deploy):
+ *   - `BLOB_READ_WRITE_TOKEN` set                   → uploads go to Vercel Blob (never throws this)
+ *   - missing + VERCEL !== '1' (local dev)          → uploads inline as data: URL (never throws this)
+ *   - missing + VERCEL === '1' (prod serverless)    → throws this, route returns 503
+ *
+ * The prod path refuses to silently inline base64 because (a) KV values
+ * have a size limit and a 2MB page that a lambda 500s on is worse than
+ * an up-front "configure blob storage please" banner, and (b) once
+ * base64 is in the page JSON you can't renegotiate it to a CDN later
+ * without a migration pass.
+ */
+export class UploadRequiredError extends Error {
+  readonly code = 'UPLOAD_REQUIRED' as const;
+  constructor(message?: string) {
+    super(
+      message ??
+        'Asset upload requires BLOB_READ_WRITE_TOKEN in production; set it in Vercel project settings (Storage → Blob)',
+    );
+    this.name = 'UploadRequiredError';
+  }
+}
+
 export type StructuredErrorBody = {
   error: string;
   code: string;
@@ -209,6 +235,17 @@ export function errorResponse(err: unknown): {
         error: 'extraction-failed',
         code: err.code,
         source: err.source,
+        message: err.message,
+      },
+    };
+  }
+  if (err instanceof UploadRequiredError) {
+    return {
+      status: 503,
+      body: {
+        error: 'upload-required',
+        code: err.code,
+        missing: 'BLOB_READ_WRITE_TOKEN',
         message: err.message,
       },
     };

@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import type { MediaRef, MediaKind, PageLocale } from '@/lib/types';
 import { PAGE_LOCALES } from '@/lib/types';
 import { nativeLabel } from '@/lib/i18n-detect';
+import UploadButton from './UploadButton';
 
 /**
  * Reusable media editor with per-locale override UI (Phase F.4 / F.2).
@@ -75,12 +76,24 @@ export default function MediaField({
       </div>
 
       <div className="mt-2 space-y-2">
-        <input
-          className="input text-sm"
-          placeholder="URL (YouTube / Vimeo / Loom / 图片直链)"
-          value={value?.url ?? ''}
-          onChange={(e) => set({ url: e.target.value })}
-        />
+        <div className="flex items-start gap-1.5">
+          <input
+            className="input flex-1 text-sm"
+            placeholder="URL (YouTube / Vimeo / Loom / 图片直链)"
+            value={value?.url ?? ''}
+            onChange={(e) => set({ url: e.target.value })}
+          />
+          {/*
+           * Upload is only offered for image/logo/gif — videos skip it
+           * because re-hosting a multi-MB MP4 through Vercel Blob is
+           * almost always wrong (use YouTube/Vimeo/Loom URLs instead).
+           */}
+          {(value?.kind ?? defaultKind) !== 'video' && (
+            <UploadButton
+              onUpload={(r) => set({ url: r.url })}
+            />
+          )}
+        </div>
         <input
           className="input text-sm"
           placeholder="Alt 文本 (无障碍)"

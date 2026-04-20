@@ -58,6 +58,27 @@ export const revalidate = 0;
 
 ---
 
+### 4.5 图片上传：不能直接把 base64 写进 KV
+**症状：** Phase A 之前，SocialProof logos 的"上传"是前端 `FileReader` → base64 塞进 module JSON。单个 2MB 的 logo 直接把整页 JSON 顶到 KV value 的上限（Upstash Redis 单 key 默认 1MB 左右），保存接口 500。MediaField（Hero / ProductShowcase / Benefits / VideoEmbed）干脆就没上传按钮，只能贴外链。Testimonial 完全没有头像字段 —— 信任感 gap。
+
+**根因：** 没有统一的二进制资产出口。每个图片字段都是自己小作坊：logos 走 base64 内嵌；media 只接 URL；avatar 不存在。结果是"同一个放图片的手势在编辑器里有四种不同行为"。
+
+**做法（Phase A 新增 upload 管线）：**
+1. 新依赖 `@vercel/blob`；新增 env `BLOB_READ_WRITE_TOKEN`（Vercel → Storage → Blob 生成）
+2. 新增 `POST /api/assets/upload`（见 [src/app/api/assets/upload/route.ts](src/app/api/assets/upload/route.ts)），5MB 上限、image/\* allowlist（png/jpeg/gif/webp/svg）
+3. 共享组件 `<UploadButton>`（见 [src/components/UploadButton.tsx](src/components/UploadButton.tsx)），所有图片字段（`MediaField`、`LogosEditor`、`TestimonialEditor`）都走它
+4. 三路行为矩阵（与 LLM / deploy / storage 的 fail-loud 对齐）：
+
+| 场景 | 行为 |
+|---|---|
+| `BLOB_READ_WRITE_TOKEN` 已配（prod 或本地带 token） | `put()` 到 Vercel Blob，返回 CDN URL |
+| 本地 dev 没 token（`VERCEL !== '1'`） | 上传内联成 `data:image/…;base64,…`，带 warning |
+| prod 没 token（`VERCEL === '1'`） | 抛 `UploadRequiredError` → 503 |
+
+base64 内联只保留给本地调试；prod 不配 Blob 就拒绝写入（而不是悄悄塞进 KV 撑爆）。新增 error 类 `UploadRequiredError` 在 [src/lib/errors.ts](src/lib/errors.ts)。
+
+---
+
 ### 5. 存储冷切换时 in-flight 请求会分裂
 **症状：** 用户在 Vercel 重新部署的 90s 窗口里点击"生成页面"，项目写进老 lambda 的 `/tmp/.data`，然后跳编辑器时新 lambda 已读 KV → 404。
 
@@ -161,6 +182,7 @@ npm run build       # 验证 Vercel 部署前会否 build 失败
 - 不配 `ANTHROPIC_API_KEY` → 创建产品 / 重新生成文案 / 添加语言 这些按钮都会返回 503，编辑器顶部挂红色 banner。
 - 不配 `OPENAI_API_KEY` → 添加新语言会失败（GPT-4o 本地化 pass 抛错）。
 - 不配 `VC_API_TOKEN` → 点"发布"会返回 503，提示 `DEPLOY_REQUIRED`。
+- 不配 `BLOB_READ_WRITE_TOKEN` → 本地 OK（图片以 base64 内联，控制台有黄字提醒）；部署到 Vercel 后上传会返回 503，提示 `UPLOAD_REQUIRED`。
 
 想在本地跑通完整流程：把自己的 API key 填到 `.env.local`。想只做 UI 调试：打开 dashboard，看 `/api/capabilities` 返回什么，按红色 banner 指引缺哪补哪。
 
