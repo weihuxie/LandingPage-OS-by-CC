@@ -33,6 +33,16 @@ export default async function Dashboard({
         </Link>
       </div>
 
+      {/* DIAG: prove whether dashboard SSR sees all products. Remove once
+          the dashboard-vs-API count discrepancy is resolved. */}
+      <div
+        data-diag="dashboard-counts"
+        className="mt-2 rounded border border-dashed border-ink-300 bg-ink-50 p-2 text-xs font-mono text-ink-700"
+      >
+        SSR diag — products: {products.length} / pages: {pages.length} / ids:{' '}
+        {products.map((p) => p.id).sort().join(',')}
+      </div>
+
       {/* System status strip — at a glance LLM + storage health */}
       <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-ink-500">
         <StatusPill label="Claude" value={llm.claude} />
