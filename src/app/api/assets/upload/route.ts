@@ -38,7 +38,21 @@ export async function POST(req: NextRequest) {
       const { status, body } = errorResponse(e);
       return NextResponse.json(body, { status });
     }
-    throw e;
+    // Any other runtime failure (Vercel Blob 500, multipart parse error,
+    // invalid token, rate-limited, etc.) — emit structured JSON instead
+    // of letting Next.js swallow it into an opaque 500. The UploadButton
+    // reads `message` to show something actionable in the UI.
+    const msg = e instanceof Error ? e.message : String(e);
+    // eslint-disable-next-line no-console
+    console.error('[upload] unexpected failure', e);
+    return NextResponse.json(
+      {
+        error: 'upload-failed',
+        code: 'UPLOAD_FAILED',
+        message: msg || 'upload failed (unknown reason)',
+      },
+      { status: 500 },
+    );
   }
 }
 
