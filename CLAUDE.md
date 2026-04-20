@@ -239,3 +239,66 @@ npm run build       # 验证 Vercel 部署前会否 build 失败
 - 前台：https://landing-page-os-by-cc-liart.vercel.app/zh-CN
 - 仓库：https://github.com/weihuxie/LandingPage-OS-by-CC
 - LLM health check：https://landing-page-os-by-cc-liart.vercel.app/api/health
+
+---
+
+## 七、工程规范
+
+### 7.1 新实体的 CRUD 完整性检查单
+
+**为什么有这张清单**：v2-phaseA 那次重构（commit `03fffaa`）后端把 Product / LandingPage 的 CRUD 五件套一次性写全了，连 `deleteProductAndPages` 的级联都考虑到。但前端 UI 是跟着用户任务的 happy path 迭代的 —— **创建 → 编辑 → 本地化 → 发布 → 分析**，每一步都有人催，删除/重命名/导出这类"用户不会主动要"的操作全部漏接。直到 2026-04 用户自己点破才发现："想删一个测试产品得 `curl -X DELETE`"。
+
+根因不是谁粗心，是**没有人在新实体落地时系统性过一遍 CRUD 矩阵**。这张清单就是为了把那次事故制度化，让同类盲区下次触发的时候有一道卡点。
+
+**每个持久化实体上线前必须填满下表**：
+
+| 操作 | 后端 | 前端 | 额外要求 |
+|---|---|---|---|
+| **Create** | `POST /api/x` | 新建页面 / 按钮 | 去重（slug / id 唯一） |
+| **Read (单)** | `GET /api/x/[id]` | 详情页 | 404 处理，loading 态 |
+| **List** | `GET /api/x` | 列表页 | 空态文案、排序规则明确 |
+| **Update** | `PATCH /api/x/[id]` | 编辑器 | 字段级 validation，autosave 或显式保存 |
+| **Delete** | `DELETE /api/x/[id]` | **UI 入口**（见下） | 二次确认 + **级联明细** |
+
+"Delete 的 UI 入口"至少满足**一项**（多数实体两项都值得做）：
+- 列表卡片上：kebab menu (`⋯`) 展开 → 红字"删除"
+- 详情页顶部：`text-red-600` 文字按钮
+- 编辑器 Danger Zone：底部单独一块红边区域
+
+**破坏性操作的 UX 约定**（看 [src/components/DeleteButton.tsx](src/components/DeleteButton.tsx) 的现行实现）：
+1. 统一用原生 `window.confirm()`，和 Editor.tsx 里 `deleteLocale` 的现有风格对齐。**不要**给删除单独造一个 modal —— 三套删除弹窗是 UX 碎片化的开端。
+2. Confirm 文案固定格式：
+   ```
+   删除 X「{name}」？
+   
+   {cascade 明细：列出会连带删的对象名称和数量}
+   
+   此操作不可撤销。
+   ```
+3. 级联细节要 **列对象名称**（"会连同以下 3 张落地页一起删除：· CRM 主站 (zh-CN, ja) · ..."），不要只说 "and related data"。用户脑子里能预演 blast radius 才会点下 OK。
+4. 非 2xx 响应 → `alert()`。**不要静默失败**，也不要假装成功（fail-loud 原则，见 §四）。
+5. 删除成功后跳"上一层"：删 page → product detail；删 product → dashboard。不要留用户在一个刚被删掉的资源详情页。
+6. 按钮在 `<Link>` cover 内部时必须 `e.stopPropagation() + e.preventDefault()`，否则会同时触发删除 + 导航到刚删掉的资源。
+
+**可以豁免 Delete 的情况**（**必须主动确认**，不是默认豁免）：
+- **单例实体**：例如 Brand。upsert 覆盖即可清空，没有 DELETE API 也行。
+- **只读 / audit log 类**：例如 Lead、PageEvent。业务上用户不应该删自己的留资和埋点，但**必须**有 export + archive 路径作为替代。
+- **兼容层**：例如 legacy Project。既然要淘汰，不给新 UI 合理。
+
+只要一个实体不在以上三类里，Delete UI 就**必须**存在。
+
+**新实体落地 PR 的自检 checklist**（复制到 PR description 逐项打勾）：
+
+- [ ] storage.ts 的 5 个 CRUD 函数都有（`readX` / `getX` / `saveX` / `deleteX` / `listX`）
+- [ ] 5 个 API 路由都有，除非被本节"豁免"条款覆盖
+- [ ] 每个读 KV 的 handler / page 都有 `export const dynamic = 'force-dynamic'; export const revalidate = 0;` 并在 server component 里调 `noStore()`（§一.4 + §一.4.1 两个坑合起来才完整）
+- [ ] 列表页、详情页、新建页都存在，空态有专门文案
+- [ ] Delete UI 至少有一个入口（列表 kebab / 详情页按钮 / Editor Danger Zone）
+- [ ] Confirm 文案遵循本节格式，级联明细已列出
+- [ ] 关联实体能独立删除（不仅是级联被动删），且级联关系写进了 `deleteX` 而不是散在 UI 层
+- [ ] 如果走了豁免，PR 描述里写清楚走的是哪条豁免
+
+**历史包袱**（2026-04 盘点，尚未全部清完）：
+- Lead：只读但**没有 export / 详情页** — 违反"只读实体必须有 archive 路径"条款。见 §四 TODO。
+- Product rename：API `PATCH /api/products/[id]` 已支持，UI 仅在 Editor > Settings 里 —— 不算违规，但"改名要绕两层"是 UX 割裂。
+- Editor 里删当前 page：要退回 ProductPagesList 才能删。不违反规范（ProductPagesList 已有入口），但 Danger Zone 加上会更顺手。
