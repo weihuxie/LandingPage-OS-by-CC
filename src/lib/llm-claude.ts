@@ -438,7 +438,11 @@ Verbatim rules:
 // Must exceed the 1024-token prompt-cache threshold. The per-module
 // constraints below are real (not padding) — they directly lift output
 // quality and act as a style guide the model re-reads every call.
-const MODULE_SYSTEM = `You are a senior B2B SaaS landing-page copywriter. You rewrite ONE page module at a time, to production quality. You receive: a product description, a target locale, a tone key, a strategy summary (audience + goal + narrative + local adjustments), and the type of module requested. You return a JSON object matching that module's schema — nothing more, nothing less.
+//
+// Exported so alternate providers (DeepSeek etc.) can reuse the EXACT
+// same prompt instead of rewriting it. If you edit this string, every
+// provider picks up the change on the next deploy.
+export const MODULE_SYSTEM = `You are a senior B2B SaaS landing-page copywriter. You rewrite ONE page module at a time, to production quality. You receive: a product description, a target locale, a tone key, a strategy summary (audience + goal + narrative + local adjustments), and the type of module requested. You return a JSON object matching that module's schema — nothing more, nothing less.
 
 ## Universal rules
 
@@ -567,13 +571,16 @@ const CTA_SCHEMA = {
   additionalProperties: false,
 };
 
-const MODULE_SCHEMAS: Record<string, object> = {
+export const MODULE_SCHEMAS: Record<string, object> = {
   hero: HERO_SCHEMA,
   pain: PAIN_SCHEMA,
   benefits: BENEFITS_SCHEMA,
   solution: SOLUTION_SCHEMA,
   cta: CTA_SCHEMA,
 };
+
+/** Exported so alternate providers share the exact same type gate. */
+export const LLM_MODULE_TYPES: ReadonlySet<ModuleType> = CLAUDE_MODULE_TYPES;
 
 /**
  * Per-module tool definitions. Same reasoning as STRATEGY_TOOL: we pass

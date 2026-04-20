@@ -32,11 +32,12 @@ export type LLMFeature =
   | 'localize-gpt'       // localizeModulesViaGpt pass
   | 'extract';           // Gemini / Claude long-content extraction
 
-export type LLMProvider = 'claude' | 'gpt' | 'gemini';
+export type LLMProvider = 'claude' | 'gpt' | 'gemini' | 'deepseek';
 export type LLMKey =
   | 'ANTHROPIC_API_KEY'
   | 'OPENAI_API_KEY'
   | 'GEMINI_API_KEY'
+  | 'DEEPSEEK_API_KEY'
   | 'any-llm';
 
 /**

@@ -33,7 +33,7 @@ export interface LLMRequest<Payload = any> {
 
 export interface LLMResponse<Data = any> {
   ok: boolean;
-  provider: 'gemini' | 'claude' | 'openai' | 'mock';
+  provider: 'gemini' | 'claude' | 'openai' | 'deepseek' | 'mock';
   data: Data;
   warnings?: string[];
 }
@@ -60,12 +60,14 @@ const route: Record<LLMTask, 'gemini' | 'claude' | 'openai'> = {
 import { hasClaudeKey } from './llm-claude';
 import { hasGeminiKey } from './llm-gemini';
 import { hasOpenAIKey } from './llm-openai';
+import { hasDeepseekKey } from './llm-deepseek';
 
 function hasKey() {
   return {
     claude: hasClaudeKey(),
     gemini: hasGeminiKey(),
     openai: hasOpenAIKey(),
+    deepseek: hasDeepseekKey(),
   };
 }
 
@@ -135,11 +137,13 @@ export function providerStatus(): {
   claude: ProviderStatus;
   gemini: ProviderStatus;
   openai: ProviderStatus;
+  deepseek: ProviderStatus;
 } {
   const h = hasKey();
   return {
     claude: h.claude ? 'configured' : 'missing',
     gemini: h.gemini ? 'configured' : 'missing',
     openai: h.openai ? 'configured' : 'missing',
+    deepseek: h.deepseek ? 'configured' : 'missing',
   };
 }

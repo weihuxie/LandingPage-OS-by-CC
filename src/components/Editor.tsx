@@ -280,6 +280,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   const [capabilities, setCapabilities] = useState<{
     hasClaude: boolean;
     hasOpenAI: boolean;
+    hasDeepseek: boolean;
     hasDeploy: boolean;
     storageEphemeral: boolean;
   } | null>(null);
@@ -1054,9 +1055,9 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               ? {
                   label: '立即 hydrate（当前语言）',
                   onClick: hydrateNow,
-                  disabled: !capabilities?.hasClaude,
+                  disabled: !(capabilities?.hasClaude || capabilities?.hasDeepseek),
                   running: hydrating,
-                  disabledReason: '需要 ANTHROPIC_API_KEY 才能让 Claude hydrate。',
+                  disabledReason: '需要 ANTHROPIC_API_KEY 或 DEEPSEEK_API_KEY 才能 hydrate。',
                 }
               : undefined
           }
@@ -1468,8 +1469,8 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             onChange={(patch) => updateModule(selected.id, patch)}
             onRegenerate={() => regenerate(selected.id)}
             regenerateDisabledReason={
-              capabilities && !capabilities.hasClaude
-                ? '需要 ANTHROPIC_API_KEY 才能让 Claude 重写文案。'
+              capabilities && !capabilities.hasClaude && !capabilities.hasDeepseek
+                ? '需要 ANTHROPIC_API_KEY 或 DEEPSEEK_API_KEY 才能重写文案。'
                 : null
             }
           />

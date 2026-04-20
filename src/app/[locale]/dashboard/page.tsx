@@ -36,6 +36,7 @@ export default async function Dashboard({
       {/* System status strip — at a glance LLM + storage health */}
       <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-ink-500">
         <StatusPill label="Claude" value={llm.claude} />
+        <StatusPill label="DeepSeek" value={llm.deepseek} />
         <StatusPill label="Gemini" value={llm.gemini} />
         <StatusPill label="GPT-4o" value={llm.openai} />
         <span className="pill">💾 存储：{storage === 'kv' ? 'Vercel KV' : '本地文件'}</span>
@@ -45,14 +46,17 @@ export default async function Dashboard({
       </div>
 
       {/* Persistent ops banner whenever critical capabilities are missing.
-          Pre-cleanup this banner was gated on `products.length === 0`, so
-          it disappeared the moment the user created their first product —
-          and the rest of the app silently shipped template output. Now
-          it stays as long as the keys aren't set. */}
-      {llm.claude === 'missing' && (
+          The red "no LLM" banner fires only when BOTH Claude and DeepSeek
+          are missing — either one is enough to drive strategy + module
+          hydration via the provider layer (llm-provider.ts). If only one
+          is configured we stay silent; capabilities route surfaces the
+          routing choice via /api/capabilities for per-feature tooltips. */}
+      {llm.claude === 'missing' && llm.deepseek === 'missing' && (
         <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
-          <strong>ANTHROPIC_API_KEY 未配置。</strong> 生成策略、重新生成文案、添加新语言都会返回 503。请在 Vercel Project Settings → Environment Variables 里加{' '}
+          <strong>没有配置任何 LLM Key。</strong> 生成策略、重新生成文案、添加新语言都会返回 503。请在 Vercel Project Settings → Environment Variables 里加{' '}
           <code className="rounded bg-white px-1 py-0.5">ANTHROPIC_API_KEY</code>{' '}
+          或{' '}
+          <code className="rounded bg-white px-1 py-0.5">DEEPSEEK_API_KEY</code>{' '}
           后重新部署。
         </div>
       )}

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { storageBackend } from '@/lib/storage';
+import { describeRouting } from '@/lib/llm-provider';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -21,15 +22,27 @@ export async function GET() {
   const hasClaude = !!process.env['ANTHROPIC_API_KEY'];
   const hasOpenAI = !!process.env['OPENAI_API_KEY'];
   const hasGemini = !!process.env['GOOGLE_API_KEY'];
+  const hasDeepseek = !!process.env['DEEPSEEK_API_KEY'];
   const hasDeploy = !!process.env['VC_API_TOKEN'];
   const isVercel = process.env['VERCEL'] === '1';
   /* eslint-enable dot-notation */
+
+  // Any LLM that can handle strategy + module hydrate counts. Claude and
+  // DeepSeek are first-class; OpenAI is localization-only so it doesn't
+  // gate createProject.
+  const hasAnyLLM = hasClaude || hasDeepseek;
+  const routing = describeRouting();
 
   return NextResponse.json({
     hasClaude,
     hasOpenAI,
     hasGemini,
+    hasDeepseek,
     hasDeploy,
+    // Tells the UI which backend will handle strategy + module hydrate
+    // calls at the current configuration. The `reason` string is
+    // human-readable and can be surfaced directly in a tooltip.
+    llm: routing,
     storage: storageBackend(),
     // Vercel + FS = the bad combination where writes go to /tmp and get
     // lost on next cold start. Surface explicitly so the UI can slap a
@@ -39,8 +52,12 @@ export async function GET() {
     // strategy → module hydrate → deploy)? Useful for a single top-level
     // readiness check without the UI doing its own boolean arithmetic.
     ready: {
-      createProject: hasClaude,      // strategy + hydrate both need Claude
-      addLocale: hasClaude && hasOpenAI, // hydrate + GPT polish
+      // Strategy + hydrate run through the provider layer (Claude or
+      // DeepSeek). Either one is enough — routing picks whichever is
+      // configured.
+      createProject: hasAnyLLM,
+      // Localize pass uses GPT-4o regardless of primary strategy model.
+      addLocale: hasAnyLLM && hasOpenAI,
       deploy: hasDeploy,
     },
   });

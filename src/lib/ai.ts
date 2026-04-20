@@ -11,7 +11,10 @@ import type {
 } from './types';
 import { nanoid } from 'nanoid';
 import type { ExtractedContext } from './extract';
-import { generateStrategyViaClaude, regenerateModuleViaClaude } from './llm-claude';
+import {
+  generateStrategyViaProvider,
+  regenerateModuleViaProvider,
+} from './llm-provider';
 import { findTemplateModules } from './template-detection';
 
 /**
@@ -330,7 +333,10 @@ export async function generateStrategy(
   inputs: ProductInputs,
   context?: ExtractedContext,
 ): Promise<StrategySummary> {
-  return generateStrategyViaClaude(inputs, context);
+  // Provider routing lives in llm-provider.ts. JP defaults to Claude for
+  // quality, everything else defaults to DeepSeek for cost; see
+  // CLAUDE.md §2.1 for the cost/quality tradeoff rationale.
+  return generateStrategyViaProvider(inputs, context);
 }
 
 /**
@@ -1082,7 +1088,7 @@ export async function regenerateModule(
   locale?: LocaleCode,
 ): Promise<PageModule> {
   if (strategy && locale) {
-    const live = await regenerateModuleViaClaude(
+    const live = await regenerateModuleViaProvider(
       module.type,
       inputs,
       strategy,
@@ -1169,7 +1175,7 @@ export async function hydrateModulesViaClaude(
   // LLMRequiredError / LLMCallError propagate to the route handler.
   const rewrites = await Promise.all(
     TYPES.map(async (t) => {
-      const r = await regenerateModuleViaClaude(t, inputs, strategy, tone, locale);
+      const r = await regenerateModuleViaProvider(t, inputs, strategy, tone, locale);
       return [t, r] as const;
     }),
   );
@@ -1231,7 +1237,7 @@ export async function hydrateModulesViaClaude(
     );
     const retries = await Promise.all(
       types.map(async (t) => {
-        const r = await regenerateModuleViaClaude(t, inputs, strategy, tone, locale);
+        const r = await regenerateModuleViaProvider(t, inputs, strategy, tone, locale);
         return [t, r] as const;
       }),
     );
@@ -1244,17 +1250,21 @@ export async function hydrateModulesViaClaude(
     hydratedB = apply(variants.B);
     const stillTemplateAfterRetry = findTemplateModules(hydratedA, inputs.name);
     if (stillTemplateAfterRetry.length > 0) {
-      // Still template after per-type retry. Product inputs are too
-      // thin to ground Claude, OR the strategy summary lacks anchors.
-      // Throw with the exact list so the banner can tell the user
-      // WHICH modules need attention.
+      // Still template after per-type retry. Product inputs are too thin
+      // to ground the LLM, OR the strategy summary lacks anchors. Throw
+      // with the exact list so the banner can tell the user WHICH
+      // modules need attention. `provider` reflects which backend is
+      // actually in use for this locale — messaging shouldn't say
+      // "Claude" when routing sent the calls to DeepSeek.
       const { LLMCallError } = await import('./errors');
+      const { providerFor } = await import('./llm-provider');
+      const provider = providerFor(locale);
       const badTypes = stillTemplateAfterRetry.map((r) => r.type).join(' / ');
       throw new LLMCallError(
-        'claude',
+        provider,
         'module-hydrate',
         undefined,
-        `模块 ${badTypes} 两次调用后仍匹配模板指纹（${locale}）。通常说明产品输入（name / tagline / value）过于通用，Claude 抓不到产品特定锚点。建议在 wizard 里补充更具体的产品描述后重新生成。`,
+        `模块 ${badTypes} 两次调用后仍匹配模板指纹（${locale}）。通常说明产品输入（name / tagline / value）过于通用，模型抓不到产品特定锚点。建议在 wizard 里补充更具体的产品描述后重新生成。`,
       );
     }
   }
