@@ -2,7 +2,12 @@ import Link from 'next/link';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
 import { unstable_setRequestLocale } from 'next-intl/server';
 
+// Analytics body is a client component (AnalyticsDashboard) that fetches
+// via /api/analytics, so the SSR payload itself doesn't hit KV. Still,
+// pin revalidate=0 so the route shell never goes stale — matches the
+// uniform pattern from §一.4.
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default function AnalyticsPage({ params }: { params: { locale: string } }) {
   unstable_setRequestLocale(params.locale);

@@ -1,11 +1,16 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { unstable_setRequestLocale } from 'next-intl/server';
+import { unstable_noStore as noStore } from 'next/cache';
 import { getProduct, readLandingPages } from '@/lib/storage';
 import { nativeLabel } from '@/lib/i18n-detect';
 import ProductPagesList from '@/components/ProductPagesList';
 
+// `revalidate = 0` + noStore() are required in addition to force-dynamic
+// to opt this route's Upstash-backed KV reads out of Next.js 14's
+// automatic fetch Data Cache. See §一.4 in CLAUDE.md for the full story.
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default async function ProductDetailPage({
   params,
@@ -13,6 +18,7 @@ export default async function ProductDetailPage({
   params: { locale: string; id: string };
 }) {
   unstable_setRequestLocale(params.locale);
+  noStore();
   const product = await getProduct(params.id);
   if (!product) notFound();
   const pages = await readLandingPages(product.id);

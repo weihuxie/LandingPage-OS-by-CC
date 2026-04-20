@@ -1,10 +1,24 @@
 import { unstable_setRequestLocale, getTranslations } from 'next-intl/server';
+import { unstable_noStore as noStore } from 'next/cache';
 import Link from 'next/link';
 import { readProducts, readLandingPages } from '@/lib/storage';
 import { providerStatus } from '@/lib/llm';
 import { storageBackend } from '@/lib/storage';
 
+// `dynamic = 'force-dynamic'` alone was NOT enough.
+//
+// Context: @vercel/kv is built on Upstash's REST client which uses fetch()
+// under the hood. Next.js 14 automatically caches fetch() responses in the
+// server-side Data Cache unless you opt out. `force-dynamic` only forces
+// per-request *rendering*, not Data Cache invalidation — so SCAN + GET
+// responses for products/pages were being served from a stale snapshot
+// captured on an earlier render (see the bug where /api/diag-products
+// returned 18 products but this dashboard rendered 10).
+//
+// Fix: `revalidate = 0` explicitly disables the Data Cache for this
+// route, and `noStore()` below belt-and-suspenders it for every call.
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default async function Dashboard({
   params: { locale },
@@ -12,6 +26,11 @@ export default async function Dashboard({
   params: { locale: string };
 }) {
   unstable_setRequestLocale(locale);
+  // Belt-and-suspenders: opt this render out of the Data Cache at the
+  // call site. Without noStore(), the first render after deploy can
+  // freeze the product list onto a stale KV snapshot for subsequent
+  // SSR hits until the cache evicts.
+  noStore();
   const [products, pages] = await Promise.all([readProducts(), readLandingPages()]);
   const llm = providerStatus();
   const storage = storageBackend();
@@ -31,16 +50,6 @@ export default async function Dashboard({
         <Link href={`/${locale}/new`} className="btn btn-primary">
           + 新建产品
         </Link>
-      </div>
-
-      {/* DIAG: prove whether dashboard SSR sees all products. Remove once
-          the dashboard-vs-API count discrepancy is resolved. */}
-      <div
-        data-diag="dashboard-counts"
-        className="mt-2 rounded border border-dashed border-ink-300 bg-ink-50 p-2 text-xs font-mono text-ink-700"
-      >
-        SSR diag — products: {products.length} / pages: {pages.length} / ids:{' '}
-        {products.map((p) => p.id).sort().join(',')}
       </div>
 
       {/* System status strip — at a glance LLM + storage health */}

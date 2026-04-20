@@ -58,6 +58,33 @@ export const revalidate = 0;
 
 ---
 
+### 4.1 `dynamic = 'force-dynamic'` 只管渲染模式，不禁 fetch Data Cache（2026-04 新坑）
+**症状：** 刚新建 7 个产品，`/api/products` 返回 18 条（正确），`/api/diag-products` 也返回 18 条，但 `/zh-CN/dashboard` SSR 出来只有 10 张产品卡 —— **且长期稳定**在 10。Vercel CDN `x-vercel-cache: MISS`，`cache-control: no-store`，每次请求都是真的到 lambda。
+
+**根因：** `@vercel/kv` 基于 `@upstash/redis`，走 REST API，底层用 `fetch()`。Next.js 14 会把**所有 fetch 响应自动塞进 Data Cache**。`export const dynamic = 'force-dynamic'` 只影响路由本身的 *渲染模式*（不会预渲染、每次都过 handler），但**不会**让 Data Cache 失效 —— 所以 SCAN / GET 的响应被第一次 render 时的快照钉住，后续 SSR 一直看同一份旧数据，直到 cache TTL 到期或重新部署才更新。`/api/products` 和 `/api/diag-products` 没中招是因为它们显式声明了 `revalidate = 0`，page 少了这一行。
+
+`pages` 数量也同样少（18 vs 25），同步证实是 Data Cache 层面的问题而不是某个字段过滤。
+
+**做法：** 凡是 SSR 读 KV 的 page / route handler，**两个都要加**：
+```ts
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;             // ← 关键，禁 Data Cache
+```
+并且在 server component 顶部显式调 `noStore()`（belt-and-suspenders）：
+```ts
+import { unstable_noStore as noStore } from 'next/cache';
+export default async function Page() {
+  noStore();
+  const products = await readProducts(); // 现在保证打到真实 KV
+  ...
+}
+```
+已加在 dashboard / products/[id] / assets / projects/[id] / analytics 全套 SSR page。
+
+**诊断套路**：怀疑这类问题时，临时造一个 `/api/diag-*` route 复刻同样的读调用并加 `revalidate = 0`，对比两个返回。如果 diag 结果正确而 page 错误 → 99% 是这个坑。别猜 —— 直接 instrument 一个 `<div data-diag>` 把 `products.length` 输出到 HTML，秒出真相。
+
+---
+
 ### 4.5 图片上传：不能直接把 base64 写进 KV
 **症状：** Phase A 之前，SocialProof logos 的"上传"是前端 `FileReader` → base64 塞进 module JSON。单个 2MB 的 logo 直接把整页 JSON 顶到 KV value 的上限（Upstash Redis 单 key 默认 1MB 左右），保存接口 500。MediaField（Hero / ProductShowcase / Benefits / VideoEmbed）干脆就没上传按钮，只能贴外链。Testimonial 完全没有头像字段 —— 信任感 gap。
 

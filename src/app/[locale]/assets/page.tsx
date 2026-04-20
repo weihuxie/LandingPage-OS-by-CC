@@ -1,8 +1,12 @@
 import AssetLibraryPanel from '@/components/AssetLibraryPanel';
 import { readAssets } from '@/lib/storage';
 import { unstable_setRequestLocale } from 'next-intl/server';
+import { unstable_noStore as noStore } from 'next/cache';
 
+// See CLAUDE.md §一.4 — force-dynamic alone doesn't prevent the Data
+// Cache from serving a stale KV snapshot on the asset library.
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default async function AssetsPage({
   params: { locale },
@@ -10,6 +14,7 @@ export default async function AssetsPage({
   params: { locale: string };
 }) {
   unstable_setRequestLocale(locale);
+  noStore();
   const assets = await readAssets();
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
