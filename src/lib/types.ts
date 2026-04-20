@@ -123,9 +123,48 @@ export interface VideoEmbedContent {
  */
 export type SocialProofVariant = 'logos-and-stats' | 'logos-only' | 'stats-only';
 
+/**
+ * A logo entry in a socialProof module.
+ *
+ * MVP schema stored logos as plain strings — the renderer drew each as a
+ * text chip ("Acme", "Globex", …). That shipped before MediaRef existed.
+ * Rather than migrate every old page, we kept string valid and added an
+ * object shape alongside it:
+ *
+ *   "Acme"                              → text chip
+ *   { src: "https://…", alt: "Acme" }   → <img>
+ *   "https://acme.com/logo.png"         → <img>  (detected at render)
+ *
+ * Both render paths (PageRenderer + render-html) call
+ * `resolveSocialProofLogo` so the detection stays in one place.
+ */
+export type SocialProofLogo = string | { src: string; alt?: string };
+
+export type ResolvedSocialProofLogo =
+  | { kind: 'image'; src: string; alt?: string }
+  | { kind: 'text'; text: string };
+
+/**
+ * Decide whether a logo entry renders as an image or a text chip.
+ * - object with a `src` → image
+ * - string that looks like a URL (http(s):, data:) → image
+ * - any other string → text chip
+ */
+export function resolveSocialProofLogo(l: SocialProofLogo): ResolvedSocialProofLogo {
+  if (l && typeof l === 'object' && typeof l.src === 'string') {
+    return { kind: 'image', src: l.src, alt: l.alt };
+  }
+  if (typeof l === 'string') {
+    const s = l.trim();
+    if (/^(https?:\/\/|data:)/i.test(s)) return { kind: 'image', src: s };
+    return { kind: 'text', text: s };
+  }
+  return { kind: 'text', text: '' };
+}
+
 export interface SocialProofContent {
   title: string;
-  logos: string[];
+  logos: SocialProofLogo[];
   stats: { label: string; value: string }[];
   variant?: SocialProofVariant; // default 'logos-and-stats'
 }
@@ -157,7 +196,22 @@ export interface UseCaseContent {
 
 export interface TestimonialContent {
   title: string;
-  items: { quote: string; author: string; company: string }[];
+  /**
+   * A testimonial item. `avatar` is optional — added Phase A together with
+   * the shared upload pipeline so users can pair a quote with a headshot.
+   * Old pages without `avatar` keep working; renderers show initials in a
+   * circle as a fallback (see PageRenderer and render-html.ts).
+   *
+   * `avatar.kind` should be 'image' for headshots; the 'video'/'gif'/'logo'
+   * kinds are accepted by the shared MediaField but make no visual sense
+   * on a testimonial and are treated like 'image' by the renderer.
+   */
+  items: {
+    quote: string;
+    author: string;
+    company: string;
+    avatar?: MediaRef;
+  }[];
 }
 
 export interface FAQContent {

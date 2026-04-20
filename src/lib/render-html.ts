@@ -1,4 +1,12 @@
-import type { Project } from './types';
+import type {
+  Project,
+  SocialProofLogo,
+  PageLocale,
+  MarketCode,
+  MediaRef,
+} from './types';
+import { resolveSocialProofLogo } from './types';
+import { resolveMedia } from './media';
 import { STYLE_PRESETS, cssVarsForStyle } from './styles';
 
 /**
@@ -15,7 +23,11 @@ export function renderProjectHtml(project: Project): string {
     .map(([k, v]) => `  ${k}: ${v};`)
     .join('\n');
 
-  const modulesHtml = project.modules.map((m) => serializeModule(m)).join('\n');
+  const locale = project.inputs.locale as PageLocale;
+  const market = project.inputs.market as MarketCode;
+  const modulesHtml = project.modules
+    .map((m) => serializeModule(m, locale, market))
+    .join('\n');
 
   return `<!doctype html>
 <html lang="${project.inputs.locale}">
@@ -65,7 +77,11 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function serializeModule(m: any): string {
+function serializeModule(
+  m: any,
+  locale: PageLocale,
+  market: MarketCode,
+): string {
   const c = m.content;
   switch (m.type) {
     case 'hero':
@@ -85,7 +101,12 @@ function serializeModule(m: any): string {
       const showStats = variant !== 'logos-only';
       const logosHtml = showLogos && (c.logos ?? []).length
         ? `<div class="grid3" style="margin-top:24px">${(c.logos ?? [])
-            .map((l: string) => `<div class="card" style="text-align:center">${escapeHtml(l)}</div>`)
+            .map((l: SocialProofLogo) => {
+              const r = resolveSocialProofLogo(l);
+              return r.kind === 'image'
+                ? `<div class="card" style="text-align:center;padding:12px;display:flex;align-items:center;justify-content:center"><img src="${escapeHtml(r.src)}" alt="${escapeHtml(r.alt ?? '')}" loading="lazy" style="max-height:32px;max-width:100%;object-fit:contain" /></div>`
+                : `<div class="card" style="text-align:center">${escapeHtml(r.text)}</div>`;
+            })
             .join('')}</div>`
         : '';
       const statsHtml = showStats && (c.stats ?? []).length
@@ -133,10 +154,13 @@ function serializeModule(m: any): string {
         .join('')}</div></div></section>`;
     case 'testimonial':
       return `<section class="section"><div class="wrap"><h2>${escapeHtml(c.title)}</h2><div class="grid3" style="margin-top:24px">${(c.items ?? [])
-        .map(
-          (it: any) =>
-            `<div class="card"><p>"${escapeHtml(it.quote)}"</p><p class="muted">— ${escapeHtml(it.author)}, ${escapeHtml(it.company)}</p></div>`,
-        )
+        .map((it: { quote: string; author: string; company: string; avatar?: MediaRef }) => {
+          const avatar = resolveMedia(it.avatar, locale, market);
+          const avatarHtml = avatar
+            ? `<img src="${escapeHtml(avatar.url)}" alt="${escapeHtml(avatar.alt ?? it.author)}" loading="lazy" style="width:36px;height:36px;border-radius:999px;object-fit:cover;flex-shrink:0;box-shadow:0 0 0 1px #e6e9f0" />`
+            : `<span aria-hidden="true" style="width:36px;height:36px;border-radius:999px;background:#eef1f8;color:#3b4554;font-size:12px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">${escapeHtml(initialsOfHtml(it.author))}</span>`;
+          return `<div class="card"><p>"${escapeHtml(it.quote)}"</p><div class="muted" style="display:flex;align-items:center;gap:10px;margin-top:12px">${avatarHtml}<span>— ${escapeHtml(it.author)}, ${escapeHtml(it.company)}</span></div></div>`;
+        })
         .join('')}</div></div></section>`;
     case 'faq':
       return `<section class="section"><div class="wrap" style="max-width:720px"><h2>${escapeHtml(c.title)}</h2>${(c.items ?? [])
@@ -164,4 +188,22 @@ function serializeModule(m: any): string {
     default:
       return '';
   }
+}
+
+/**
+ * HTML-side mirror of `initialsOf()` in PageRenderer — kept separate because
+ * render-html.ts is consumed by deploy / export and can't import from the
+ * React component. Returns 1–2 characters suitable for a round placeholder
+ * when a testimonial has no avatar upload. CJK names fall back to the
+ * first visible character (initials don't really make sense there).
+ */
+function initialsOfHtml(name: string): string {
+  const trimmed = (name ?? '').trim();
+  if (!trimmed) return '·';
+  const hasLatin = /[A-Za-z]/.test(trimmed);
+  if (!hasLatin) return [...trimmed][0] ?? '·';
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? '';
+  const last = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? '' : '';
+  return (first + last).toUpperCase() || '·';
 }

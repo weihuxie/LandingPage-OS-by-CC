@@ -20,6 +20,7 @@ import type {
   HeroLayout,
   BenefitsLayout,
 } from '@/lib/types';
+import { resolveSocialProofLogo } from '@/lib/types';
 import { STYLE_PRESETS, cssVarsForStyle } from '@/lib/styles';
 import {
   resolveMedia,
@@ -136,7 +137,13 @@ function ModuleBody({
     case 'useCase':
       return <UseCases content={module.content as UseCaseContent} />;
     case 'testimonial':
-      return <Testimonials content={module.content as TestimonialContent} />;
+      return (
+        <Testimonials
+          content={module.content as TestimonialContent}
+          locale={pageLocale}
+          market={market}
+        />
+      );
     case 'faq':
       return <FAQ content={module.content as FAQContent} />;
     case 'cta':
@@ -359,14 +366,30 @@ function SocialProof({ content }: { content: SocialProofContent }) {
       </div>
       {showLogos && (
         <div className="mt-5 grid grid-cols-3 items-center gap-4 sm:grid-cols-6">
-          {content.logos.map((l, i) => (
-            <div
-              key={i}
-              className="rounded-lg border border-ink-100 bg-white py-4 text-center text-sm font-medium text-ink-500"
-            >
-              {l}
-            </div>
-          ))}
+          {content.logos.map((l, i) => {
+            const r = resolveSocialProofLogo(l);
+            return r.kind === 'image' ? (
+              <div
+                key={i}
+                className="flex items-center justify-center rounded-lg border border-ink-100 bg-white p-3"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={r.src}
+                  alt={r.alt ?? ''}
+                  loading="lazy"
+                  className="max-h-8 max-w-full object-contain"
+                />
+              </div>
+            ) : (
+              <div
+                key={i}
+                className="rounded-lg border border-ink-100 bg-white py-4 text-center text-sm font-medium text-ink-500"
+              >
+                {r.text}
+              </div>
+            );
+          })}
         </div>
       )}
       {showStats && (
@@ -518,22 +541,67 @@ function UseCases({ content }: { content: UseCaseContent }) {
   );
 }
 
-function Testimonials({ content }: { content: TestimonialContent }) {
+function Testimonials({
+  content,
+  locale,
+  market,
+}: {
+  content: TestimonialContent;
+  locale: PageLocale;
+  market: MarketCode;
+}) {
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
       <div className="mt-8 grid gap-4 sm:grid-cols-2">
-        {content.items.map((it, i) => (
-          <blockquote key={i} className="rounded-2xl border border-ink-100 bg-white p-6">
-            <p className="text-ink-700">“{it.quote}”</p>
-            <footer className="mt-3 text-sm text-ink-500">
-              — {it.author}, {it.company}
-            </footer>
-          </blockquote>
-        ))}
+        {content.items.map((it, i) => {
+          const avatar = resolveMedia(it.avatar, locale, market);
+          return (
+            <blockquote key={i} className="rounded-2xl border border-ink-100 bg-white p-6">
+              <p className="text-ink-700">“{it.quote}”</p>
+              <footer className="mt-3 flex items-center gap-3 text-sm text-ink-500">
+                {avatar ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={avatar.url}
+                    alt={avatar.alt ?? it.author}
+                    className="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-ink-100"
+                  />
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink-100 text-xs font-medium text-ink-700"
+                  >
+                    {initialsOf(it.author)}
+                  </span>
+                )}
+                <span>
+                  — {it.author}, {it.company}
+                </span>
+              </footer>
+            </blockquote>
+          );
+        })}
       </div>
     </div>
   );
+}
+
+/**
+ * Pull 1–2 uppercase initials from a human name so testimonial cards have a
+ * reasonable placeholder when no avatar is uploaded. Handles CJK names by
+ * falling back to the first visible character (initials don't really exist
+ * there, and cramming "田中太" into an avatar looks worse than just "田").
+ */
+function initialsOf(name: string): string {
+  const trimmed = (name ?? '').trim();
+  if (!trimmed) return '·';
+  const hasLatin = /[A-Za-z]/.test(trimmed);
+  if (!hasLatin) return [...trimmed][0] ?? '·';
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? '';
+  const last = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? '' : '';
+  return (first + last).toUpperCase() || '·';
 }
 
 function FAQ({ content }: { content: FAQContent }) {

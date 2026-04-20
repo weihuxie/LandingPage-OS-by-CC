@@ -4,6 +4,7 @@ import type {
   PageModule,
   HeroContent,
   SocialProofContent,
+  SocialProofLogo,
   PainContent,
   SolutionContent,
   BenefitsContent,
@@ -16,7 +17,9 @@ import type {
   VideoEmbedContent,
   MediaRef,
 } from '@/lib/types';
+import { resolveSocialProofLogo } from '@/lib/types';
 import MediaField from './MediaField';
+import UploadButton from './UploadButton';
 
 type Props = {
   module: PageModule;
@@ -72,7 +75,7 @@ export default function ModuleEditor({
         {module.type === 'solution' && <SolutionEditor c={module.content as SolutionContent} setC={setContent} />}
         {module.type === 'benefits' && <BenefitsEditor c={module.content as BenefitsContent} setC={setContent} />}
         {module.type === 'useCase' && <ListItemsEditor c={module.content as UseCaseContent} setC={setContent} itemFields={['role', 'scenario']} />}
-        {module.type === 'testimonial' && <ListItemsEditor c={module.content as TestimonialContent} setC={setContent} itemFields={['quote', 'author', 'company']} />}
+        {module.type === 'testimonial' && <TestimonialEditor c={module.content as TestimonialContent} setC={setContent} />}
         {module.type === 'faq' && <ListItemsEditor c={module.content as FAQContent} setC={setContent} itemFields={['q', 'a']} />}
         {module.type === 'cta' && <CTAEditor c={module.content as CTAContent} setC={setContent} />}
         {module.type === 'form' && <FormEditor c={module.content as FormContent} setC={setContent} />}
@@ -364,7 +367,10 @@ function SocialProofEditor({ c, setC }: { c: SocialProofContent; setC: (c: Socia
         </div>
       </div>
       {showLogos && (
-        <Field label="Logos (comma separated)" value={c.logos.join(', ')} onChange={(v) => setC({ ...c, logos: v.split(',').map((s) => s.trim()).filter(Boolean) })} multiline />
+        <LogosEditor
+          logos={c.logos}
+          setLogos={(next) => setC({ ...c, logos: next })}
+        />
       )}
       {showStats && (
         <div>
@@ -398,6 +404,150 @@ function SocialProofEditor({ c, setC }: { c: SocialProofContent; setC: (c: Socia
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Per-logo editor row.
+ *
+ * Schema for each entry is `SocialProofLogo = string | { src, alt? }` —
+ * old comma-separated-text pages stay valid, new pages can store image
+ * URLs (Vercel Blob or data: URL depending on env). Mode switch (T ↔ 🖼)
+ * clears the field on transition to avoid putting a brand name into a
+ * `src` slot or a URL into a text chip.
+ *
+ * Uploads go through <UploadButton> → POST /api/assets/upload, which
+ * routes to Vercel Blob when BLOB_READ_WRITE_TOKEN is set and to an
+ * inline data: URL otherwise (local dev). Before Phase A this used
+ * a local FileReader → base64, which shipped to production as a 2MB+
+ * page JSON and hit KV limits.
+ */
+function LogosEditor({
+  logos,
+  setLogos,
+}: {
+  logos: SocialProofLogo[];
+  setLogos: (next: SocialProofLogo[]) => void;
+}) {
+  const update = (i: number, next: SocialProofLogo) => {
+    const arr = [...logos];
+    arr[i] = next;
+    setLogos(arr);
+  };
+  const remove = (i: number) => setLogos(logos.filter((_, j) => j !== i));
+
+  return (
+    <div>
+      <div className="label mb-1.5">Logos</div>
+      <div className="space-y-2">
+        {logos.map((l, i) => {
+          const r = resolveSocialProofLogo(l);
+          const isImage = r.kind === 'image';
+          return (
+            <div key={i} className="flex items-start gap-1.5">
+              {/* mode toggle — only resets field on an actual transition */}
+              <div className="flex shrink-0 overflow-hidden rounded-md border border-ink-200">
+                <button
+                  type="button"
+                  title="文字"
+                  className={`px-2 py-1 text-xs ${
+                    !isImage ? 'bg-brand-50 text-brand-700' : 'text-ink-500'
+                  }`}
+                  onClick={() => {
+                    if (isImage) update(i, '');
+                  }}
+                >
+                  T
+                </button>
+                <button
+                  type="button"
+                  title="图片"
+                  className={`border-l border-ink-200 px-2 py-1 text-xs ${
+                    isImage ? 'bg-brand-50 text-brand-700' : 'text-ink-500'
+                  }`}
+                  onClick={() => {
+                    if (!isImage) update(i, { src: '' });
+                  }}
+                >
+                  🖼
+                </button>
+              </div>
+
+              {/* input region */}
+              {isImage ? (
+                <div className="flex-1 space-y-1">
+                  <div className="flex gap-1.5">
+                    <input
+                      className="input flex-1"
+                      placeholder="图片 URL 或 data:URI"
+                      value={r.src}
+                      onChange={(e) =>
+                        update(i, { src: e.target.value, alt: r.alt })
+                      }
+                    />
+                    <UploadButton
+                      onUpload={(res) => update(i, { src: res.url, alt: r.alt })}
+                    />
+                  </div>
+                  {r.src && (
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-8 w-14 shrink-0 items-center justify-center rounded border border-ink-100 bg-white">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={r.src}
+                          alt=""
+                          className="max-h-6 max-w-full object-contain"
+                        />
+                      </div>
+                      <input
+                        className="input flex-1 text-xs"
+                        placeholder="alt 描述（可选，例如 Acme 客户 logo）"
+                        value={r.alt ?? ''}
+                        onChange={(e) =>
+                          update(i, {
+                            src: r.src,
+                            alt: e.target.value || undefined,
+                          })
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <input
+                  className="input flex-1"
+                  placeholder="品牌名文字"
+                  value={r.text}
+                  onChange={(e) => update(i, e.target.value)}
+                />
+              )}
+
+              <button
+                type="button"
+                className="btn btn-secondary shrink-0 px-2 text-xs"
+                title="删除"
+                onClick={() => remove(i)}
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        className="btn btn-secondary mt-2 text-xs"
+        onClick={() => setLogos([...logos, ''])}
+      >
+        + 加 logo
+      </button>
+      <p className="mt-2 text-xs text-ink-500">
+        文字会渲染成品牌名卡片；URL / data: 会渲染成图片。上传经
+        <code className="mx-1">/api/assets/upload</code>
+        走 Vercel Blob（本地无 <code className="mx-0.5">BLOB_READ_WRITE_TOKEN</code>{' '}
+        时以 base64 内嵌，仅限本地调试）。
+      </p>
+    </div>
   );
 }
 
@@ -483,6 +633,98 @@ function FormEditor({ c, setC }: { c: FormContent; setC: (c: FormContent) => voi
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+/**
+ * Dedicated testimonial editor (replaces the generic ListItemsEditor dispatch
+ * for type === 'testimonial' as part of Phase A). The generic editor can
+ * only render `{label:string,value:string}` text pairs — it has no way to
+ * model the optional `avatar?: MediaRef` field. Splitting it out lets us
+ * reuse <MediaField> so the headshot upload path goes through the shared
+ * /api/assets/upload endpoint just like every other image in the editor.
+ *
+ * The three text fields stay laid out vertically to match the rest of the
+ * editor (quote is multiline; author / company are single-line). The avatar
+ * field sits below them so a user focused on writing a quote isn't distracted
+ * by the upload UI until they want to attach a headshot.
+ */
+function TestimonialEditor({
+  c,
+  setC,
+}: {
+  c: TestimonialContent;
+  setC: (c: TestimonialContent) => void;
+}) {
+  const updateItem = (i: number, patch: Partial<TestimonialContent['items'][number]>) => {
+    const next = [...c.items];
+    next[i] = { ...next[i], ...patch };
+    setC({ ...c, items: next });
+  };
+  const removeItem = (i: number) =>
+    setC({ ...c, items: c.items.filter((_, j) => j !== i) });
+
+  return (
+    <>
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <div className="label">Items</div>
+      <div className="space-y-3">
+        {c.items.map((it, i) => (
+          <div key={i} className="rounded-xl border border-ink-100 p-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <div className="text-xs text-ink-500">#{i + 1}</div>
+              <button
+                onClick={() => removeItem(i)}
+                className="text-xs text-ink-500 hover:text-red-600"
+              >
+                remove
+              </button>
+            </div>
+            <div className="mt-1.5">
+              <Field
+                label="quote"
+                value={it.quote ?? ''}
+                onChange={(v) => updateItem(i, { quote: v })}
+                multiline
+              />
+            </div>
+            <div className="mt-1.5">
+              <Field
+                label="author"
+                value={it.author ?? ''}
+                onChange={(v) => updateItem(i, { author: v })}
+              />
+            </div>
+            <div className="mt-1.5">
+              <Field
+                label="company"
+                value={it.company ?? ''}
+                onChange={(v) => updateItem(i, { company: v })}
+              />
+            </div>
+            <div className="mt-2">
+              <MediaField
+                label="Avatar (头像,可选)"
+                defaultKind="image"
+                value={it.avatar}
+                onChange={(v) => updateItem(i, { avatar: v })}
+              />
+            </div>
+          </div>
+        ))}
+        <button
+          onClick={() =>
+            setC({
+              ...c,
+              items: [...c.items, { quote: '', author: '', company: '' }],
+            })
+          }
+          className="btn btn-secondary w-full text-xs"
+        >
+          + Add item
+        </button>
+      </div>
     </>
   );
 }
