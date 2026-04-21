@@ -74,13 +74,20 @@ export default function AdminLLMForm({
   providerStatus,
 }: Props) {
   const [config, setConfig] = useState<LLMConfig>(initialConfig);
+  // Baseline = "what's currently on the server". Starts equal to
+  // initialConfig (the SSR snapshot), then advances to the just-saved
+  // value on a successful PUT. Dirty comparison MUST use this, not
+  // initialConfig — otherwise `config !== initialConfig` stays true
+  // forever after the first save and "有未保存的改动" sticks (the bug a
+  // user reported in 2026-04).
+  const [baseline, setBaseline] = useState<LLMConfig>(initialConfig);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
   const dirty = useMemo(
-    () => JSON.stringify(config) !== JSON.stringify(initialConfig),
-    [config, initialConfig],
+    () => JSON.stringify(config) !== JSON.stringify(baseline),
+    [config, baseline],
   );
 
   // --- Mutators ---------------------------------------------------------
@@ -165,6 +172,14 @@ export default function AdminLLMForm({
         );
         return;
       }
+      // Advance the baseline to the just-persisted shape so the dirty
+      // indicator clears. Prefer the server-echoed config (authoritative
+      // — validateLLMConfig ran on it) when present; fall back to the
+      // local snapshot if the response body is missing it.
+      const persisted: LLMConfig =
+        body && body.config ? (body.config as LLMConfig) : config;
+      setBaseline(persisted);
+      setConfig(persisted);
       setSavedAt(Date.now());
     } catch (e: any) {
       setError(e?.message ?? '网络错误');
