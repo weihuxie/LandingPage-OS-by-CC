@@ -337,7 +337,8 @@ ADMIN_PASSWORD=<任意值> npx playwright test --grep ADMIN-LLM
 
 **坑位提醒**：
 - 本地 dev 没设 `USER_COOKIE_SECRET` 会用一个固定 dev fallback secret，启动时 console 打一条警告。Vercel 上（`VERCEL=1`）没 secret 时拒绝 fallback，直接 500 loud fail。**Summit 前要在 Vercel env 里设 `USER_COOKIE_SECRET` = 32+ 随机字符**
-- Magic link 目前没真实发邮件（S1 后续工作）—— 在 prod 上 `POST /api/auth/magic-link` 会返回 `503 EMAIL_NOT_CONFIGURED`。要上线必须先接 Resend 或 SES
+- Magic link 邮件发送走 Resend（`src/lib/email.ts`）。prod 上必须设 `RESEND_API_KEY`，不设时 `POST /api/auth/magic-link` 回 `503 EMAIL_NOT_CONFIGURED`。可选 env：`MAGIC_LINK_FROM_EMAIL`（默认 `onboarding@resend.dev`，Summit 前建议换成已 verify 的自有域名）、`MAGIC_LINK_FROM_NAME`（默认 `LandingPage OS`）
+- dev 上无 Resend key 时 magic-link 路由返回 `devLink` 字段让你直接点；Resend 配了之后 dev 也会真发邮件（且仍返回 devLink 方便调试）；prod 永远不返回 devLink
 - S2 未完成前，`/api/projects/*` 一切权限控制没生效 —— 任何登录用户还是能看 / 改所有人的页面。S1 只是"能登录"，不是"能隔离"
 
 ---

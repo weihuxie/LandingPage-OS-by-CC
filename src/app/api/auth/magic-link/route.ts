@@ -1,20 +1,34 @@
 /**
  * POST /api/auth/magic-link  { email, returnTo? }
  *
- * Creates a one-time login link for `email`, valid 15 min. In S1 the
- * link is RETURNED IN THE RESPONSE BODY because no email-sending
- * provider is wired up yet — this is explicit and loud so ops don't
- * accidentally ship this to production without first adding Resend /
- * SendGrid / SES. Production: the response should only contain
- * `{ ok: true }` and the link should go out over email.
+ * Creates a one-time login link for `email` (15 min TTL) and sends it
+ * via Resend. Response shapes:
+ *
+ *   · dev, Resend configured       → { ok, devLink } + email sent
+ *   · dev, Resend NOT configured   → { ok, devLink } (no email)
+ *   · prod, Resend configured      → { ok }
+ *   · prod, Resend NOT configured  → 503 EMAIL_NOT_CONFIGURED
+ *   · send error (any env)         → 502 EMAIL_SEND_FAILED
+ *
+ * Dev leaves devLink in the body for click-through testing even when
+ * Resend is configured — convenient during dogfooding, invisible in
+ * prod (the isProd branch drops the field).
  *
  * Intentionally does NOT confirm whether the email already has an
- * account. The response shape is identical whether the email is known
- * or new — prevents account enumeration.
+ * account. Response shape is identical whether the email is known or
+ * new — prevents account enumeration. For the same reason, email
+ * validation errors return 400 (structural) but "unknown email" and
+ * "known email" paths look identical to the caller.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { canonicalEmail, generateToken } from '@/lib/user-auth';
 import { saveMagicLink, MAGIC_LINK_TTL_MS } from '@/lib/auth-storage';
+import {
+  sendMagicLinkEmail,
+  isEmailConfigured,
+  EmailNotConfiguredError,
+  EmailSendError,
+} from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -64,15 +78,12 @@ export async function POST(req: NextRequest) {
   const origin = req.nextUrl.origin;
   const link = `${origin}/api/auth/verify?token=${encodeURIComponent(token)}`;
 
-  // TODO(S1 follow-up): Plumb into an email provider (Resend likely).
-  // Until then, in development we return the link so we can click-test
-  // the whole flow without SMTP. In production we refuse to echo the
-  // link — better to 503 loud than to silently ship a magic link in
-  // the HTTP response body.
-  if (isProd) {
+  // Prod with no Resend configured: refuse loud. Better to 503 than to
+  // silently write a magic link to KV that nobody can ever click.
+  if (isProd && !isEmailConfigured()) {
     console.error(
-      `[magic-link] email sending not configured. Would send link for ${email}. ` +
-        `Set MAGIC_LINK_EMAIL_PROVIDER to enable.`,
+      `[magic-link] RESEND_API_KEY not set. Would send link for ${email}. ` +
+        `Set RESEND_API_KEY in Vercel env to enable email delivery.`,
     );
     return NextResponse.json(
       {
@@ -84,10 +95,45 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Attempt to send. Dev without Resend: skip the send and return
+  // devLink — this lets `npm run dev` work without any env setup.
+  if (isEmailConfigured()) {
+    try {
+      await sendMagicLinkEmail(email, link);
+    } catch (e) {
+      if (e instanceof EmailNotConfiguredError) {
+        // Race: isEmailConfigured() returned true above but the key
+        // vanished between check and send. Should be impossible, but
+        // if it does happen treat as 503 — same UX as the initial
+        // check would have produced.
+        return NextResponse.json(
+          {
+            error: 'email-not-configured',
+            code: 'EMAIL_NOT_CONFIGURED',
+            message: '服务器未配置邮件发送服务，请联系管理员。',
+          },
+          { status: 503 },
+        );
+      }
+      if (e instanceof EmailSendError) {
+        console.error(`[magic-link] Resend send failed for ${email}:`, e);
+        return NextResponse.json(
+          {
+            error: 'email-send-failed',
+            code: 'EMAIL_SEND_FAILED',
+            message: '邮件发送失败，请稍后重试。',
+          },
+          { status: 502 },
+        );
+      }
+      throw e;
+    }
+  }
+
   return NextResponse.json({
     ok: true,
-    // Only present in non-prod; UI uses it to auto-fill a "click here"
-    // shortcut during dogfooding.
-    devLink: link,
+    // devLink is present only in non-prod so dogfooding doesn't require
+    // checking a mailbox. Dropped in prod even when Resend is configured.
+    ...(isProd ? {} : { devLink: link }),
   });
 }
