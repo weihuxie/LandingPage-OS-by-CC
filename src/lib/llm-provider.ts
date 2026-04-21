@@ -43,6 +43,8 @@ import {
   regenerateModuleViaDeepseek,
 } from './llm-deepseek';
 import { readLLMConfig, DEFAULT_LLM_CONFIG, type LLMProvider } from './llm-config';
+import { executeWithFallback } from './llm-fallback';
+import { LLMCallError } from './errors';
 
 /**
  * Subset of providers that actually have a strategy+copy adapter. Kept
@@ -190,6 +192,18 @@ export async function generateStrategyViaProvider(
  * ignore the hint (see variantHintForModule in llm-claude.ts). User-
  * initiated single-module regen passes the page's activeVariant; the
  * hydrate orchestrator passes 'A' / 'B' explicitly per variant.
+ *
+ * 2026-04 resilience wiring: dispatch now goes through `executeWithFallback`
+ * so quota-class failures (Anthropic 400 "credit balance too low" /
+ * OpenAI 429 insufficient_quota / HTTP 402) on the primary provider can
+ * fall through to the admin-configured chain instead of blocking the
+ * user. Pre-fix, the user's "重新生成" click on a JP hero returned 502
+ * the moment Anthropic's wallet hit zero, even though DeepSeek was
+ * configured and could have served it with a small quality drop. The
+ * classifier in llm-config.ts now promotes "credit balance" 400s to
+ * 429-quota, and this wrapper drives the chain. `fallback.enabled`
+ * remains OFF by default — silently swapping providers is a surprise,
+ * so the admin opts in at /admin/llm before the chain runs.
  */
 export async function regenerateModuleViaProvider(
   type: ModuleType,
@@ -199,9 +213,30 @@ export async function regenerateModuleViaProvider(
   locale: PageLocale,
   variant?: NarrativeVariant,
 ): Promise<Partial<ClaudeModuleContent> | null> {
-  const provider = await providerFor(locale, 'copy');
-  if (provider === 'claude') {
-    return regenerateModuleViaClaude(type, inputs, strategy, tone, locale, variant);
-  }
-  return regenerateModuleViaDeepseek(type, inputs, strategy, tone, locale, variant);
+  const primary = await providerFor(locale, 'copy');
+  const { result } = await executeWithFallback(
+    'copy',
+    primary,
+    async (provider) => {
+      if (provider === 'claude') {
+        return regenerateModuleViaClaude(type, inputs, strategy, tone, locale, variant);
+      }
+      if (provider === 'deepseek') {
+        return regenerateModuleViaDeepseek(type, inputs, strategy, tone, locale, variant);
+      }
+      // chain entries openai/gemini have no copy adapter today. Throw a
+      // typed error so the fallback orchestrator classifies this hop
+      // and moves to the next provider rather than silently returning
+      // null (which callers read as "module type is outside the
+      // regenerable set" — a different semantic). classifyProviderError
+      // will bucket this as 'network' (no status), which matches the
+      // 5xx trigger by default and keeps the chain walking.
+      throw new LLMCallError(
+        provider === 'gemini' ? 'gemini' : 'gpt',
+        'module-regen',
+        new Error(`provider ${provider} has no copy adapter`),
+      );
+    },
+  );
+  return result;
 }

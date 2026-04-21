@@ -432,20 +432,53 @@ function mergeWithDefaults(stored: Partial<LLMConfig>): LLMConfig {
  * generic 4xx (400, 422) are NOT retryable — they indicate a bad key or
  * a bad prompt, both of which survive a provider swap and just waste
  * the next provider's quota too.
+ *
+ * 2026-04 amendment: two real-world misclassifications found in prod.
+ *
+ * (a) The adapter layer wraps SDK errors in LLMCallError(provider, feature,
+ *     cause). LLMCallError has no `status` field of its own — it's just
+ *     an Error subclass carrying provider/feature/cause. If the wrapper
+ *     gets passed in here directly, `err.status` is undefined and we
+ *     fall through to `!status → 'network'`. That happens to match 5xx
+ *     triggers, so we accidentally got fallback behavior for real 5xx
+ *     failures, but the wrong class for 401/403/400s hidden inside the
+ *     wrapper. Fix: unwrap `err.cause` first.
+ *
+ * (b) Anthropic returns 400 invalid_request_error with body
+ *     "Your credit balance is too low to access the Anthropic API.
+ *     Please go to Plans & Billing to upgrade or purchase credits."
+ *     when the account wallet hits zero. Semantically this is identical
+ *     to a 429 quota exhaustion — retrying the same provider won't help,
+ *     but another provider might — yet they chose HTTP 400. Under the
+ *     old rule this landed in 4xx-other (permanent, never fallback),
+ *     stalling the pipeline until someone topped up. Fix: on any 400-499
+ *     response, peek at the message for the "out of money" keywords and
+ *     promote to 429-quota. HTTP 402 Payment Required gets the same
+ *     promotion on status alone (some APIs use it; no message sniffing
+ *     needed). Same for OpenAI's `insufficient_quota` code which can
+ *     arrive on 429 *or* 400 depending on the client library version.
  */
 export function classifyProviderError(
   err: unknown,
 ): '429-quota' | '429-rate' | '5xx' | '4xx-auth' | '4xx-other' | 'network' | null {
   if (!err) return null;
-  const e = err as {
+  // Unwrap LLMCallError so we inspect the underlying SDK error's status
+  // and message, not the wrapper's. The wrapper's message DOES contain
+  // the upstream body (appended in LLMCallError's constructor), so some
+  // keyword sniffing would still work — but `status` is the most reliable
+  // signal and only the inner error has it.
+  const raw = (err as { cause?: unknown })?.cause ?? err;
+  const e = raw as {
     status?: number;
     message?: string;
     code?: string;
   };
   const msg = (e.message ?? '').toLowerCase();
   const status = typeof e.status === 'number' ? e.status : undefined;
+  const code = (e.code ?? '').toLowerCase();
 
   if (status === 401 || status === 403) return '4xx-auth';
+  if (status === 402) return '429-quota'; // Payment Required — same as quota exhaustion.
   if (status === 429) {
     // Heuristic split: "quota" / "exceeded" / "billing" in the body is
     // usually the sticky exhaustion case (retrying the same provider is
@@ -460,7 +493,25 @@ export function classifyProviderError(
     return '429-quota';
   }
   if (status && status >= 500 && status < 600) return '5xx';
-  if (status && status >= 400 && status < 500) return '4xx-other';
+  if (status && status >= 400 && status < 500) {
+    // "Out of money" sentinels on 4xx — see case (b) in the header comment.
+    // Listed as full phrases rather than single words to avoid promoting
+    // a legit 400 ("prompt exceeded max_tokens") to quota. "quota" alone
+    // is intentionally excluded on 4xx for the same reason: 429 already
+    // catches the quota case, and a 400 mentioning "quota" is more
+    // likely a request-size issue.
+    if (
+      msg.includes('credit balance') ||
+      msg.includes('insufficient_quota') ||
+      msg.includes('purchase credits') ||
+      msg.includes('plans & billing') ||
+      msg.includes('billing') ||
+      code === 'insufficient_quota'
+    ) {
+      return '429-quota';
+    }
+    return '4xx-other';
+  }
   if (!status) return 'network';
   return null;
 }
