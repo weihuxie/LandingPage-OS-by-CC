@@ -161,6 +161,12 @@ async function patchImpl(req: NextRequest, { params }: { params: { id: string } 
       // on the 日本語 tab regenerated the zh-CN slot in Chinese and the ja
       // slot was never touched — so the Japanese tab ended up displaying
       // Chinese copy, and the module IDs shifted under the client's feet.
+      //
+      // Pass `v` as the variant hint — user clicking 重新生成 on a hero
+      // while on the "方案 A · 痛点" tab should get a pain-leaning
+      // rewrite, not a generic one. Without this, the single-module
+      // regen bypasses the variant-specific copy that hydrate now
+      // produces, and the user's A-tab hero drifts toward B-ish copy.
       const mods = page.variants[v][targetLocale] ?? [];
       const idx = mods.findIndex((m) => m.id === body.regenerateModuleId);
       if (idx !== -1) {
@@ -171,6 +177,7 @@ async function patchImpl(req: NextRequest, { params }: { params: { id: string } 
           tone,
           page.strategy,
           targetLocale,
+          v,
         );
         page.variants[v][targetLocale] = mods;
         if (body.newTone) page.tone = tone;

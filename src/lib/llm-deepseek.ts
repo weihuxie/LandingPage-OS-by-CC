@@ -48,6 +48,7 @@ import type {
   PageLocale,
   ToneKey,
   ModuleType,
+  NarrativeVariant,
 } from './types';
 import type { ExtractedContext } from './extract';
 import { LLMRequiredError, LLMCallError } from './errors';
@@ -57,6 +58,7 @@ import {
   MODULE_SCHEMAS,
   LLM_MODULE_TYPES,
   extractJsonObject,
+  variantHintForModule,
   type ClaudeModuleContent,
 } from './llm-claude';
 import { readLLMConfig, DEFAULT_LLM_CONFIG } from './llm-config';
@@ -343,6 +345,7 @@ export async function regenerateModuleViaDeepseek(
   strategy: StrategySummary,
   tone: ToneKey,
   locale: PageLocale,
+  variant?: NarrativeVariant,
 ): Promise<Partial<ClaudeModuleContent> | null> {
   if (!hasDeepseekKey()) {
     throw new LLMRequiredError('module-regen', 'DEEPSEEK_API_KEY');
@@ -374,11 +377,16 @@ export async function regenerateModuleViaDeepseek(
     `- Local adjustments: ${strategy.local.slice(0, 4).join(' | ')}`,
   ].join('\n');
 
+  // Variant hint — shared helper with llm-claude.ts so A/B framing is
+  // identical regardless of provider routing. See variantHintForModule doc.
+  const variantHint = variant ? variantHintForModule(type, variant, locale) : null;
+
   const toolName = MODULE_TOOL_NAMES[type];
   const userPrompt = [
     productLines,
     '',
     strategyLines,
+    ...(variantHint ? ['', variantHint] : []),
     '',
     `Rewrite the ${type.toUpperCase()} module. Call the ${toolName} tool with the content in ${locale}. Tone: ${tone}.`,
   ].join('\n');

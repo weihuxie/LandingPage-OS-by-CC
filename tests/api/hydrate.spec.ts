@@ -5,6 +5,7 @@
 import { test, expect } from '@playwright/test';
 import { cleanupProject, seedProject, patchPageFixture, getPage } from '../helpers/seed';
 import { getCapabilities } from '../helpers/capabilities';
+import { variantHintForModule } from '../../src/lib/llm-claude';
 
 test.describe('API-HYD · Hydrate', () => {
   test('API-HYD-001 · [需 KEY] 重跑 Claude hydrate 当前 locale', async ({ request }) => {
@@ -97,5 +98,99 @@ test.describe('API-HYD · Hydrate', () => {
     } finally {
       await cleanupProject(request, seeded.productId);
     }
+  });
+
+  /**
+   * Regression for 2026-04 用户反馈：编辑器顶部 "方案 A · 痛点" / "方案 B · 收益"
+   * 切换时两个方案 hero 一模一样。根因：hydrateModulesViaClaude 对 hero 只调
+   * 一次 LLM，把同一份 patch 覆盖到 A/B 两 variants 的 hero，把 tintHeroForVariant
+   * 的 variant-specific eyebrow/headline/subhead 全冲掉。
+   *
+   * 修复：hero 按 variant 调两次 LLM，user prompt 带 variant hint（A lead with
+   * cost / B lead with outcome），A 和 B 分别产出一份 hero patch。
+   *
+   * 本用例在真跑 LLM 下验：hydrate 结束后 A.hero 和 B.hero 的 eyebrow 或
+   * headline 必须有一个不同。两个都一样就说明 variant hint 没起作用。
+   */
+  test('API-HYD-004 · [需 KEY] 重 hydrate 后 A/B hero 必须不同', async ({ request }) => {
+    const caps = await getCapabilities(request);
+    test.skip(!caps.hasClaude, 'requires ANTHROPIC_API_KEY');
+    test.setTimeout(180_000);
+
+    const seeded = await seedProject(request);
+    try {
+      // 强制触发 hydrate：把 A/B 两边 hero headline 都打成占位符，hydrate
+      // 路由检测到 hydrationFailed=true 会重跑（seed 时已经 hydrate 过，
+      // 但 seedProject 的 baseline 很可能落在旧代码的单调 A/B 上，强制
+      // 再跑一次确保走的是新代码路径）
+      const page = await getPage(request, seeded.pageId);
+      const mark = (mods: any[]) =>
+        mods.map((m: any) =>
+          m.type === 'hero'
+            ? { ...m, content: { ...m.content, headline: 'TEMPLATE_PLACEHOLDER_HEADLINE' } }
+            : m,
+        );
+      await patchPageFixture(seeded.pageId, {
+        hydrationFailed: true,
+        variants: {
+          ...page.variants,
+          A: { ...page.variants.A, 'zh-CN': mark(page.variants.A['zh-CN']) },
+          B: { ...page.variants.B, 'zh-CN': mark(page.variants.B['zh-CN']) },
+        },
+      });
+
+      const res = await request.post(`/api/pages/${seeded.pageId}/hydrate`, {
+        data: { locale: 'zh-CN' },
+      });
+      expect(res.status()).toBe(200);
+      const body = await res.json();
+
+      const heroA = body.page.variants.A['zh-CN'].find((m: any) => m.type === 'hero');
+      const heroB = body.page.variants.B['zh-CN'].find((m: any) => m.type === 'hero');
+
+      expect(heroA.content.headline).not.toBe('TEMPLATE_PLACEHOLDER_HEADLINE');
+      expect(heroB.content.headline).not.toBe('TEMPLATE_PLACEHOLDER_HEADLINE');
+
+      // 核心断言：A/B 两个 hero 至少 eyebrow 或 headline 有一个不同。
+      // 之所以不卡 eyebrow 必不同 —— LLM 有时候会在两个 variant 都选同一
+      // 个常见短语（e.g. 都用 "智能验证"），headline 层差异更稳定。
+      const sameEyebrow = heroA.content.eyebrow === heroB.content.eyebrow;
+      const sameHeadline = heroA.content.headline === heroB.content.headline;
+      expect(sameEyebrow && sameHeadline).toBe(false);
+    } finally {
+      await cleanupProject(request, seeded.productId);
+    }
+  });
+
+  /**
+   * 纯函数 unit test —— variantHintForModule 是拼 prompt 的核心。若它返回
+   * 的 A/B 两段 hint 一样（或误把 pain 也纳入 variant-aware），整条链路都会
+   * 默默退化回 "A/B 相同"，而 LLM 端的用例又贵又慢没法每次跑。这条不走 HTTP，
+   * 所以秒跑不需要 LLM key，永远开着。
+   */
+  test('API-HYD-005 · variantHintForModule 纯函数：A vs B 必有区别、只作用于 hero', async () => {
+    const a = variantHintForModule('hero', 'A', 'zh-CN');
+    const b = variantHintForModule('hero', 'B', 'zh-CN');
+    expect(a).toBeTruthy();
+    expect(b).toBeTruthy();
+    expect(a).not.toBe(b);
+    // A 应强调 "cost/loss"，B 应强调 "outcome/gain"
+    expect(a).toMatch(/COST|cost|loss/);
+    expect(b).toMatch(/OUTCOME|outcome|gain|ROI/);
+
+    // pain / benefits / solution / cta 暂时不走 variant-aware（模块顺序
+    // 已经承载 A/B 差异）。如果未来扩展到这些类型，这里会红 —— 是提醒，
+    // 不是坏事，顺手把 ai.ts 里 NEUTRAL_TYPES 里移走 + 补断言即可。
+    expect(variantHintForModule('pain', 'A', 'zh-CN')).toBeNull();
+    expect(variantHintForModule('benefits', 'A', 'zh-CN')).toBeNull();
+    expect(variantHintForModule('solution', 'A', 'zh-CN')).toBeNull();
+    expect(variantHintForModule('cta', 'A', 'zh-CN')).toBeNull();
+
+    // 不同 locale 的 eyebrow 例子要跟着变 —— 保证提示里引用的示例文字
+    // 是目标语言的，不会让 LLM 拿英文示例原样抄进中文 hero。
+    const aJa = variantHintForModule('hero', 'A', 'ja');
+    const aEn = variantHintForModule('hero', 'A', 'en');
+    expect(aJa).toContain('現状のコスト');
+    expect(aEn).toContain('THE HIDDEN COST');
   });
 });

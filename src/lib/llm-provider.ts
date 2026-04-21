@@ -28,6 +28,7 @@ import type {
   PageLocale,
   ToneKey,
   ModuleType,
+  NarrativeVariant,
 } from './types';
 import type { ExtractedContext } from './extract';
 import {
@@ -181,17 +182,26 @@ export async function generateStrategyViaProvider(
   return generateStrategyViaDeepseek(inputs, context);
 }
 
-/** Unified module-regen entrypoint. */
+/**
+ * Unified module-regen entrypoint.
+ *
+ * `variant` threads A/B narrative framing into the adapter prompt so
+ * hero regeneration produces variant-specific copy. Non-hero modules
+ * ignore the hint (see variantHintForModule in llm-claude.ts). User-
+ * initiated single-module regen passes the page's activeVariant; the
+ * hydrate orchestrator passes 'A' / 'B' explicitly per variant.
+ */
 export async function regenerateModuleViaProvider(
   type: ModuleType,
   inputs: ProductInputs,
   strategy: StrategySummary,
   tone: ToneKey,
   locale: PageLocale,
+  variant?: NarrativeVariant,
 ): Promise<Partial<ClaudeModuleContent> | null> {
   const provider = await providerFor(locale, 'copy');
   if (provider === 'claude') {
-    return regenerateModuleViaClaude(type, inputs, strategy, tone, locale);
+    return regenerateModuleViaClaude(type, inputs, strategy, tone, locale, variant);
   }
-  return regenerateModuleViaDeepseek(type, inputs, strategy, tone, locale);
+  return regenerateModuleViaDeepseek(type, inputs, strategy, tone, locale, variant);
 }

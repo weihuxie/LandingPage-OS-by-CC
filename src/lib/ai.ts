@@ -1086,6 +1086,7 @@ export async function regenerateModule(
   tone: ToneKey,
   strategy?: StrategySummary,
   locale?: LocaleCode,
+  variant?: NarrativeVariant,
 ): Promise<PageModule> {
   if (strategy && locale) {
     const live = await regenerateModuleViaProvider(
@@ -1094,6 +1095,7 @@ export async function regenerateModule(
       strategy,
       tone,
       locale,
+      variant,
     );
     // live === null ONLY when the module type is outside Claude's handled
     // set (form / testimonial / etc.). Actual failures throw and propagate
@@ -1169,87 +1171,151 @@ export async function hydrateModulesViaClaude(
   tone: ToneKey,
   locale: PageLocale,
 ): Promise<{ A: PageModule[]; B: PageModule[] }> {
-  const TYPES: ModuleType[] = ['hero', 'pain', 'benefits', 'solution', 'cta'];
+  // Hero gets called TWICE — once per variant — so A/B eyebrow/headline
+  // lean into pain (A) vs outcome (B). Prior to 2026-04, hero was called
+  // once and the same patch overrode both variants' tinted fields (see
+  // tintHeroForVariant) — the editor's "方案 A / 方案 B" toggle rendered
+  // identical content. User report: "方案A 痛点 方案B 收益，两个页面一样."
+  //
+  // Non-hero types stay single-call: pain is A-only by design (B's module
+  // order excludes pain); benefits/solution/cta carry A/B differentiation
+  // via module ORDER not copy, so sharing the patch is fine. If we later
+  // want variant-specific benefits framing, wire variantHintForModule
+  // for 'benefits' in llm-claude.ts — all the plumbing is ready.
+  const NEUTRAL_TYPES: ModuleType[] = ['pain', 'benefits', 'solution', 'cta'];
 
   // No per-module try/catch — Promise.all short-circuits on first rejection,
   // LLMRequiredError / LLMCallError propagate to the route handler.
-  const rewrites = await Promise.all(
-    TYPES.map(async (t) => {
+  const [heroA, heroB, ...neutralRewrites] = await Promise.all([
+    regenerateModuleViaProvider('hero', inputs, strategy, tone, locale, 'A'),
+    regenerateModuleViaProvider('hero', inputs, strategy, tone, locale, 'B'),
+    ...NEUTRAL_TYPES.map(async (t) => {
       const r = await regenerateModuleViaProvider(t, inputs, strategy, tone, locale);
       return [t, r] as const;
     }),
-  );
+  ]);
 
-  const patchByType = new Map<ModuleType, Record<string, unknown>>();
-  for (const [t, r] of rewrites) {
-    // r === null means the adapter doesn't handle this type. For TYPES
-    // (hero/pain/benefits/solution/cta) Claude handles all 5, so null
-    // here would be a programming error (adapter + orchestrator out of
-    // sync). Log and skip the patch rather than crashing — downstream
-    // render still works with the templated content for that module.
+  const neutralPatchByType = new Map<ModuleType, Record<string, unknown>>();
+  for (const [t, r] of neutralRewrites as Array<readonly [ModuleType, unknown]>) {
+    // r === null means the adapter doesn't handle this type. For NEUTRAL_TYPES
+    // (pain/benefits/solution/cta) Claude handles all 4, so null here would
+    // be a programming error (adapter + orchestrator out of sync). Log and
+    // skip the patch rather than crashing — downstream render still works
+    // with the templated content for that module.
     if (r && typeof r === 'object') {
-      patchByType.set(t, r as Record<string, unknown>);
+      neutralPatchByType.set(t, r as Record<string, unknown>);
     } else {
       console.warn(`[hydrate] Claude returned null patch for type=${t}; keeping template for that module.`);
     }
   }
-  if (patchByType.size === 0) return variants;
 
-  const apply = (mods: PageModule[]): PageModule[] =>
+  let heroPatchA: Record<string, unknown> | null =
+    heroA && typeof heroA === 'object' ? (heroA as Record<string, unknown>) : null;
+  let heroPatchB: Record<string, unknown> | null =
+    heroB && typeof heroB === 'object' ? (heroB as Record<string, unknown>) : null;
+  if (!heroPatchA) console.warn(`[hydrate] Claude returned null patch for hero variant=A; keeping tinted template.`);
+  if (!heroPatchB) console.warn(`[hydrate] Claude returned null patch for hero variant=B; keeping tinted template.`);
+
+  if (!heroPatchA && !heroPatchB && neutralPatchByType.size === 0) return variants;
+
+  const applyForVariant = (
+    mods: PageModule[],
+    heroPatch: Record<string, unknown> | null,
+  ): PageModule[] =>
     mods.map((m) => {
-      const patch = patchByType.get(m.type);
+      const patch = m.type === 'hero' ? heroPatch : neutralPatchByType.get(m.type);
       if (!patch) return m;
       // Merge: Claude fields win, but preserve any templated fields Claude
       // didn't produce (e.g. nested layout hints, future locale tweaks).
       // Cast through unknown because PageModule<ModuleContent> is a discriminated
       // union that doesn't narrow by key at this point — we know the patch
-      // fields match the module's type at runtime because patchByType is
-      // keyed by ModuleType.
+      // fields match the module's type at runtime because the hero patch
+      // came from a hero-typed call, and neutralPatchByType is keyed by type.
       const merged = { ...(m.content as unknown as Record<string, unknown>), ...patch };
       return { ...m, content: merged as unknown as PageModule['content'] } as PageModule;
     });
 
-  let hydratedA = apply(variants.A);
-  let hydratedB = apply(variants.B);
+  let hydratedA = applyForVariant(variants.A, heroPatchA);
+  let hydratedB = applyForVariant(variants.B, heroPatchB);
 
-  // --- Post-validation: template-fingerprint check, ALL 5 module types --
+  // --- Post-validation: template-fingerprint check ------------------------
   //
   // Last-line defence. Claude can technically return a 200 + well-formed
   // tool_use payload whose output matches one of the L[locale] template
   // strings verbatim — e.g. Claude copying the template's benefits
-  // headline "Why teams switch" when product inputs are too generic.
-  // We detect via findTemplateModules() (covers hero / pain / solution /
-  // benefits / cta) and retry EACH flagged type individually. Retries
-  // are targeted so a template-looking cta doesn't cost us another hero
-  // call. After retry, if ANY type is still template, we throw — the
-  // caller's two-save pattern flags hydrationFailed=true and the editor
-  // shows the banner with the exact failing types.
+  // headline "Why teams switch" when product inputs are too generic. We
+  // detect via findTemplateModules() (covers hero / pain / solution /
+  // benefits / cta) and retry EACH flagged type individually.
   //
-  // Important: we use the A-variant output for the check because Claude
-  // runs ONCE per type and the same patch is applied to both variants.
-  // If the patch produces template on A, it produces template on B too.
-  // No need to double-check.
-  const stillTemplate = findTemplateModules(hydratedA, inputs.name);
-  if (stillTemplate.length > 0) {
-    const types = stillTemplate.map((r) => r.type);
+  // Per-variant check for hero since each side has its own patch. For
+  // neutral types the check is union: if hero A fails but benefits passes
+  // in both, we retry hero-A only. If benefits fails in either side, we
+  // retry benefits once (still shared patch). After retry, if ANY side
+  // still matches template, throw — the caller's two-save pattern flags
+  // hydrationFailed=true and the editor banner lists the failing types.
+  const templatesA = findTemplateModules(hydratedA, inputs.name);
+  const templatesB = findTemplateModules(hydratedB, inputs.name);
+  if (templatesA.length > 0 || templatesB.length > 0) {
+    const aTypes = new Set(templatesA.map((r) => r.type));
+    const bTypes = new Set(templatesB.map((r) => r.type));
+    const retryHeroA = aTypes.has('hero');
+    const retryHeroB = bTypes.has('hero');
+    const neutralRetryTypes = new Set<ModuleType>();
+    for (const t of aTypes) if (NEUTRAL_TYPES.includes(t)) neutralRetryTypes.add(t);
+    for (const t of bTypes) if (NEUTRAL_TYPES.includes(t)) neutralRetryTypes.add(t);
+
+    const retryLabels = [
+      ...(retryHeroA ? ['hero(A)'] : []),
+      ...(retryHeroB ? ['hero(B)'] : []),
+      ...neutralRetryTypes,
+    ];
     console.warn(
-      `[hydrate] post-validation: ${types.join(', ')} matched template fingerprint on locale=${locale}; retrying those types.`,
+      `[hydrate] post-validation: ${retryLabels.join(', ')} matched template fingerprint on locale=${locale}; retrying.`,
     );
-    const retries = await Promise.all(
-      types.map(async (t) => {
-        const r = await regenerateModuleViaProvider(t, inputs, strategy, tone, locale);
-        return [t, r] as const;
-      }),
-    );
-    for (const [t, r] of retries) {
-      if (r && typeof r === 'object') {
-        patchByType.set(t, r as Record<string, unknown>);
+
+    type PatchResult = Awaited<ReturnType<typeof regenerateModuleViaProvider>>;
+    type RetryResult =
+      | { target: 'heroA' | 'heroB'; r: PatchResult }
+      | { target: ModuleType; r: PatchResult };
+    const retryPromises: Array<Promise<RetryResult>> = [];
+    if (retryHeroA) {
+      retryPromises.push(
+        regenerateModuleViaProvider('hero', inputs, strategy, tone, locale, 'A').then(
+          (r) => ({ target: 'heroA' as const, r }),
+        ),
+      );
+    }
+    if (retryHeroB) {
+      retryPromises.push(
+        regenerateModuleViaProvider('hero', inputs, strategy, tone, locale, 'B').then(
+          (r) => ({ target: 'heroB' as const, r }),
+        ),
+      );
+    }
+    for (const t of neutralRetryTypes) {
+      retryPromises.push(
+        regenerateModuleViaProvider(t, inputs, strategy, tone, locale).then((r) => ({
+          target: t,
+          r,
+        })),
+      );
+    }
+
+    const retries = await Promise.all(retryPromises);
+    for (const entry of retries) {
+      if (entry.r && typeof entry.r === 'object') {
+        if (entry.target === 'heroA') heroPatchA = entry.r as Record<string, unknown>;
+        else if (entry.target === 'heroB') heroPatchB = entry.r as Record<string, unknown>;
+        else neutralPatchByType.set(entry.target, entry.r as Record<string, unknown>);
       }
     }
-    hydratedA = apply(variants.A);
-    hydratedB = apply(variants.B);
-    const stillTemplateAfterRetry = findTemplateModules(hydratedA, inputs.name);
-    if (stillTemplateAfterRetry.length > 0) {
+
+    hydratedA = applyForVariant(variants.A, heroPatchA);
+    hydratedB = applyForVariant(variants.B, heroPatchB);
+
+    const stillA = findTemplateModules(hydratedA, inputs.name);
+    const stillB = findTemplateModules(hydratedB, inputs.name);
+    if (stillA.length > 0 || stillB.length > 0) {
       // Still template after per-type retry. Product inputs are too thin
       // to ground the LLM, OR the strategy summary lacks anchors. Throw
       // with the exact list so the banner can tell the user WHICH
@@ -1260,7 +1326,9 @@ export async function hydrateModulesViaClaude(
       const { LLMCallError } = await import('./errors');
       const { providerFor } = await import('./llm-provider');
       const provider = await providerFor(locale);
-      const badTypes = stillTemplateAfterRetry.map((r) => r.type).join(' / ');
+      const badTypes = [
+        ...new Set([...stillA.map((r) => r.type), ...stillB.map((r) => r.type)]),
+      ].join(' / ');
       throw new LLMCallError(
         provider,
         'module-hydrate',

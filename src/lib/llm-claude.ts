@@ -41,6 +41,7 @@ import type {
   BenefitsContent,
   SolutionContent,
   CTAContent,
+  NarrativeVariant,
 } from './types';
 import type { ExtractedContext } from './extract';
 import { LLMRequiredError, LLMCallError } from './errors';
@@ -54,6 +55,63 @@ const CLAUDE_MODULE_TYPES: ReadonlySet<ModuleType> = new Set([
   'solution',
   'cta',
 ]);
+
+/**
+ * Variant-specific instruction appended to the regenerate user prompt.
+ *
+ * CLAUDE.md §2.3 defines two narrative variants per page:
+ *   - A (Pain-Agitate-Solve): eyebrow "THE HIDDEN COST", headline leads
+ *     with a loss number.
+ *   - B (Benefit-Focused): eyebrow "OUTCOME FIRST", headline leads with
+ *     a gain / ROI number.
+ *
+ * `tintHeroForVariant` in ai.ts seeds variant-specific eyebrow/headline/
+ * subhead on the TEMPLATED modules, but `hydrateModulesViaClaude` then
+ * invoked Claude (or DeepSeek) ONCE per module type and applied the same
+ * returned patch to both variants — Claude's single polished hero
+ * overwrote the tinted fields identically on A and B, and the editor's
+ * "方案 A / 方案 B" tabs rendered visually identical content. 2026-04 user
+ * report.
+ *
+ * This hint gets appended to the user prompt at call time when
+ * `variant` is passed AND type is variant-sensitive. The system prompt
+ * (MODULE_SYSTEM) stays untouched so the prompt-cache prefix is
+ * preserved — only the last few lines differ between A and B calls.
+ *
+ * Currently wired for `hero` only. Pain is A-only by design (B's module
+ * order excludes pain), so variant-awareness there is moot. benefits /
+ * solution / cta share copy between variants — A/B differentiation for
+ * those is carried by module ORDER not copy. If future telemetry shows
+ * A/B lift is low despite distinct heros, expand this to `benefits`.
+ */
+export function variantHintForModule(
+  type: ModuleType,
+  variant: NarrativeVariant,
+  locale: PageLocale,
+): string | null {
+  if (type !== 'hero') return null;
+  const eyebrowExamples: Record<PageLocale, { a: string; b: string }> = {
+    'en': { a: 'THE HIDDEN COST', b: 'OUTCOME FIRST' },
+    'zh-CN': { a: '隐性成本', b: '确定的结果' },
+    'zh-TW': { a: '隱性成本', b: '確定的結果' },
+    'ja': { a: '現状のコスト', b: '成果の約束' },
+  };
+  const ey = eyebrowExamples[locale] ?? eyebrowExamples.en;
+  if (variant === 'A') {
+    return [
+      'Variant: A (Pain-Agitate-Solve).',
+      'LEAD WITH COST. Headline must quantify what the visitor is LOSING by NOT solving the problem — hours wasted, revenue leaked, errors missed, time-to-market stretched. Prefer a concrete loss number; avoid the word "solution" in the headline.',
+      `Eyebrow should signal "hidden cost" in the target locale. Example for ${locale}: "${ey.a}". NOT a generic category label.`,
+      'Subhead: one sentence bridging from the cost back to what the product returns (timeframe + scope).',
+    ].join(' ');
+  }
+  return [
+    'Variant: B (Benefit-Focused).',
+    'LEAD WITH OUTCOME. Headline must quantify the GAIN from the solution — ROI multiplier, hours saved, speed-up factor, percentage improvement. Concrete and dated ("by week one" / "in 30 days") beats vague ("faster", "better").',
+    `Eyebrow should signal "outcome first" in the target locale. Example for ${locale}: "${ey.b}". NOT a generic category label.`,
+    'Subhead: one sentence naming who the product serves plus a proof point (customer count, industry scale).',
+  ].join(' ');
+}
 
 export function hasClaudeKey(): boolean {
   // eslint-disable-next-line dot-notation
@@ -649,6 +707,7 @@ export async function regenerateModuleViaClaude(
   strategy: StrategySummary,
   tone: ToneKey,
   locale: PageLocale,
+  variant?: NarrativeVariant,
 ): Promise<Partial<ClaudeModuleContent> | null> {
   if (!hasClaudeKey()) {
     throw new LLMRequiredError('module-regen', 'ANTHROPIC_API_KEY');
@@ -683,10 +742,15 @@ export async function regenerateModuleViaClaude(
     `- Local adjustments: ${strategy.local.slice(0, 4).join(' | ')}`,
   ].join('\n');
 
+  // Variant hint (hero only today) goes AFTER the strategy so the narrative
+  // framing guides tool call output. See variantHintForModule doc.
+  const variantHint = variant ? variantHintForModule(type, variant, locale) : null;
+
   const userPrompt = [
     productLines,
     '',
     strategyLines,
+    ...(variantHint ? ['', variantHint] : []),
     '',
     `Rewrite the ${type.toUpperCase()} module. Call the ${MODULE_TOOL_NAMES[type]} tool with the content in ${locale}. Tone: ${tone}.`,
   ].join('\n');
