@@ -600,3 +600,85 @@ export interface LandingPage {
     abStats: { A: { views: number; leads: number }; B: { views: number; leads: number } };
   };
 }
+
+// --- Multi-tenant auth (S1 of 2026-06 Summit 权限改造) -----------------
+//
+// User-facing auth for product-side customers (i.e. the people who come in
+// to BUILD landing pages using this OS — distinct from the single-operator
+// admin gate in admin-auth.ts). Four tables, KV-backed:
+//
+//   users           {id, email, ...}
+//   tenants         {id, name, ownerId, ...}
+//   tenant_members  join table (tenantId × userId + role)
+//   invites         invite links (multi-use, not email-locked, 14-day TTL)
+//
+// Decisions locked 2026-04-21 with user:
+//   · 邀请链接 NOT email-locked — anyone with link can join
+//   · 一个 Gmail 可归属多 tenant — models it as pure many-to-many
+//   · 邀请链接多次可用 — no usedBy/usedAt, owner flips `disabled` when done
+//   · TTL 14d, 首次点 invite 显示确认页, owner 可停用邀请
+//
+// Login = magic link (S1) → Google/Microsoft OAuth (S3, non-blocking).
+// All four tables' CRUD lives in storage.ts under the same KV pattern as
+// Product/LandingPage so the existing retry + index-repair plumbing covers
+// these too.
+
+export type TenantRole = 'owner' | 'editor';
+
+export interface User {
+  id: string;
+  email: string; // unique, lowercase canonical form
+  displayName?: string;
+  createdAt: number;
+  lastLoginAt?: number;
+  // OAuth bindings come in S3. Keep the shape open so we don't migrate
+  // users when we add Google/Microsoft providers.
+  oauth?: {
+    google?: { sub: string; linkedAt: number };
+    microsoft?: { sub: string; linkedAt: number };
+  };
+}
+
+export interface Tenant {
+  id: string;
+  name: string;
+  ownerId: string; // the user who created it (always also a member with role=owner)
+  createdAt: number;
+  // Soft-delete / suspension hooks — not used in S1 but reserving the
+  // shape so we don't have to migrate when we add "billing paused" etc.
+  disabled?: boolean;
+}
+
+export interface TenantMember {
+  tenantId: string;
+  userId: string;
+  role: TenantRole;
+  joinedAt: number;
+  // Audit trail: which invite (if any) let them in. Null for the owner
+  // who created the tenant, or for users added via future admin UI.
+  invitedVia?: string; // invite token
+}
+
+export interface Invite {
+  token: string; // URL-safe random, also the KV key
+  tenantId: string;
+  role: TenantRole;
+  invitedBy: string; // userId
+  createdAt: number;
+  expiresAt: number; // 14 days from createdAt by default
+  disabled?: boolean; // owner's kill switch — 2026-04-21 decision point 6
+  // No `usedBy` / `usedAt` fields — this is a MULTI-USE link. To see who
+  // came in via this token, query tenant_members where invitedVia=token.
+}
+
+export interface MagicLink {
+  token: string;
+  email: string; // lowercase canonical
+  createdAt: number;
+  expiresAt: number; // 15 min TTL
+  usedAt?: number; // one-time: once set, verify rejects
+  // Optional hint — if user clicked an invite link while logged out, we
+  // remember which invite they were trying to accept so the verify
+  // endpoint can redirect back to /invite/[token] after login.
+  returnTo?: string;
+}

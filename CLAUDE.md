@@ -294,6 +294,52 @@ ADMIN_PASSWORD=<任意值> npx playwright test --grep ADMIN-LLM
 7. **A/B 统计显著性**：Beta 分布计算，替换当前的 ±5% lift 启发式。
 8. **部署状态轮询**：当前部署后 status=building 但不自动刷新；应 SSE 或轮询到 READY。
 
+### 四点五、2026-06 Summit 多租户权限改造（进行中）
+
+**背景**：6 月首场 Summit 前要把 LandingPage OS 从"单人工具"升级到"产品方客户能登录 + 多租户隔离"。2026-04-21 跟 weih.xie 拍了一版设计，按四步走。
+
+| Sprint | 内容 | 状态 |
+|---|---|---|
+| **S1 · 认证地基** | users / tenants / tenant_members / invites 四张表 + magic link + `/invite/[token]` 接受页 + `/app` 工作空间列表 | 2026-04-21 完成（本 commit） |
+| **S2 · 权限 enforce** | `/api/projects/*` `/api/pages/*` `/api/upload/*` 全量加 tenant 范围检查 | 未开始 |
+| **S3 · OAuth** | Google + Microsoft 绑定（magic link 继续保留作 fallback） | 未开始 |
+| **S4 · 管理页** | tenant owner 成员管理（踢人 + 停用邀请 UI）、super admin 概览 | 未开始 |
+
+**S1 决策**（2026-04-21 lock，改动前先翻回这条看为什么）：
+
+- 产品方用户入口 = **邀请链接 + magic link**。平台层（weih.xie 自己）走 `/admin/*` 的 ADMIN_PASSWORD 那一套，跟产品方用户隔离（cookie 名 `lp_admin` vs `lp_user`）
+- 邀请链接 **不 lock email** —— 发出去随便转发，谁点谁进。泄露风险靠 owner 的停用开关（`invites.disabled`）兜底
+- 一个 Gmail **可归属多个 tenant** —— `tenant_members` 是纯多对多 join 表，session 里带当前 tenant 切换器
+- 邀请 token **多次可用** —— 不是一次性券。不存 `usedBy/usedAt`，要查谁通过某链接进来查 `tenant_members.invitedVia`
+- 邀请 TTL **14 天**，magic link TTL **15 分**
+- 首次点邀请链接 **显示确认页**（"加入 XXX 工作空间？"），已是成员则静默跳 `/app`
+- owner 可 `PATCH /api/tenants/[id]/invites/[token]` 停用邀请（软停，不删，保审计）
+
+**S1 关键路径（已落地，Summit 前可用）**：
+
+```
+/login                      - magic link 登录入口
+/invite/[token]             - 邀请接受页（支持未登录 / 已登录 / 已是成员三态）
+/app                        - 登录后工作空间列表 + 创建新工作空间
+
+/api/auth/magic-link        POST  {email, returnTo?} → devLink(dev only)
+/api/auth/verify            GET   ?token=xxx → 302 回 returnTo 或 /app，set cookie
+/api/auth/session           GET   → {user, tenants[]}
+/api/auth/logout            POST  → clear cookie
+
+/api/tenants                POST {name} / GET
+/api/tenants/[id]/invites   POST {role?} / GET   (owner only)
+/api/tenants/[id]/invites/[token]  PATCH {disabled?}   (owner only)
+
+/api/invites/[token]        GET (public peek — 不需要登录)
+/api/invites/[token]/accept POST (幂等 — 二次调用返回 alreadyMember=true)
+```
+
+**坑位提醒**：
+- 本地 dev 没设 `USER_COOKIE_SECRET` 会用一个固定 dev fallback secret，启动时 console 打一条警告。Vercel 上（`VERCEL=1`）没 secret 时拒绝 fallback，直接 500 loud fail。**Summit 前要在 Vercel env 里设 `USER_COOKIE_SECRET` = 32+ 随机字符**
+- Magic link 目前没真实发邮件（S1 后续工作）—— 在 prod 上 `POST /api/auth/magic-link` 会返回 `503 EMAIL_NOT_CONFIGURED`。要上线必须先接 Resend 或 SES
+- S2 未完成前，`/api/projects/*` 一切权限控制没生效 —— 任何登录用户还是能看 / 改所有人的页面。S1 只是"能登录"，不是"能隔离"
+
 ---
 
 ## 五、本地开发
