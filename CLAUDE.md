@@ -220,10 +220,13 @@ Admin 在 UI 里把 `copy.default` 设成 `openai` 之类**没 strategy/copy ada
 - 成功回退时，响应体带 `fallback: { scenario, primary, used, hops: [...] }` 字段，前端可渲染黄色 banner "GPT 本地化回退到 Claude（429-quota）"。
 - **定点场景：** `localize` 的回退特殊 —— 只有 OpenAI 一家有 adapter，但 hydrate 阶段 Claude 已经产出过 locale-native 输出，回退实现是**用 hydrate 的 Claude 产物跳过 polish pass**。这是有意识的"优雅降级"而不是模板 fig-leaf：输出还是 LLM 写的母语文案，只是少一轮 GPT 跨文化润色。
 
-**接入进度**（2026-04 修订）：今天 `executeWithFallback` 已经挂到 `copy` + `localize` 两个场景。
+**接入进度**（2026-04 第二轮修订）：今天 `executeWithFallback` 已经挂到 `copy` + `strategy` + `localize` 三个场景。Hydrate 不是独立 scenario —— 它内部 6 次并行调用全部走 `regenerateModuleViaProvider`（即 `copy` 通道），所以 copy 接了 fallback 就等于 hydrate 也接了，每个 hero-A / hero-B / pain / benefits / solution / cta 都独立参与 chain（happy path 零开销；某一路 quota 爆时只那一路换 provider，其他路照旧用 primary）。
 - `localize`（/api/pages/[id]/locales POST）：OpenAI 是唯一有 adapter 的 primary，回退只是跳过润色。
-- `copy`（module-regen，走 /api/projects/[id] PATCH 的 regenerateModuleId 分支 + hydrate 里的 per-module 重写）：Claude / DeepSeek 两家都有 adapter，回退是真的换 provider 重新跑一次。**用户 2026-04 撞到 Anthropic 400 "credit balance too low" 时，如果 admin 已经把 `fallback.enabled` 打开 + 把 DeepSeek 放进 chain，现在会自动切到 DeepSeek 出稿而不是 502**。
-- `strategy` / `extract` / `hydrate.hero-A` / `hydrate.hero-B` / `hydrate.neutrals`：**还没接**。Strategy 单调用接入很便宜（下一轮做）；hydrate 把 6 个并行 LLM 调用每个都加 chain 会把平均成本拉高，需要先想清楚是每 call 独立 fallback 还是整页一次 fallback，暂押后。
+- `copy`（module-regen，走 /api/projects/[id] PATCH 的 regenerateModuleId 分支 + hydrate 里的 per-module 重写）：Claude / DeepSeek 两家都有 adapter，回退是真的换 provider 重新跑一次。
+- `strategy`（/api/projects POST 创建页面第一步 + /api/projects/[id] PATCH 的 `regenerateStrategyAll` / `regenerateStrategyBlock` / `regenerateStrategyLine`）：Claude / DeepSeek 两家都有 adapter，primary 挂了换到另一家。
+- `extract`（长文档摄取，Gemini 唯一）：没接 —— 单一 adapter，回退没意义。Gemini 挂了这条功能就短暂不可用，不会影响其他生成路径。
+
+**用户 2026-04 撞到 Anthropic 400 "credit balance too low" 后的最终 posture**：只要 admin 把 `fallback.enabled` 打开 + 把 DeepSeek 放进 chain，从"创建新页面"到"重新生成单模块"到"hydrate 整页"全链路都能在 Claude 空钱包时自动顶住。业务侧看不到 502，只在服务器日志看到 `[llm-fallback] {scenario} fell back claude → deepseek after 1 failed hop(s)`。
 
 **分类器修订**（2026-04 · 拦住了用户直接撞到的那条错误路径）：原 `classifyProviderError` 对 Anthropic 的 `400 invalid_request_error` + body "Your credit balance is too low..." 会返 `4xx-other`（永不回退），因为 Anthropic 选了 400 而不是 429 来表达 quota 耗尽。外加 adapter 层的 `LLMCallError(provider, feature, cause)` wrapper 本身没有 `status` 字段，分类器直接拿 wrapper 看永远走 `!status → 'network'` 分支，仅对 5xx-类触发 happen-to-work。两个坑一起修：
 - `classifyProviderError` 先剥 `err.cause` 再读 status / message，保证拿到的是 SDK 原始错误。
@@ -235,9 +238,9 @@ Admin 在 UI 里把 `copy.default` 设成 `openai` 之类**没 strategy/copy ada
 测试：`tests/api/admin-llm-config.spec.ts` API-ADMIN-LLM-101..106 六条纯函数用例，不需要 ADMIN_PASSWORD / LLM key 永远跑。
 
 **运维提示：撞到 Anthropic credit 空了怎么快速脱身**：
-1. 最快 —— admin UI `/admin/llm` 把 `fallback.enabled` 打开，`fallback.triggers` 至少勾上 `429-quota`，`fallback.chain` 里确保 DeepSeek 排在 Claude 后面。保存后点一下任何 "重新生成" 按钮会看到服务器日志 `[llm-fallback] copy fell back claude → deepseek after 1 failed hop(s)`，业务侧不再 502。
-2. 不想走 fallback（例如 JP tab 对 DeepSeek 的日文质量不放心）—— 充值 Anthropic，或者临时把 `scenarios.copy.ja` 从 claude 改成 deepseek，保存后立刻生效不用 redeploy。
-3. `strategy` / `hydrate`（首次创建页面的完整链路）今天还没接 fallback —— 如果 Anthropic 空了、又要创建新 JP 页面，要么充值要么临时把 `scenarios.strategy.ja` 改成 deepseek。
+1. 最快 —— admin UI `/admin/llm` 把 `fallback.enabled` 打开，`fallback.triggers` 至少勾上 `429-quota`，`fallback.chain` 里确保 DeepSeek 排在 Claude 后面。保存后 **copy / strategy / hydrate 全链路** 都能在 Claude 挂时自动切到 DeepSeek 继续出稿，业务侧不再 502，只在服务器日志看到 hop 记录。
+2. 不想走 fallback（例如 JP tab 对 DeepSeek 的日文质量不放心）—— 充值 Anthropic，或者临时把 `scenarios.copy.ja` / `scenarios.strategy.ja` 从 claude 改成 deepseek，保存后立刻生效不用 redeploy。
+3. 创建新页面的完整链路（strategy → hydrate 6 个 call）今天也接 fallback 了，Anthropic 空时不用再靠手动改 scenarios 逃生。想稳妥的话 chain 里除了 deepseek 还可以再往后加一家（预留多一层保险）—— 但 openai / gemini 目前没 strategy / copy adapter，chain 到它们会报"no adapter"快速跳过，不会帮上忙，也不会卡住。
 
 **已知的 adapter 不兼容模型**（2026-04 用户踩坑后添加）：
 - `deepseek-reasoner` (DeepSeek R1)：不支持 `tool_choice`，而 strategy/module-regen 两条路径都用 `tool_choice` 强制结构化 JSON。dropdown 里已移除；若 admin 从 "自定义" 字段输入或 KV 里遗留了该值，`llm-deepseek.ts` 的 `resolveModel()` 会在 server 端 warn 并自动回退到 `deepseek-chat`，保证生产链路不挂。admin UI 检测到该值也会显示黄色兼容性警示。要真正支持 reasoner 得单独做一条 `response_format: json_object` + prompt 层 JSON 约束的代码路径，未排期。

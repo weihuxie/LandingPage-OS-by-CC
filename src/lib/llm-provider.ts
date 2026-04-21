@@ -172,16 +172,44 @@ export async function describeRouting(): Promise<{
   return { primary, reason, hasClaude, hasDeepseek, override, configSource };
 }
 
-/** Unified strategy-generation entrypoint. */
+/**
+ * Unified strategy-generation entrypoint.
+ *
+ * 2026-04 resilience wiring: same pattern as `regenerateModuleViaProvider`.
+ * Strategy is the first step when creating a page — if Claude's wallet
+ * hits zero mid-create, the whole pipeline used to 502 before we even
+ * got to hydrate. Now `executeWithFallback` lets the chain cover it so
+ * a JP-tagged create can fall from claude → deepseek on quota failure
+ * instead of blocking page creation.
+ *
+ * Chain entries without a strategy adapter (openai/gemini) throw an
+ * LLMCallError inside the executor so the orchestrator classifies and
+ * skips them rather than silently emitting a template-shaped null that
+ * would masquerade as LLM output downstream.
+ */
 export async function generateStrategyViaProvider(
   inputs: ProductInputs,
   context?: ExtractedContext,
 ): Promise<StrategySummary> {
-  const provider = await providerFor(inputs.locale, 'strategy');
-  if (provider === 'claude') {
-    return generateStrategyViaClaude(inputs, context);
-  }
-  return generateStrategyViaDeepseek(inputs, context);
+  const primary = await providerFor(inputs.locale, 'strategy');
+  const { result } = await executeWithFallback(
+    'strategy',
+    primary,
+    async (provider) => {
+      if (provider === 'claude') {
+        return generateStrategyViaClaude(inputs, context);
+      }
+      if (provider === 'deepseek') {
+        return generateStrategyViaDeepseek(inputs, context);
+      }
+      throw new LLMCallError(
+        provider === 'gemini' ? 'gemini' : 'gpt',
+        'strategy',
+        new Error(`provider ${provider} has no strategy adapter`),
+      );
+    },
+  );
+  return result;
 }
 
 /**
