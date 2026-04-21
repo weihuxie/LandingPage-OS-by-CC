@@ -215,6 +215,16 @@ Admin 在 UI 里把 `copy.default` 设成 `openai` 之类**没 strategy/copy ada
 **已知的 adapter 不兼容模型**（2026-04 用户踩坑后添加）：
 - `deepseek-reasoner` (DeepSeek R1)：不支持 `tool_choice`，而 strategy/module-regen 两条路径都用 `tool_choice` 强制结构化 JSON。dropdown 里已移除；若 admin 从 "自定义" 字段输入或 KV 里遗留了该值，`llm-deepseek.ts` 的 `resolveModel()` 会在 server 端 warn 并自动回退到 `deepseek-chat`，保证生产链路不挂。admin UI 检测到该值也会显示黄色兼容性警示。要真正支持 reasoner 得单独做一条 `response_format: json_object` + prompt 层 JSON 约束的代码路径，未排期。
 
+**持久化（2026-04 第二轮修订）**：和 `storage.ts` 的 Projects / Products CRUD 走同一套三路决策 —— `KV_REST_API_*` 配置好走 KV；没配且 `VERCEL === '1'` 抛 `StorageRequiredError`（admin form 拿到 503，显示 "KV 未配置" 红条）；没配且在本地 dev，fs 存到 `.data/v2-llm-config.json`。第一版曾经只在 no-KV 时 `console.warn` 然后 silently return —— admin 改完点保存，PUT 返回 200，刷新又看到默认值，完全看不出哪里出了问题。现在统一按 storage.ts 的规则来，本地 dev 改的东西也能持久化（到重启 dev server 都还在）；同时 Playwright 测试能在本地完成 round-trip 验证而不需要连 Upstash。
+
+**自定义模型 UX（2026-04 第三轮修订）**：最初 `ModelRow` 有两个按钮 "自定义 / 返回下拉"，切到自定义后输入框独立展示，状态两份（customMode useState + model 值），保存后有时不同步。用户吐槽 "我改了自定义模型去哪里保存" 之后改成下拉末尾一个 "✏️ 自定义…" sentinel option（value=`__custom__`），选中后行下出现带边框的输入框。状态单一来源（`isPreset = options.includes(model)`），刷新 / KV round-trip 也不会错位。同一轮把 action-bar 状态升级成 pill（✓ 已保存 / ● 未保存 / ✗ 错误），并在 PUT 成功后自动再 GET 一次核对 —— 捕捉 "PUT 200 但 KV 里的值对不上" 的代理 / 中间件吞包场景。
+
+**测试覆盖**：`tests/api/admin-llm-config.spec.ts`（4 条，round-trip / 校验 / scenario 路由 / 未授权）+ `tests/e2e/admin-llm-save.spec.ts`（2 条，UI 保存 + 刷新还在 / preset 切换）。两组都用 `tests/helpers/admin.ts` 的 `ADMIN_PASSWORD` env 守护 —— 没配就 skip，和 LLM key 守护的老测试风格一致。本地跑：
+```bash
+ADMIN_PASSWORD=<任意值> npx playwright test --grep ADMIN-LLM
+```
+跑完 `.data/v2-llm-config.json` 可能有测试残留，`rm -f .data/v2-llm-config.json` 清掉。
+
 **相关文件**：
 - [src/lib/llm-config.ts](src/lib/llm-config.ts) — Schema / defaults / 读写 / 错误分类器
 - [src/lib/llm-fallback.ts](src/lib/llm-fallback.ts) — 回退编排器
@@ -222,6 +232,8 @@ Admin 在 UI 里把 `copy.default` 设成 `openai` 之类**没 strategy/copy ada
 - [src/app/admin/llm/](src/app/admin/llm/) — Server page + client form
 - [src/app/api/admin/llm-config/route.ts](src/app/api/admin/llm-config/route.ts) — GET/PUT API
 - [src/middleware.ts](src/middleware.ts) — admin gate + next-intl 合并入口
+- [tests/helpers/admin.ts](tests/helpers/admin.ts) — 管理员登录测试辅助
+- [tests/api/admin-llm-config.spec.ts](tests/api/admin-llm-config.spec.ts) · [tests/e2e/admin-llm-save.spec.ts](tests/e2e/admin-llm-save.spec.ts) — 测试
 
 ---
 

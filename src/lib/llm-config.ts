@@ -32,6 +32,9 @@
  *     a precise error. No silent partial accept.
  */
 import { kv } from '@vercel/kv';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { StorageRequiredError } from './errors';
 
 /**
  * Which providers participate in scenario routing. Extract is Gemini-only
@@ -204,29 +207,95 @@ function useKV(): boolean {
 }
 
 /**
+ * Same three-way decision `storage.ts` makes for Projects / Products:
+ *   - Local (VERCEL !== '1') and no KV  → FS fallback at `.data/`
+ *   - Vercel (VERCEL === '1')  and no KV  → refuse (StorageRequiredError)
+ *   - KV configured anywhere             → KV
+ *
+ * The prior behavior was "silently skip the write and log a warning on
+ * local dev". That read reasonable ("no KV means local dev, who cares")
+ * but it made admin a no-op locally — you'd open /admin/llm, change a
+ * model, hit save, see green "saved" and then refresh to find the old
+ * value back, with no on-screen signal why. The 2026-04 post-save verify
+ * in AdminLLMForm surfaces the mismatch in the UI, but the real fix is
+ * to actually persist. FS persistence is bounded to the dev machine so
+ * it can't leak into a stale-prod scenario.
+ */
+function isVercel(): boolean {
+  // eslint-disable-next-line dot-notation
+  return process.env['VERCEL'] === '1';
+}
+
+// FS location mirrors storage.ts — share the `.data/` directory so
+// `rm -rf .data/` is the single local-state reset for all persisted
+// objects. The file is `llm-config.json` (name is KEY_LLM_CONFIG with
+// the `lp:` prefix stripped, matching storage.ts's fsPath convention).
+const LLM_CONFIG_FS_PATH = path.join(
+  // eslint-disable-next-line dot-notation
+  process.env['DATA_DIR'] ?? path.join(process.cwd(), '.data'),
+  KEY_LLM_CONFIG.replace(/^lp:/, '').replace(/:/g, '-') + '.json',
+);
+
+async function readFs(): Promise<LLMConfig | null> {
+  try {
+    const raw = await fs.readFile(LLM_CONFIG_FS_PATH, 'utf8');
+    return JSON.parse(raw) as LLMConfig;
+  } catch {
+    // ENOENT on first run, or malformed JSON — treat both as "nothing
+    // stored yet" and let the caller fall back to defaults.
+    return null;
+  }
+}
+
+async function writeFs(cfg: LLMConfig): Promise<void> {
+  await fs.mkdir(path.dirname(LLM_CONFIG_FS_PATH), { recursive: true });
+  await fs.writeFile(LLM_CONFIG_FS_PATH, JSON.stringify(cfg, null, 2), 'utf8');
+}
+
+/**
  * Returns the current LLM config. Never throws.
  *
  * Read order:
- *   1. KV (authoritative when wired)
- *   2. DEFAULT_LLM_CONFIG when KV isn't configured or the stored value
- *      is malformed / missing
+ *   1. KV when configured (prod, and local dev with Upstash wired up)
+ *   2. FS at `.data/v2-llm-config.json` on local dev without KV
+ *   3. DEFAULT_LLM_CONFIG when neither is present / stored value is bad
  *
  * Callers (the provider adapters) hit this on the hot path. Caching is
  * NOT layered here — the caller's route-level `noStore()` + dynamic =
  * 'force-dynamic' already handle freshness. A KV GET on Upstash is ~5ms,
- * negligible next to a Claude/GPT call.
+ * an FS read is a ~single-digit-ms syscall, both negligible next to a
+ * Claude/GPT call.
  */
 export async function readLLMConfig(): Promise<LLMConfig> {
-  if (!useKV()) return DEFAULT_LLM_CONFIG;
+  if (useKV()) {
+    try {
+      const stored = (await kv.get<LLMConfig>(KEY_LLM_CONFIG)) ?? null;
+      if (!stored) return DEFAULT_LLM_CONFIG;
+      // Forward-migrate on read: any field missing from the stored config
+      // (because this version added a field) picks up the default value
+      // so we never return a partially-shaped config to the adapters.
+      return mergeWithDefaults(stored);
+    } catch (e) {
+      console.error('[llm-config] KV read failed; falling back to defaults:', e);
+      return DEFAULT_LLM_CONFIG;
+    }
+  }
+
+  // No KV.
+  if (isVercel()) {
+    // Vercel + no KV was the exact fig-leaf storage.ts retired in 2026-04
+    // — writes go to an ephemeral /tmp that evaporates cold-start. Don't
+    // extend that risk here; admin just doesn't work without KV in prod.
+    console.warn('[llm-config] Vercel without KV; returning defaults only.');
+    return DEFAULT_LLM_CONFIG;
+  }
+
   try {
-    const stored = (await kv.get<LLMConfig>(KEY_LLM_CONFIG)) ?? null;
+    const stored = await readFs();
     if (!stored) return DEFAULT_LLM_CONFIG;
-    // Forward-migrate on read: any field missing from the stored config
-    // (because this version added a field) picks up the default value so
-    // we never return a partially-shaped config to the adapters.
     return mergeWithDefaults(stored);
   } catch (e) {
-    console.error('[llm-config] read failed; falling back to defaults:', e);
+    console.error('[llm-config] FS read failed; falling back to defaults:', e);
     return DEFAULT_LLM_CONFIG;
   }
 }
@@ -234,18 +303,31 @@ export async function readLLMConfig(): Promise<LLMConfig> {
 /**
  * Replace the stored config. Validates the full shape in one pass and
  * refuses to persist anything invalid. Use only from the admin API.
+ *
+ * Throws StorageRequiredError on Vercel without KV — matches storage.ts,
+ * surfaces as 503 ADMIN-layer so the admin form can show "set KV_REST_API_*
+ * in Vercel project settings" instead of pretending the write succeeded.
  */
 export async function writeLLMConfig(cfg: LLMConfig): Promise<void> {
   const err = validateLLMConfig(cfg);
   if (err) throw new Error(`invalid LLM config: ${err}`);
-  if (!useKV()) {
-    // Local dev without KV: we *could* write to .data/ but it'd create a
-    // second source of truth that local/prod disagree on. Just log; the
-    // in-memory DEFAULT_LLM_CONFIG is what local runs against anyway.
-    console.warn('[llm-config] KV not configured; write skipped (local dev).');
+
+  if (useKV()) {
+    await kv.set(KEY_LLM_CONFIG, cfg);
     return;
   }
-  await kv.set(KEY_LLM_CONFIG, cfg);
+
+  if (isVercel()) {
+    // Same posture as storage.ts: we USED to write to /tmp here and
+    // pretend it persisted. That silent-success was the bug — admin
+    // would save, refresh, see the default config back, no hint why.
+    // Fail loud now.
+    throw new StorageRequiredError();
+  }
+
+  // Local dev: persist to `.data/` so edits survive server restarts and
+  // the e2e/api tests can verify the round-trip.
+  await writeFs(cfg);
 }
 
 /**
