@@ -31,7 +31,9 @@ export async function GET() {
   // DeepSeek are first-class; OpenAI is localization-only so it doesn't
   // gate createProject.
   const hasAnyLLM = hasClaude || hasDeepseek;
-  const routing = describeRouting();
+  // describeRouting is async since the 2026-04 admin-config refactor — it
+  // reads /admin/llm's KV config to determine the effective primary.
+  const routing = await describeRouting();
 
   return NextResponse.json({
     hasClaude,

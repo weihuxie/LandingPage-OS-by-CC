@@ -44,6 +44,7 @@ import type {
 } from './types';
 import type { ExtractedContext } from './extract';
 import { LLMRequiredError, LLMCallError } from './errors';
+import { readLLMConfig, DEFAULT_LLM_CONFIG } from './llm-config';
 
 /** Module types we wire through Claude; anything else falls back to template. */
 const CLAUDE_MODULE_TYPES: ReadonlySet<ModuleType> = new Set([
@@ -59,20 +60,35 @@ export function hasClaudeKey(): boolean {
   return !!process.env['ANTHROPIC_API_KEY'];
 }
 
-/** Model + parameters. Change in one place.
+/** Max tokens per call. Model name comes from the admin-configurable
+ * llm-config at runtime (see resolveModel() below); the default is
+ * defined in DEFAULT_LLM_CONFIG.providers.claude.model.
  *
- * NOTE on model choice: we had `claude-opus-4-6` here, but diagnostic
- * probing (see /api/llm-probe) proved that this alias does not engage
- * prompt caching — the API returns the full cache_creation schema but
- * writes 0 tokens to either TTL bucket. Swapped to the pinned
- * `claude-opus-4-20250514` which caches correctly (confirmed via probe:
- * cache_creation_input_tokens=1294 on first call, system block of 1294
- * tokens). If a newer pinned Opus release (4-1, 4-2, etc.) is confirmed
- * to cache, update here. Do NOT move to a non-pinned alias without
- * re-running the probe first.
+ * HISTORY: we used to hardcode `const MODEL = 'claude-opus-4-20250514'`
+ * here. That default now lives in llm-config.ts and can be overridden
+ * via /admin/llm. The specific pin `claude-opus-4-20250514` remains the
+ * code-level default because it's the one we've verified engages prompt
+ * caching on the Anthropic API (diagnostic probe — see /api/llm-probe).
+ * If a non-pinned alias is picked by the admin and caching doesn't work
+ * as expected, the adapter still functions but the cost goes up.
  */
-const MODEL = 'claude-opus-4-20250514';
 const MAX_TOKENS = 4096;
+
+/**
+ * Resolve the model string at call time. Reads the admin config from KV
+ * (or falls back to DEFAULT_LLM_CONFIG on KV failure / missing config).
+ * Every call hits this — it's effectively a single KV GET. If that
+ * becomes a bottleneck (it hasn't in practice) we can cache per-request
+ * via React's `cache()` helper.
+ */
+async function resolveModel(): Promise<string> {
+  try {
+    const cfg = await readLLMConfig();
+    return cfg.providers.claude.model || DEFAULT_LLM_CONFIG.providers.claude.model;
+  } catch {
+    return DEFAULT_LLM_CONFIG.providers.claude.model;
+  }
+}
 
 /**
  * Robust JSON extractor. Claude is told (in the system prompt) to return
@@ -334,9 +350,10 @@ Verbatim rules:
 - If the tagline "${inputs.tagline || '(none)'}" contains a concrete promise, echo its key nouns/verbs.
 - Any named customer, metric, or pain phrase from the extracted materials must appear verbatim — do not round, paraphrase, or soften.`;
 
+  const model = await resolveModel();
   try {
     const response = await client.messages.create({
-      model: MODEL,
+      model,
       max_tokens: MAX_TOKENS,
       // Tool-use for structured output. The Anthropic API validates the
       // tool input against STRATEGY_SCHEMA server-side, so we always get
@@ -681,12 +698,13 @@ export async function regenerateModuleViaClaude(
     input_schema: MODULE_SCHEMAS[type] as any,
   };
 
+  const model = await resolveModel();
   // Single attempt — one HTTP call + parse. Kept as a local function so
   // the retry loop below can invoke it multiple times without rebuilding
   // the (moderately expensive) system prompt / user prompt / tool spec.
   async function attempt(): Promise<Partial<ClaudeModuleContent> | null> {
     const response = await client.messages.create({
-      model: MODEL,
+      model,
       max_tokens: MAX_TOKENS,
       // Tool-use structured output. See STRATEGY_TOOL comment — same
       // reasoning. Prevents the "unescaped inner double quote in CJK

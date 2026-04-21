@@ -33,13 +33,23 @@ import type {
   ModuleType,
 } from './types';
 import { LLMRequiredError, LLMCallError } from './errors';
+import { readLLMConfig, DEFAULT_LLM_CONFIG } from './llm-config';
 
 export function hasOpenAIKey(): boolean {
   // eslint-disable-next-line dot-notation
   return !!process.env['OPENAI_API_KEY'];
 }
 
-const MODEL = 'gpt-4o-2024-08-06';
+// Model comes from the admin-configurable llm-config at runtime; default
+// (gpt-4o-2024-08-06) is defined in DEFAULT_LLM_CONFIG.
+async function resolveModel(): Promise<string> {
+  try {
+    const cfg = await readLLMConfig();
+    return cfg.providers.openai.model || DEFAULT_LLM_CONFIG.providers.openai.model;
+  } catch {
+    return DEFAULT_LLM_CONFIG.providers.openai.model;
+  }
+}
 
 /** Which module types get routed through GPT-4o. Others pass through. */
 const OPENAI_MODULE_TYPES: ReadonlySet<ModuleType> = new Set([
@@ -122,9 +132,10 @@ export async function localizeModuleViaGpt(
     `Produce the ${toLocale} version. Return ONLY the new content JSON with the same schema.`,
   ].join('\n');
 
+  const model = await resolveModel();
   try {
     const resp = await client.chat.completions.create({
-      model: MODEL,
+      model,
       temperature: 0.3,
       messages: [
         { role: 'system', content: LOCALIZE_SYSTEM },

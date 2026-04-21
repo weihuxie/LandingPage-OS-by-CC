@@ -59,15 +59,28 @@ import {
   extractJsonObject,
   type ClaudeModuleContent,
 } from './llm-claude';
+import { readLLMConfig, DEFAULT_LLM_CONFIG } from './llm-config';
 
 export function hasDeepseekKey(): boolean {
   // eslint-disable-next-line dot-notation
   return !!process.env['DEEPSEEK_API_KEY'];
 }
 
-const MODEL = 'deepseek-chat'; // V3 non-thinking. Swap to 'deepseek-reasoner' for strategy if output quality requires it.
+// Model comes from the admin-configurable llm-config at runtime; the
+// default here (deepseek-chat) lives in DEFAULT_LLM_CONFIG. The admin
+// can pick deepseek-reasoner from /admin/llm if strategy output needs
+// thinking-mode quality.
 const MAX_TOKENS = 4096;
 const BASE_URL = 'https://api.deepseek.com/v1';
+
+async function resolveModel(): Promise<string> {
+  try {
+    const cfg = await readLLMConfig();
+    return cfg.providers.deepseek.model || DEFAULT_LLM_CONFIG.providers.deepseek.model;
+  } catch {
+    return DEFAULT_LLM_CONFIG.providers.deepseek.model;
+  }
+}
 
 function getClient(): OpenAI {
   // eslint-disable-next-line dot-notation
@@ -174,9 +187,10 @@ Verbatim rules:
 - If the tagline "${inputs.tagline || '(none)'}" contains a concrete promise, echo its key nouns/verbs.
 - Any named customer, metric, or pain phrase from the extracted materials must appear verbatim — do not round, paraphrase, or soften.`;
 
+  const model = await resolveModel();
   try {
     const response = await client.chat.completions.create({
-      model: MODEL,
+      model,
       max_tokens: MAX_TOKENS,
       temperature: 0.4,
       messages: [
@@ -347,9 +361,10 @@ export async function regenerateModuleViaDeepseek(
     `Rewrite the ${type.toUpperCase()} module. Call the ${toolName} tool with the content in ${locale}. Tone: ${tone}.`,
   ].join('\n');
 
+  const model = await resolveModel();
   async function attempt(): Promise<Partial<ClaudeModuleContent> | null> {
     const response = await client.chat.completions.create({
-      model: MODEL,
+      model,
       max_tokens: MAX_TOKENS,
       temperature: 0.5,
       messages: [

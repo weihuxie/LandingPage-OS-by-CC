@@ -26,13 +26,27 @@
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import type { ExtractedContext } from './extract';
 import { LLMRequiredError, LLMCallError } from './errors';
+import { readLLMConfig, DEFAULT_LLM_CONFIG } from './llm-config';
 
 export function hasGeminiKey(): boolean {
   // eslint-disable-next-line dot-notation
   return !!process.env['GOOGLE_API_KEY'];
 }
 
-const MODEL = 'gemini-1.5-pro-latest';
+// Model comes from the admin-configurable llm-config at runtime; default
+// is DEFAULT_LLM_CONFIG.providers.gemini.model (gemini-3.0-pro per the
+// explicit admin decision on 2026-04). If that ID isn't served by the
+// Gemini API yet, the call returns a clear error and the admin can
+// switch to gemini-2.5-pro / gemini-1.5-pro-latest from /admin/llm in
+// one click.
+async function resolveModel(): Promise<string> {
+  try {
+    const cfg = await readLLMConfig();
+    return cfg.providers.gemini.model || DEFAULT_LLM_CONFIG.providers.gemini.model;
+  } catch {
+    return DEFAULT_LLM_CONFIG.providers.gemini.model;
+  }
+}
 // Keep the request well under the 2M-token context window even for oddly
 // large paste payloads. 200K chars ≈ ~50K tokens, more than enough for
 // any realistic landing-page source material.
@@ -107,8 +121,9 @@ export async function extractViaGemini(
 
   // eslint-disable-next-line dot-notation
   const genAI = new GoogleGenerativeAI(process.env['GOOGLE_API_KEY']!);
+  const modelName = await resolveModel();
   const model = genAI.getGenerativeModel({
-    model: MODEL,
+    model: modelName,
     systemInstruction: EXTRACT_SYSTEM,
     generationConfig: {
       responseMimeType: 'application/json',

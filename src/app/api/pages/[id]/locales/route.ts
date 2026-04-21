@@ -3,6 +3,7 @@ import { getLandingPage, saveLandingPage, getProduct } from '@/lib/storage';
 import { generateVariants, hydrateModulesViaClaude } from '@/lib/ai';
 import { pickTopTestimonials, testimonialsToModuleItems } from '@/lib/testimonial-match';
 import { localizeModulesViaGpt } from '@/lib/llm-openai';
+import { executeWithFallback, type FallbackOutcome } from '@/lib/llm-fallback';
 import { reportHeroTemplate } from '@/lib/template-detection';
 import {
   errorResponse,
@@ -10,7 +11,7 @@ import {
   LLMCallError,
   StorageRequiredError,
 } from '@/lib/errors';
-import type { LandingPage, PageLocale, LocalizationStrategy } from '@/lib/types';
+import type { LandingPage, PageLocale, LocalizationStrategy, PageModule } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 // GPT-4o localizes 5 modules × 2 variants in parallel. Each call is ~2-5s,
@@ -140,20 +141,26 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
 
   // Two-pass localization: Claude rewrites text-heavy modules natively
   // in the target locale; GPT-4o polishes anything Claude doesn't own
-  // (form labels, testimonial text, faq). BOTH passes must succeed or
-  // we refuse to add the locale — a half-localized locale would be the
-  // exact "looks-right-is-actually-wrong" fig leaf we removed.
+  // (form labels, testimonial text, faq). BOTH passes must succeed (or
+  // an admin-enabled fallback covers the GPT pass) or we refuse to add
+  // the locale — a half-localized locale would be the exact "looks-
+  // right-is-actually-wrong" fig leaf we removed.
   //
   // Previously, Claude failure was swallowed and GPT was asked to
   // "translate" the generic English templates into Japanese, producing
   // "節約時間 / ROIを上げる" boilerplate even though the default locale
   // had product-specific Claude output. That discrepancy is what made
   // users think Claude wrote the page — the default locale felt native,
-  // the Japanese locale felt like a GPT translation. Now we fail loud:
-  // either the pipeline fully succeeds (both Claude + GPT) or the
-  // locale is not added and the UI shows why.
+  // the Japanese locale felt like a GPT translation. Now we fail loud
+  // when Claude fails, and on GPT failure we consult the admin fallback
+  // config (/admin/llm): with fallback ON, we keep Claude's hydrated
+  // output as the final result (still locale-native, just missing GPT's
+  // cross-cultural polish). With fallback OFF, the original fail-loud
+  // behavior is preserved.
   const targetMarketForLocalize = body.strategy?.targetMarket ?? page.targetMarket;
-  let localizedA, localizedB;
+  let localizedA: PageModule[];
+  let localizedB: PageModule[];
+  let fallbackOutcome: FallbackOutcome<{ A: PageModule[]; B: PageModule[] }> | null = null;
   try {
     const claudeOut = await hydrateModulesViaClaude(
       { A: variants.A, B: variants.B },
@@ -162,10 +169,33 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
       page.tone,
       locale,
     );
-    [localizedA, localizedB] = await Promise.all([
-      localizeModulesViaGpt(claudeOut.A, locale, targetMarketForLocalize, page.tone),
-      localizeModulesViaGpt(claudeOut.B, locale, targetMarketForLocalize, page.tone),
-    ]);
+
+    // Primary: GPT-4o polish on both variants in parallel.
+    // Fallback target (when admin enables it + trigger matches): return
+    // Claude's hydrate output unchanged. Hydrate already produced locale-
+    // native copy, so skipping the polish pass is graceful degradation,
+    // not template regression.
+    fallbackOutcome = await executeWithFallback(
+      'localize',
+      'openai',
+      async (provider) => {
+        if (provider === 'openai') {
+          const [a, b] = await Promise.all([
+            localizeModulesViaGpt(claudeOut.A, locale, targetMarketForLocalize, page.tone),
+            localizeModulesViaGpt(claudeOut.B, locale, targetMarketForLocalize, page.tone),
+          ]);
+          return { A: a, B: b };
+        }
+        // No second-provider localize adapter exists yet. The fallback
+        // "returns" the hydrate-time Claude output — no new LLM call
+        // here, since hydrate already ran. `provider` still ends up in
+        // outcome.usedProvider so the client can render "fell back to
+        // <provider>" correctly.
+        return { A: claudeOut.A, B: claudeOut.B };
+      },
+    );
+    localizedA = fallbackOutcome.result.A;
+    localizedB = fallbackOutcome.result.B;
   } catch (e) {
     if (e instanceof LLMRequiredError || e instanceof LLMCallError) {
       console.error('[locales] LLM pipeline failed; locale NOT added:', e);
@@ -196,7 +226,25 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
   page.hydrationFailed = allTemplate;
 
   await saveLandingPage(page);
-  return NextResponse.json({ page });
+  // Surface fallback hops on the response when they happened, so the UI
+  // can render a yellow "GPT localize fell back to Claude (429-quota)"
+  // banner instead of silently shipping the degraded output. Happy path
+  // omits the field entirely to keep the response clean.
+  const usedFallback =
+    fallbackOutcome !== null && fallbackOutcome.hops.length > 0;
+  return NextResponse.json({
+    page,
+    ...(usedFallback
+      ? {
+          fallback: {
+            scenario: 'localize',
+            primary: 'openai',
+            used: fallbackOutcome!.usedProvider,
+            hops: fallbackOutcome!.hops,
+          },
+        }
+      : {}),
+  });
 }
 
 /**

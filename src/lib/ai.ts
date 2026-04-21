@@ -1255,10 +1255,11 @@ export async function hydrateModulesViaClaude(
       // with the exact list so the banner can tell the user WHICH
       // modules need attention. `provider` reflects which backend is
       // actually in use for this locale — messaging shouldn't say
-      // "Claude" when routing sent the calls to DeepSeek.
+      // "Claude" when routing sent the calls to DeepSeek. providerFor is
+      // async since the 2026-04 admin-config refactor (reads KV).
       const { LLMCallError } = await import('./errors');
       const { providerFor } = await import('./llm-provider');
-      const provider = providerFor(locale);
+      const provider = await providerFor(locale);
       const badTypes = stillTemplateAfterRetry.map((r) => r.type).join(' / ');
       throw new LLMCallError(
         provider,
