@@ -4,6 +4,7 @@ import { generateVariants, hydrateModulesViaClaude } from '@/lib/ai';
 import { pickTopTestimonials, testimonialsToModuleItems } from '@/lib/testimonial-match';
 import { localizeModulesViaGpt } from '@/lib/llm-openai';
 import { executeWithFallback, type FallbackOutcome } from '@/lib/llm-fallback';
+import { readLLMConfig } from '@/lib/llm-config';
 import { reportHeroTemplate } from '@/lib/template-detection';
 import {
   errorResponse,
@@ -158,6 +159,17 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
   // cross-cultural polish). With fallback OFF, the original fail-loud
   // behavior is preserved.
   const targetMarketForLocalize = body.strategy?.targetMarket ?? page.targetMarket;
+  // Read admin-configured localize primary. Prior to this, primary was
+  // hardcoded to 'openai', which meant setting "本地化 pass = DeepSeek"
+  // in /admin/llm silently had zero effect — every add-locale call still
+  // hit GPT first. A user running into KSP activation errors on GPT-4o
+  // set the admin config to DeepSeek expecting to bypass OpenAI and was
+  // confused when the same 403 kept appearing. Now the admin switch
+  // genuinely routes: pick OpenAI → real GPT polish; pick anything else
+  // → skip polish and use hydrate output (see executor below).
+  const llmCfg = await readLLMConfig();
+  const localizePrimary = llmCfg.scenarios.localize;
+
   let localizedA: PageModule[];
   let localizedB: PageModule[];
   let fallbackOutcome: FallbackOutcome<{ A: PageModule[]; B: PageModule[] }> | null = null;
@@ -170,14 +182,21 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
       locale,
     );
 
-    // Primary: GPT-4o polish on both variants in parallel.
-    // Fallback target (when admin enables it + trigger matches): return
-    // Claude's hydrate output unchanged. Hydrate already produced locale-
-    // native copy, so skipping the polish pass is graceful degradation,
-    // not template regression.
+    // Primary: if admin picked openai, run the real GPT-4o polish on
+    // both variants in parallel. Any other primary pick means "skip
+    // the polish pass and use hydrate's locale-native Claude output
+    // unchanged" — hydrate already produced native copy, so this is
+    // graceful degradation, not a template fallback. We preserve that
+    // same behavior on the fallback path too (see executor's else
+    // branch); the chain walks, but downstream providers all land in
+    // the "return claudeOut" shape because only OpenAI has a real
+    // localize adapter today. Listed in the chain they still serve
+    // the purpose of ordering which provider is recorded as the one
+    // that "covered" the hop, in case we add DeepSeek/Claude localize
+    // adapters later.
     fallbackOutcome = await executeWithFallback(
       'localize',
-      'openai',
+      localizePrimary,
       async (provider) => {
         if (provider === 'openai') {
           const [a, b] = await Promise.all([
@@ -186,11 +205,12 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
           ]);
           return { A: a, B: b };
         }
-        // No second-provider localize adapter exists yet. The fallback
-        // "returns" the hydrate-time Claude output — no new LLM call
-        // here, since hydrate already ran. `provider` still ends up in
-        // outcome.usedProvider so the client can render "fell back to
-        // <provider>" correctly.
+        // No second-provider localize adapter exists yet. Returning the
+        // hydrate-time Claude output is the "skip polish" path — no new
+        // LLM call here, since hydrate already ran. `provider` still
+        // ends up in outcome.usedProvider so the client sees which
+        // provider was nominally used (the admin-selected primary, or
+        // whoever covered the hop during fallback).
         return { A: claudeOut.A, B: claudeOut.B };
       },
     );
@@ -238,7 +258,7 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
       ? {
           fallback: {
             scenario: 'localize',
-            primary: 'openai',
+            primary: localizePrimary,
             used: fallbackOutcome!.usedProvider,
             hops: fallbackOutcome!.hops,
           },

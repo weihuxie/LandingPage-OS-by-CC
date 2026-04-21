@@ -1,11 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import type {
-  LLMConfig,
-  LLMProvider,
-  LLMScenario,
-} from '@/lib/llm-config';
+import type { LLMConfig, LLMProvider } from '@/lib/llm-config';
 
 type ModelOption = { id: string; label: string };
 type ProviderStatus = Record<LLMProvider, boolean>;
@@ -66,6 +62,16 @@ const INCOMPATIBLE_MODELS: Partial<
     },
   ],
 };
+
+/**
+ * Sentinel value used in the model <select> to mean "switch this row to a
+ * free-form text input". Picked deliberately ugly so it can't collide with
+ * a real provider model ID (OpenAI/Anthropic/etc never use double
+ * underscores). The value never lands in LLMConfig — it's translated to
+ * an empty-string model in onChange, which puts the row into custom mode
+ * with the input focused.
+ */
+const CUSTOM_MODEL_SENTINEL = '__custom__';
 
 export default function AdminLLMForm({
   initialConfig,
@@ -181,6 +187,35 @@ export default function AdminLLMForm({
       setBaseline(persisted);
       setConfig(persisted);
       setSavedAt(Date.now());
+
+      // Post-save verify: re-GET the config and sanity-check that what
+      // the server has stored matches what we just sent. Catches the
+      // "PUT returned 200 but KV silently no-op'd" scenarios — e.g.
+      // `writeLLMConfig` short-circuits when KV isn't configured, or
+      // an upstream proxy swallows PATCHes, or the middleware rewrote
+      // the body. Prior to this check, those all looked like success
+      // in the UI while the stored value was actually stale. The
+      // 2026-04 "我点了保存但没保存上" report is what motivated it.
+      try {
+        const verifyResp = await fetch('/api/admin/llm-config', {
+          cache: 'no-store',
+        });
+        if (verifyResp.ok) {
+          const verifyBody = await verifyResp.json();
+          const serverConfig = verifyBody?.config;
+          if (
+            serverConfig &&
+            JSON.stringify(serverConfig) !== JSON.stringify(persisted)
+          ) {
+            setError(
+              'PUT 返回 200 但 KV 里存的值和刚提交的不一致 —— 可能是后端没配 KV 或写入被吞。检查 /api/health 的 storage 字段。',
+            );
+          }
+        }
+      } catch {
+        // Verify failures are advisory only — primary save already
+        // succeeded per the PUT response. Don't flip it to an error.
+      }
     } catch (e: any) {
       setError(e?.message ?? '网络错误');
     } finally {
@@ -207,7 +242,6 @@ export default function AdminLLMForm({
               options={modelOptions[p]}
               keyConfigured={providerStatus[p]}
               onChange={(m) => setModel(p, m)}
-              defaultModel={defaults.providers[p].model}
             />
           ))}
         </div>
@@ -360,16 +394,28 @@ export default function AdminLLMForm({
         </div>
       </section>
 
-      {/* Action bar */}
+      {/* Action bar. Pill-shaped status indicators (vs the prior thin
+          gray text) so a successful save is visually obvious — the 2026-04
+          "我点了保存但没保存上" user report turned out to be partly a
+          visibility issue: the small text feedback got missed and the
+          sticky bar looked identical before/after the PUT. */}
       <div className="sticky bottom-4 flex items-center justify-between gap-3 rounded-xl border border-ink-200 bg-white p-3 shadow-lg">
-        <div className="flex items-center gap-3 text-xs">
-          {savedAt && !dirty && (
-            <span className="text-emerald-700">
-              已保存 · {new Date(savedAt).toLocaleTimeString()}
+        <div className="flex items-center gap-2">
+          {savedAt && !dirty && !error && (
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 ring-1 ring-inset ring-emerald-200">
+              ✓ 已保存 · {new Date(savedAt).toLocaleTimeString()}
             </span>
           )}
-          {dirty && <span className="text-amber-700">有未保存的改动</span>}
-          {error && <span className="text-red-700">{error}</span>}
+          {dirty && (
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-200">
+              ● 有未保存的改动
+            </span>
+          )}
+          {error && (
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-red-50 px-2.5 py-1 text-xs font-medium text-red-800 ring-1 ring-inset ring-red-200">
+              ✗ {error}
+            </span>
+          )}
         </div>
         <div className="flex gap-2">
           <button
@@ -404,21 +450,23 @@ function ModelRow({
   options,
   keyConfigured,
   onChange,
-  defaultModel,
 }: {
   provider: LLMProvider;
   model: string;
   options: ModelOption[];
   keyConfigured: boolean;
   onChange: (m: string) => void;
-  defaultModel: string;
 }) {
   const meta = PROVIDER_META[provider];
-  // "Custom" mode kicks in when the current value isn't in the preset list
-  // — presumably the admin typed a new model ID by hand. The input stays
-  // visible so they can edit it without losing the value.
+  // A row is in "custom mode" when its stored value isn't in the preset
+  // catalog. We DERIVE this from the value instead of tracking it as
+  // separate state — that way a KV round-trip (load config → form →
+  // save → re-load) always lands in the same UI shape, and there's no
+  // second source of truth to keep in sync. Older split-mode version
+  // had a `customMode` useState that got out of sync with the model
+  // value after save and caused the "clicked 自定义, typed value, hit
+  // save, clicked 返回下拉, value still stuck" dance.
   const isPreset = options.some((o) => o.id === model);
-  const [customMode, setCustomMode] = useState(!isPreset);
   // Surface known-incompatible picks so the admin doesn't have to hit a
   // 400 to discover "reasoner breaks regen". The adapter coerces at
   // runtime, but the warning lets them fix the config proactively.
@@ -436,46 +484,45 @@ function ModelRow({
         )}
       </div>
       <div>
-        {customMode ? (
-          <div className="flex gap-2">
+        <select
+          value={isPreset ? model : CUSTOM_MODEL_SENTINEL}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === CUSTOM_MODEL_SENTINEL) {
+              // Switching from a preset to custom: blank the value so the
+              // input below focuses and starts empty. If we're already in
+              // custom mode the select still shows the sentinel, so this
+              // branch only fires on preset → custom transitions.
+              if (isPreset) onChange('');
+            } else {
+              onChange(v);
+            }
+          }}
+          className="w-full rounded-lg border border-ink-200 px-3 py-1.5 text-xs outline-none focus:border-brand-500"
+        >
+          {options.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label} · {o.id}
+            </option>
+          ))}
+          <option value={CUSTOM_MODEL_SENTINEL}>
+            ✏️ 自定义…（手填模型 ID）
+          </option>
+        </select>
+        {!isPreset && (
+          <div className="mt-2 rounded-lg border border-brand-200 bg-brand-50/40 p-2">
             <input
               type="text"
               value={model}
               onChange={(e) => onChange(e.target.value)}
-              placeholder="模型 ID（自定义）"
-              className="flex-1 rounded-lg border border-ink-200 px-3 py-1.5 text-xs outline-none focus:border-brand-500"
+              placeholder="输入模型 ID，如 gpt-4o-mini、claude-sonnet-4"
+              autoFocus={model === ''}
+              className="w-full rounded-md border border-ink-200 bg-white px-3 py-1.5 text-xs outline-none focus:border-brand-500"
             />
-            <button
-              type="button"
-              onClick={() => {
-                setCustomMode(false);
-                onChange(options[0]?.id ?? defaultModel);
-              }}
-              className="btn btn-secondary px-2 py-1 text-xs"
-            >
-              返回下拉
-            </button>
-          </div>
-        ) : (
-          <div className="flex gap-2">
-            <select
-              value={model}
-              onChange={(e) => onChange(e.target.value)}
-              className="flex-1 rounded-lg border border-ink-200 px-3 py-1.5 text-xs outline-none focus:border-brand-500"
-            >
-              {options.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label} · {o.id}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => setCustomMode(true)}
-              className="btn btn-secondary px-2 py-1 text-xs"
-            >
-              自定义
-            </button>
+            <div className="mt-1.5 text-[11px] text-ink-600">
+              自定义 ID 不走平台校验。改完滚到页面最底部的工具栏点
+              <b className="text-brand-700">保存</b>。
+            </div>
           </div>
         )}
         {incompatible && (
