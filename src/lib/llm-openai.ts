@@ -40,6 +40,39 @@ export function hasOpenAIKey(): boolean {
   return !!process.env['OPENAI_API_KEY'];
 }
 
+/**
+ * Optional custom base URL for OpenAI-compatible proxies.
+ *
+ * Set `OPENAI_BASE_URL` to route calls through a gateway that speaks the
+ * OpenAI Chat Completions wire format (e.g. Kingsoft Cloud's `kspmas`,
+ * Azure OpenAI compatibility shims, internal gateways). When unset, the
+ * SDK defaults to `https://api.openai.com/v1`.
+ *
+ * Only the URL is swapped — the SDK still reads OPENAI_API_KEY, so the
+ * key you set needs to be one the proxy accepts (often the proxy vendor's
+ * own key, not an openai.com key).
+ *
+ * We read it once, lazily, because Vercel env vars are static per
+ * invocation. A misspelled value surfaces as a 4xx/network error on the
+ * first call — we don't pre-validate it (can't tell a good URL from a
+ * bad one without hitting the wire).
+ */
+function getOpenAIBaseURL(): string | undefined {
+  // eslint-disable-next-line dot-notation
+  const raw = (process.env['OPENAI_BASE_URL'] ?? '').trim();
+  return raw.length > 0 ? raw : undefined;
+}
+
+/**
+ * Build an OpenAI client with the configured key + optional custom base
+ * URL. Kept as a helper so both `localizeModuleViaGpt` call sites (single
+ * and batch) share the identical construction path.
+ */
+function buildOpenAIClient(): OpenAI {
+  const baseURL = getOpenAIBaseURL();
+  return baseURL ? new OpenAI({ baseURL }) : new OpenAI();
+}
+
 // Model comes from the admin-configurable llm-config at runtime; default
 // (gpt-4o-2024-08-06) is defined in DEFAULT_LLM_CONFIG.
 async function resolveModel(): Promise<string> {
@@ -118,7 +151,7 @@ export async function localizeModuleViaGpt(
   // "Not my job" — caller keeps the source module unchanged.
   if (!OPENAI_MODULE_TYPES.has(module.type)) return null;
 
-  const client = new OpenAI();
+  const client = buildOpenAIClient();
 
   const userPrompt = [
     `Target locale: ${toLocale}`,

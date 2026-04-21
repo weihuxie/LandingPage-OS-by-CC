@@ -272,6 +272,7 @@ npm run build       # 验证 Vercel 部署前会否 build 失败
 - 不配 `BLOB_READ_WRITE_TOKEN` → 本地 OK（图片以 base64 内联，控制台有黄字提醒）；部署到 Vercel 后上传会返回 503，提示 `UPLOAD_REQUIRED`。
 - 不配 `ADMIN_PASSWORD` → `/admin/*` 和 `/api/admin/*` 都会跳到 `/admin/setup-required`（页面）或返回 503（API）。LLM 生产流量不受影响 —— admin 界面只是改配置的入口，`DEFAULT_LLM_CONFIG` 继续兜底（见 §2.5）。
 - 可选 `ADMIN_COOKIE_SECRET` → 不配的话从 `ADMIN_PASSWORD` 派生，单机跑没差。多实例且要做轮转时才显式配。
+- 可选 `OPENAI_BASE_URL` → 把 OpenAI SDK 的请求导向兼容 OpenAI Chat Completions 协议的代理网关（如金山云 kspmas、Azure OpenAI shim、内部 gateway）。不配则走 `https://api.openai.com/v1`。**注意**：`OPENAI_API_KEY` 同时会被发给代理，key 必须是代理认的那把（通常是代理厂商自己的 key，不是 openai.com 的）。
 
 **DeepSeek 申请路径**：https://platform.deepseek.com → API Keys → Create。充值最低 $2。填到 Vercel Project Settings → Environment Variables → `DEEPSEEK_API_KEY` → Redeploy。
 
