@@ -101,6 +101,26 @@ export default async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // --- S1 auth pages → pass-through (no locale prefixing) ---------------
+  // /login, /invite/[token], /app and its subtree are product-side user
+  // auth UI (2026-06 Summit 多租户改造 S1, CLAUDE.md §4.5). Intentionally
+  // NOT localized:
+  //   · Transactional flow with minimal copy — translation pays back less
+  //     than for dashboard / editor pages
+  //   · Summit on-the-spot sign-up URLs fit in a QR slide without /zh-CN/
+  //   · Follows the /admin/* precedent: single-lane auth stays off intl
+  // Without this block, intlMiddleware would 307 `/login` → `/zh-CN/login`
+  // which 404s (no page at that path). If we later decide to localize,
+  // move the three pages under [locale]/ and drop this block.
+  if (
+    pathname === '/login' ||
+    pathname === '/app' ||
+    pathname.startsWith('/app/') ||
+    pathname.startsWith('/invite/')
+  ) {
+    return NextResponse.next();
+  }
+
   // --- Everything else → next-intl --------------------------------------
   return intlMiddleware(req);
 }
