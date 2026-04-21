@@ -212,6 +212,9 @@ Admin 在 UI 里把 `copy.default` 设成 `openai` 之类**没 strategy/copy ada
 - 成功回退时，响应体带 `fallback: { scenario, primary, used, hops: [...] }` 字段，前端可渲染黄色 banner "GPT 本地化回退到 Claude（429-quota）"。
 - **定点场景：** `localize` 的回退特殊 —— 只有 OpenAI 一家有 adapter，但 hydrate 阶段 Claude 已经产出过 locale-native 输出，回退实现是**用 hydrate 的 Claude 产物跳过 polish pass**。这是有意识的"优雅降级"而不是模板 fig-leaf：输出还是 LLM 写的母语文案，只是少一轮 GPT 跨文化润色。
 
+**已知的 adapter 不兼容模型**（2026-04 用户踩坑后添加）：
+- `deepseek-reasoner` (DeepSeek R1)：不支持 `tool_choice`，而 strategy/module-regen 两条路径都用 `tool_choice` 强制结构化 JSON。dropdown 里已移除；若 admin 从 "自定义" 字段输入或 KV 里遗留了该值，`llm-deepseek.ts` 的 `resolveModel()` 会在 server 端 warn 并自动回退到 `deepseek-chat`，保证生产链路不挂。admin UI 检测到该值也会显示黄色兼容性警示。要真正支持 reasoner 得单独做一条 `response_format: json_object` + prompt 层 JSON 约束的代码路径，未排期。
+
 **相关文件**：
 - [src/lib/llm-config.ts](src/lib/llm-config.ts) — Schema / defaults / 读写 / 错误分类器
 - [src/lib/llm-fallback.ts](src/lib/llm-fallback.ts) — 回退编排器

@@ -67,19 +67,41 @@ export function hasDeepseekKey(): boolean {
 }
 
 // Model comes from the admin-configurable llm-config at runtime; the
-// default here (deepseek-chat) lives in DEFAULT_LLM_CONFIG. The admin
-// can pick deepseek-reasoner from /admin/llm if strategy output needs
-// thinking-mode quality.
+// default here (deepseek-chat) lives in DEFAULT_LLM_CONFIG.
+//
+// deepseek-reasoner (R1) is NOT supported by this adapter — both strategy
+// and module-regen paths use `tool_choice: { type: 'function', ... }` to
+// force structured JSON, and the reasoner endpoint returns 400 "does not
+// support this tool_choice". The dropdown in /admin/llm used to list it;
+// the option was removed in 2026-04 (see llm-config.ts MODEL_OPTIONS
+// note) after a user hit the exact failure mode above. We keep a runtime
+// coerce here so any config that was saved BEFORE the dropdown change
+// (or typed into the 自定义 field) still produces a working call instead
+// of a hard 400. Coercing to chat is safe because both models share the
+// same prompt format; reasoner's only advantage (thinking traces) isn't
+// exposed through the tool-call path anyway.
 const MAX_TOKENS = 4096;
 const BASE_URL = 'https://api.deepseek.com/v1';
+/** Models the adapter knows are incompatible with its tool_choice flow. */
+const UNSUPPORTED_DEEPSEEK_MODELS = new Set(['deepseek-reasoner']);
 
 async function resolveModel(): Promise<string> {
+  let configured: string;
   try {
     const cfg = await readLLMConfig();
-    return cfg.providers.deepseek.model || DEFAULT_LLM_CONFIG.providers.deepseek.model;
+    configured = cfg.providers.deepseek.model || DEFAULT_LLM_CONFIG.providers.deepseek.model;
   } catch {
+    configured = DEFAULT_LLM_CONFIG.providers.deepseek.model;
+  }
+  if (UNSUPPORTED_DEEPSEEK_MODELS.has(configured)) {
+    console.warn(
+      `[deepseek] configured model "${configured}" doesn't support tool_choice — ` +
+      `falling back to ${DEFAULT_LLM_CONFIG.providers.deepseek.model}. ` +
+      `Update /admin/llm to silence this warning.`,
+    );
     return DEFAULT_LLM_CONFIG.providers.deepseek.model;
   }
+  return configured;
 }
 
 function getClient(): OpenAI {

@@ -47,6 +47,26 @@ const PROVIDER_META: Record<
 
 const ALL_PROVIDERS: LLMProvider[] = ['claude', 'deepseek', 'openai', 'gemini'];
 
+/**
+ * Per-provider "this model ID is known not to work with our adapter"
+ * flags. Mirrors the runtime coerce in llm-deepseek.ts. Kept tiny and
+ * hand-maintained — the universe of adapter-incompatible models is small
+ * and we want admins to see WHY a pick is flagged, not a generic "bad
+ * value" message.
+ */
+const INCOMPATIBLE_MODELS: Partial<
+  Record<LLMProvider, Array<{ id: string; reason: string }>>
+> = {
+  deepseek: [
+    {
+      id: 'deepseek-reasoner',
+      reason:
+        'R1 不支持 tool_choice，当前 adapter 依赖 tool_choice 做结构化输出。' +
+        '选它后调用会被自动回退到 deepseek-chat（server 日志会 warn）。',
+    },
+  ],
+};
+
 export default function AdminLLMForm({
   initialConfig,
   defaults,
@@ -384,6 +404,10 @@ function ModelRow({
   // visible so they can edit it without losing the value.
   const isPreset = options.some((o) => o.id === model);
   const [customMode, setCustomMode] = useState(!isPreset);
+  // Surface known-incompatible picks so the admin doesn't have to hit a
+  // 400 to discover "reasoner breaks regen". The adapter coerces at
+  // runtime, but the warning lets them fix the config proactively.
+  const incompatible = INCOMPATIBLE_MODELS[provider]?.find((m) => m.id === model);
 
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-[180px_1fr]">
@@ -437,6 +461,12 @@ function ModelRow({
             >
               自定义
             </button>
+          </div>
+        )}
+        {incompatible && (
+          <div className="mt-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+            ⚠️ <code className="font-mono">{incompatible.id}</code> 与当前 adapter 不兼容：
+            {incompatible.reason}
           </div>
         )}
       </div>

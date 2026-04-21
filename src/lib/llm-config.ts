@@ -177,7 +177,14 @@ export const MODEL_OPTIONS: Record<
   ],
   deepseek: [
     { id: 'deepseek-chat', label: 'DeepSeek V3 Chat (通用 · 成本最低)' },
-    { id: 'deepseek-reasoner', label: 'DeepSeek R1 Reasoner (深度思考)' },
+    // NOTE: deepseek-reasoner (R1) intentionally omitted. This codebase's
+    // DeepSeek adapter uses tool_choice to force structured JSON, and
+    // reasoner returns HTTP 400 ("does not support this tool_choice") —
+    // it works only with plain text completions. Adding reasoner as a
+    // separate code path (response_format: json_object + prompt-level
+    // JSON spec) is viable future work, not in scope today. If admin
+    // types it into the 自定义 field anyway, llm-deepseek's resolveModel
+    // coerces it back to deepseek-chat with a warning.
   ],
   openai: [
     { id: 'gpt-4o-2024-08-06', label: 'GPT-4o 2024-08 (推荐)' },
