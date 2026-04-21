@@ -219,6 +219,8 @@ Admin 在 UI 里把 `copy.default` 设成 `openai` 之类**没 strategy/copy ada
 
 **自定义模型 UX（2026-04 第三轮修订）**：最初 `ModelRow` 有两个按钮 "自定义 / 返回下拉"，切到自定义后输入框独立展示，状态两份（customMode useState + model 值），保存后有时不同步。用户吐槽 "我改了自定义模型去哪里保存" 之后改成下拉末尾一个 "✏️ 自定义…" sentinel option（value=`__custom__`），选中后行下出现带边框的输入框。状态单一来源（`isPreset = options.includes(model)`），刷新 / KV round-trip 也不会错位。同一轮把 action-bar 状态升级成 pill（✓ 已保存 / ● 未保存 / ✗ 错误），并在 PUT 成功后自动再 GET 一次核对 —— 捕捉 "PUT 200 但 KV 里的值对不上" 的代理 / 中间件吞包场景。
 
+**第四种 pill（2026-04 增补）**：上一轮 pill 只管三种 "发生过事" 的状态，"什么都没发生" 时 pill 区域空白。用户截图报 "自定义 mog-3，保存按钮灰，pill 空白" 以为是 bug —— 实际是 mog-3 之前已经存进 KV，加载后 config === baseline → dirty=false → 按钮 disabled（正确行为）。但空白的 pill 区域看起来和 "保存坏了" 没区别。补了第四种 slate 色 neutral pill `· 无改动（与服务器一致）` 填空档，并把四个状态改成显式 `error → dirty → savedAt → neutral` 的 if-else 链（之前是三个 `&&` 并列，理论上可能同时渲染两枚 pill）。E2E 也加了 "刷新后按钮应 disabled + 无改动 pill 可见" 的断言，防回归。
+
 **测试覆盖**：`tests/api/admin-llm-config.spec.ts`（4 条，round-trip / 校验 / scenario 路由 / 未授权）+ `tests/e2e/admin-llm-save.spec.ts`（2 条，UI 保存 + 刷新还在 / preset 切换）。两组都用 `tests/helpers/admin.ts` 的 `ADMIN_PASSWORD` env 守护 —— 没配就 skip，和 LLM key 守护的老测试风格一致。本地跑：
 ```bash
 ADMIN_PASSWORD=<任意值> npx playwright test --grep ADMIN-LLM

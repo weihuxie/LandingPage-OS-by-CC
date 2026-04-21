@@ -398,22 +398,39 @@ export default function AdminLLMForm({
           gray text) so a successful save is visually obvious — the 2026-04
           "我点了保存但没保存上" user report turned out to be partly a
           visibility issue: the small text feedback got missed and the
-          sticky bar looked identical before/after the PUT. */}
+          sticky bar looked identical before/after the PUT.
+
+          Four states, exactly one pill always visible:
+            error         → red "✗ …"           (save failed / verify mismatch)
+            dirty         → amber "● 有未保存的改动"
+            savedAt       → emerald "✓ 已保存 · <time>" (this session's save)
+            (none above)  → slate "· 无改动（与服务器一致）"
+
+          The neutral state was added after a 2026-04 report: user saw a
+          custom model value pre-filled on page load, hit the save button,
+          got nothing (button was disabled). Turned out the value was
+          already in KV from a prior save — button-disabled was correct,
+          but empty pill area made "everything's fine" look identical to
+          "nothing to save" and "save silently broken". The neutral pill
+          distinguishes the first from the others.
+       */}
       <div className="sticky bottom-4 flex items-center justify-between gap-3 rounded-xl border border-ink-200 bg-white p-3 shadow-lg">
         <div className="flex items-center gap-2">
-          {savedAt && !dirty && !error && (
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 ring-1 ring-inset ring-emerald-200">
-              ✓ 已保存 · {new Date(savedAt).toLocaleTimeString()}
+          {error ? (
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-red-50 px-2.5 py-1 text-xs font-medium text-red-800 ring-1 ring-inset ring-red-200">
+              ✗ {error}
             </span>
-          )}
-          {dirty && (
+          ) : dirty ? (
             <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-200">
               ● 有未保存的改动
             </span>
-          )}
-          {error && (
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-red-50 px-2.5 py-1 text-xs font-medium text-red-800 ring-1 ring-inset ring-red-200">
-              ✗ {error}
+          ) : savedAt ? (
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 ring-1 ring-inset ring-emerald-200">
+              ✓ 已保存 · {new Date(savedAt).toLocaleTimeString()}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200">
+              · 无改动（与服务器一致）
             </span>
           )}
         </div>

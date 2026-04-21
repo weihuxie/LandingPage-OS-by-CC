@@ -92,6 +92,18 @@ test.describe('E2E-ADMIN-LLM · Save custom model', () => {
       const inputAfter = page.getByPlaceholder(/输入模型 ID/);
       await expect(inputAfter).toBeVisible();
       await expect(inputAfter).toHaveValue(customModel);
+
+      // 刷新后 config 应当 === baseline（都从 KV 读出），dirty=false，
+      // 保存按钮 disabled，neutral pill 显示 "无改动"。
+      //
+      // 2026-04 用户截图里看到 "自定义 mog-3 + 保存按钮灰 + pill 空白"
+      // 以为是 bug —— 实际是"值已在 KV、加载后无改动"的正常状态，但
+      // UI 缺中性提示让人看着像坏了。补 neutral pill 后这条 assertion
+      // 钉住它不再回归。
+      const saveBtnAfter = page.getByRole('button', { name: /^保存$/ });
+      await expect(saveBtnAfter).toBeDisabled();
+      await expect(page.getByText(/有未保存的改动/)).not.toBeVisible();
+      await expect(page.getByText(/无改动/)).toBeVisible();
     } finally {
       // 恢复 baseline —— 即使 test 中途 assert 失败也得跑
       await context.request.put('/api/admin/llm-config', {
