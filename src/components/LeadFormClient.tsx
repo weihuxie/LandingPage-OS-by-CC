@@ -27,6 +27,17 @@ export default function LeadFormClient({
   const [consent, setConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  // Inline validation errors. MVP silently disabled the submit button
+  // whenever `!consent`, so users who skipped the checkbox saw a grayed
+  // button with no explanation and reported "点了没反应" (Feishu #9).
+  // Now the button is always enabled; on submit we validate and show an
+  // inline message against the offending field.
+  const [errors, setErrors] = useState<{ consent?: string; phone?: string }>({});
+  // Loose international-ish phone regex — intentionally permissive. Too
+  // strict loses real leads (台灣 0912, +81-90-xxxx, sales line extensions).
+  // Too loose lets through "asdf". 7-20 chars of digits + common
+  // separators is the sweet spot.
+  const PHONE_RE = /^\+?[\d\s\-()]{7,20}$/;
 
   // External mode: skip the inline form entirely, render a CTA card
   // linking to 飞书 / Typeform / Calendly. Fire a form_submit event on
@@ -71,10 +82,42 @@ export default function LeadFormClient({
 
   const update = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
+  const consentError = {
+    en: 'Please agree to the privacy policy to continue.',
+    'zh-CN': '请先同意隐私政策再提交。',
+    'zh-TW': '請先同意隱私政策再提交。',
+    ja: 'プライバシーポリシーへの同意が必要です。',
+  } as any;
+  const phoneError = {
+    en: 'Please enter a valid phone number.',
+    'zh-CN': '请填写正确的电话号码。',
+    'zh-TW': '請填寫正確的電話號碼。',
+    ja: '有効な電話番号を入力してください。',
+  } as any;
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!interactive) return;
-    if (!consent) return;
+    const nextErrors: { consent?: string; phone?: string } = {};
+    // Validate consent first — it's the most common reason submit "does
+    // nothing" in QA, so surface it loudly (visible red text under the
+    // checkbox) instead of the old silent disabled-button behavior.
+    if (!consent) {
+      nextErrors.consent = (consentError[locale] ?? consentError.en) as string;
+    }
+    // Phone is optional (only validate if present and the field is
+    // actually in the form). Old submit path accepted any string so
+    // leads like "asdf" went to KV without complaint.
+    if (content.fields.includes('phone') && form.phone && form.phone.trim()) {
+      if (!PHONE_RE.test(form.phone.trim())) {
+        nextErrors.phone = (phoneError[locale] ?? phoneError.en) as string;
+      }
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors);
+      return;
+    }
+    setErrors({});
     setSubmitting(true);
     await fetch('/api/leads', {
       method: 'POST',
@@ -135,12 +178,22 @@ export default function LeadFormClient({
               />
             )}
             {content.fields.includes('phone') && (
-              <input
-                className="input"
-                placeholder={L.phone}
-                value={form.phone ?? ''}
-                onChange={(e) => update('phone', e.target.value)}
-              />
+              <div>
+                <input
+                  className="input w-full"
+                  type="tel"
+                  inputMode="tel"
+                  placeholder={L.phone}
+                  value={form.phone ?? ''}
+                  onChange={(e) => {
+                    update('phone', e.target.value);
+                    if (errors.phone) setErrors((x) => ({ ...x, phone: undefined }));
+                  }}
+                />
+                {errors.phone && (
+                  <div className="mt-1 text-xs text-red-600">{errors.phone}</div>
+                )}
+              </div>
             )}
             {content.fields.includes('message') && (
               <textarea
@@ -150,19 +203,27 @@ export default function LeadFormClient({
                 onChange={(e) => update('message', e.target.value)}
               />
             )}
-            <label className="sm:col-span-2 flex items-center gap-2 text-xs text-ink-500">
-              <input
-                type="checkbox"
-                checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
-              />
-              {L.consent}
-            </label>
+            <div className="sm:col-span-2">
+              <label className="flex items-center gap-2 text-xs text-ink-500">
+                <input
+                  type="checkbox"
+                  checked={consent}
+                  onChange={(e) => {
+                    setConsent(e.target.checked);
+                    if (errors.consent) setErrors((x) => ({ ...x, consent: undefined }));
+                  }}
+                />
+                {L.consent}
+              </label>
+              {errors.consent && (
+                <div className="mt-1 text-xs text-red-600">{errors.consent}</div>
+              )}
+            </div>
             <button
               type="submit"
               className="sm:col-span-2 rounded-xl px-5 py-3 text-sm font-medium text-white transition disabled:opacity-50"
               style={{ background: 'var(--brand)' }}
-              disabled={!interactive || !consent || submitting}
+              disabled={!interactive || submitting}
             >
               {submitting ? '…' : content.submitLabel}
             </button>

@@ -48,9 +48,18 @@ export default async function Dashboard({
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">我的产品</h1>
-        <Link href={`/${locale}/new`} className="btn btn-primary">
-          + 新建产品
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/${locale}/dashboard/leads`}
+            className="btn btn-secondary"
+            title="查看所有落地页留资 + 导出 CSV"
+          >
+            留资明细
+          </Link>
+          <Link href={`/${locale}/new`} className="btn btn-primary">
+            + 新建产品
+          </Link>
+        </div>
       </div>
 
       {/* System status strip — at a glance LLM + storage health */}

@@ -1114,17 +1114,21 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
                   </span>
                   {t(`editor.moduleTypes.${m.type}`)}
                 </button>
+                {/* ↑↓ 始终可见 (opacity-50 → 100 on hover) — hover-only
+                    reveal 把最常用的「调整模块顺序」藏进悬停彩蛋里，用户
+                    根本不知道功能存在。删除(×)保持 hover 隐藏，因为是
+                    破坏性操作，不宜常驻诱导点击。 */}
                 <button
                   title={t('editor.moveUp')}
                   onClick={() => move(m.id, -1)}
-                  className="opacity-0 group-hover:opacity-100 text-ink-500 hover:text-ink-900"
+                  className="opacity-50 hover:opacity-100 text-ink-500 hover:text-ink-900"
                 >
                   ↑
                 </button>
                 <button
                   title={t('editor.moveDown')}
                   onClick={() => move(m.id, 1)}
-                  className="opacity-0 group-hover:opacity-100 text-ink-500 hover:text-ink-900"
+                  className="opacity-50 hover:opacity-100 text-ink-500 hover:text-ink-900"
                 >
                   ↓
                 </button>

@@ -172,6 +172,22 @@ function HeroEditor({ c, setC }: { c: HeroContent; setC: (c: HeroContent) => voi
       <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline />
       <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} multiline />
       <Field label="Primary CTA" value={c.primaryCta} onChange={(v) => setC({ ...c, primaryCta: v })} />
+      {/* href 留空 → 默认滚动到 #contact 表单；填 https://... 则打开外链 (新标签) */}
+      <Field
+        label="Primary CTA 链接 (留空 = 滚到表单 #contact)"
+        value={c.primaryCtaHref ?? ''}
+        onChange={(v) => setC({ ...c, primaryCtaHref: v || undefined })}
+      />
+      <Field
+        label="Secondary CTA 文案 (可选)"
+        value={c.secondaryCta ?? ''}
+        onChange={(v) => setC({ ...c, secondaryCta: v || undefined })}
+      />
+      <Field
+        label="Secondary CTA 链接 (留空 = 滚到 #contact)"
+        value={c.secondaryCtaHref ?? ''}
+        onChange={(v) => setC({ ...c, secondaryCtaHref: v || undefined })}
+      />
       <Field label="Bullets (one per line)" value={c.bullets.join('\n')} onChange={(v) => setC({ ...c, bullets: v.split('\n').filter(Boolean) })} multiline />
       <MediaField
         label="Hero 主视觉 (可选 · 图片或视频)"
@@ -712,6 +728,11 @@ function CTAEditor({ c, setC }: { c: CTAContent; setC: (c: CTAContent) => void }
       <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} />
       <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} />
       <Field label="Button" value={c.button} onChange={(v) => setC({ ...c, button: v })} />
+      <Field
+        label="按钮链接 (留空 = 滚到表单 #contact)"
+        value={c.buttonHref ?? ''}
+        onChange={(v) => setC({ ...c, buttonHref: v || undefined })}
+      />
     </>
   );
 }

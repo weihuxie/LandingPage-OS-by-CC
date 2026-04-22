@@ -92,7 +92,19 @@ export interface HeroContent {
   headline: string;
   subhead: string;
   primaryCta: string;
+  /**
+   * Optional click target for the primary CTA button. Defaults to
+   * `#contact` (the in-page lead form anchor) when omitted — so the
+   * button is never rendered as an inert element, which is the only
+   * sane default for a landing page. Setting to a full URL
+   * ("https://cal.com/acme/demo") renders an external link with
+   * `target="_blank" rel="noopener"`. Added 2026-04 after QA found all
+   * MVP Hero CTAs were `<button>` with no onClick/href and users
+   * reported "点击没反应" in the Feishu test report (issue #8).
+   */
+  primaryCtaHref?: string;
   secondaryCta?: string;
+  secondaryCtaHref?: string;
   bullets: string[];
   media?: MediaRef;
   layout?: HeroLayout; // default 'split'
@@ -240,6 +252,12 @@ export interface CTAContent {
   headline: string;
   subhead: string;
   button: string;
+  /**
+   * Same reason as HeroContent.primaryCtaHref — MVP rendered the CTA
+   * module's button as an inert `<button>` with no onClick. Defaults to
+   * `#contact` when omitted. See CLAUDE.md §S1.5 Feishu issue #8.
+   */
+  buttonHref?: string;
 }
 
 /**

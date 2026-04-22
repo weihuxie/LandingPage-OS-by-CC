@@ -236,18 +236,36 @@ function Hero({
     </p>
   );
 
+  // Real links, not <button>. MVP rendered these as <button> with no
+  // onClick/href — visually correct, functionally inert. Users clicked
+  // "预约演示" in the preview, nothing happened, and (per Feishu issue
+  // #8) assumed the page was broken. Default to `#contact` so the CTA
+  // always scrolls to the inline lead form; users can override via
+  // HeroContent.primaryCtaHref / secondaryCtaHref to point at Calendly,
+  // an external booking tool, etc. External URLs open in a new tab.
+  const primaryHref = content.primaryCtaHref?.trim() || '#contact';
+  const secondaryHref = content.secondaryCtaHref?.trim() || '#contact';
+  const isExt = (h: string) => /^https?:\/\//i.test(h);
   const ctas = (
     <div className={`mt-6 flex flex-wrap items-center gap-3 ${layout === 'centered' ? 'justify-center' : ''}`}>
-      <button
+      <a
+        href={primaryHref}
+        target={isExt(primaryHref) ? '_blank' : undefined}
+        rel={isExt(primaryHref) ? 'noopener noreferrer' : undefined}
         className="rounded-xl px-5 py-3 text-sm font-medium text-white transition hover:opacity-90"
         style={{ background: layout === 'video-bg' ? 'rgba(255,255,255,0.2)' : 'var(--brand)' }}
       >
         {content.primaryCta}
-      </button>
+      </a>
       {content.secondaryCta && (
-        <button className={`rounded-xl border px-5 py-3 text-sm font-medium ${layout === 'video-bg' ? 'border-white/30 text-white hover:bg-white/10' : 'border-ink-100 bg-white hover:border-ink-300'}`}>
+        <a
+          href={secondaryHref}
+          target={isExt(secondaryHref) ? '_blank' : undefined}
+          rel={isExt(secondaryHref) ? 'noopener noreferrer' : undefined}
+          className={`rounded-xl border px-5 py-3 text-sm font-medium ${layout === 'video-bg' ? 'border-white/30 text-white hover:bg-white/10' : 'border-ink-100 bg-white hover:border-ink-300'}`}
+        >
           {content.secondaryCta}
-        </button>
+        </a>
       )}
     </div>
   );
@@ -465,16 +483,16 @@ function Pain({
     <div className="mx-auto max-w-6xl px-6 py-14">
       <h2 className="text-3xl font-semibold tracking-tight text-ink-900">{content.title}</h2>
       {content.subtitle && <p className="mt-2 text-ink-500">{content.subtitle}</p>}
-      <div className="mt-8 grid gap-4 sm:grid-cols-3">
+      <div className="mt-8 grid gap-4 sm:grid-cols-3 items-stretch">
         {content.items.map((it, i) => {
           const m = resolveMedia(it.media, locale, market);
           return (
             <div
               key={i}
-              className="overflow-hidden rounded-2xl border border-ink-100 bg-white"
+              className="flex h-full flex-col overflow-hidden rounded-2xl border border-ink-100 bg-white"
             >
               {m && <BenefitThumb url={m.url} alt={m.alt ?? it.title} />}
-              <div className="p-5">
+              <div className="flex flex-1 flex-col p-5">
                 <div
                   className="grid h-8 w-8 place-items-center rounded-lg text-sm"
                   style={{ background: 'color-mix(in oklch, var(--brand) 12%, white)', color: 'var(--brand)' }}
@@ -552,16 +570,16 @@ function Benefits({
     return (
       <div className="mx-auto max-w-6xl px-6 py-14">
         <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
-        <div className="mt-8 grid gap-4 sm:grid-cols-3">
+        <div className="mt-8 grid gap-4 sm:grid-cols-3 items-stretch">
           {content.items.map((b, i) => {
             const m = resolveMedia(b.media, locale, market);
             return (
               <div
                 key={i}
-                className="overflow-hidden rounded-2xl border border-ink-100 bg-white"
+                className="flex h-full flex-col overflow-hidden rounded-2xl border border-ink-100 bg-white"
               >
                 {m && <BenefitThumb url={m.url} alt={m.alt ?? b.title} />}
-                <div className="p-5">
+                <div className="flex flex-1 flex-col p-5">
                   <div className="h-1 w-8 rounded-full" style={{ background: 'var(--brand)' }} />
                   <h3 className="mt-3 font-semibold">{b.title}</h3>
                   <p className="mt-1 text-sm text-ink-500">{b.body}</p>
@@ -730,16 +748,16 @@ function UseCases({
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
-      <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
         {content.items.map((it, i) => {
           const m = resolveMedia(it.media, locale, market);
           return (
             <div
               key={i}
-              className="overflow-hidden rounded-2xl border border-ink-100 bg-white"
+              className="flex h-full flex-col overflow-hidden rounded-2xl border border-ink-100 bg-white"
             >
               {m && <BenefitThumb url={m.url} alt={m.alt ?? it.role} />}
-              <div className="p-5">
+              <div className="flex flex-1 flex-col p-5">
                 <div className="text-sm font-semibold text-ink-900">{it.role}</div>
                 <div className="mt-1 text-sm text-ink-500">{it.scenario}</div>
               </div>
@@ -763,12 +781,12 @@ function Testimonials({
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
-      <div className="mt-8 grid gap-4 sm:grid-cols-2">
+      <div className="mt-8 grid gap-4 sm:grid-cols-2 items-stretch">
         {content.items.map((it, i) => {
           const avatar = resolveMedia(it.avatar, locale, market);
           return (
-            <blockquote key={i} className="rounded-2xl border border-ink-100 bg-white p-6">
-              <p className="text-ink-700">“{it.quote}”</p>
+            <blockquote key={i} className="flex h-full flex-col rounded-2xl border border-ink-100 bg-white p-6">
+              <p className="flex-1 text-ink-700">“{it.quote}”</p>
               <footer className="mt-3 flex items-center gap-3 text-sm text-ink-500">
                 {avatar ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -831,6 +849,11 @@ function FAQ({ content }: { content: FAQContent }) {
 }
 
 function CTA({ content }: { content: CTAContent }) {
+  // Same fix as Hero — MVP rendered as <button> with no onClick.
+  // Default to #contact; `buttonHref` overrides to external URL (opens
+  // in new tab) or custom anchor.
+  const href = content.buttonHref?.trim() || '#contact';
+  const isExt = /^https?:\/\//i.test(href);
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <div
@@ -841,9 +864,14 @@ function CTA({ content }: { content: CTAContent }) {
           <h3 className="text-2xl font-semibold">{content.headline}</h3>
           <p className="mt-1 text-white/80">{content.subhead}</p>
         </div>
-        <button className="rounded-xl bg-white px-5 py-3 text-sm font-medium text-ink-900 hover:bg-ink-100">
+        <a
+          href={href}
+          target={isExt ? '_blank' : undefined}
+          rel={isExt ? 'noopener noreferrer' : undefined}
+          className="rounded-xl bg-white px-5 py-3 text-sm font-medium text-ink-900 hover:bg-ink-100"
+        >
           {content.button}
-        </button>
+        </a>
       </div>
     </div>
   );

@@ -17,12 +17,26 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ leads });
 }
 
+// Kept in sync with LeadFormClient.tsx. Server validation is required
+// because the client form can be bypassed (curl / replayed requests)
+// and "asdf" phone entries pollute lead exports downstream.
+const PHONE_RE = /^\+?[\d\s\-()]{7,20}$/;
+
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const { slug, name, email, company, phone, message, locale, variant } = body;
   if (!slug) return NextResponse.json({ error: 'slug required' }, { status: 400 });
   const page = await getLandingPageBySlug(slug);
   if (!page) return NextResponse.json({ error: 'page not found' }, { status: 404 });
+
+  // Phone is optional. Only reject if the field is present AND doesn't
+  // match the permissive phone shape. Empty string / undefined is fine.
+  if (typeof phone === 'string' && phone.trim() && !PHONE_RE.test(phone.trim())) {
+    return NextResponse.json(
+      { error: 'invalid_phone', message: 'Phone number format is invalid.' },
+      { status: 400 },
+    );
+  }
 
   const v: NarrativeVariant | undefined = variant === 'A' || variant === 'B' ? variant : undefined;
   const lo: PageLocale = locale ?? page.defaultLocale;

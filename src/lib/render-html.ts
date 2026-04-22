@@ -96,11 +96,25 @@ function serializeModule(
       const mediaHtml = heroMedia
         ? `<div style="margin-top:40px;max-width:960px;margin-left:auto;margin-right:auto">${renderMediaHtml(heroMedia.url, heroMedia.alt, c.media?.kind, c.media?.poster)}</div>`
         : '';
+      // Match runtime PageRenderer: honor primaryCtaHref / secondaryCtaHref,
+      // default to #contact. External URLs (https://...) open in new tab.
+      const pHref = (c.primaryCtaHref?.trim() || '#contact') as string;
+      const pExt = /^https?:\/\//i.test(pHref);
+      const pAttrs = pExt ? ' target="_blank" rel="noopener noreferrer"' : '';
+      const secondaryHtml = c.secondaryCta
+        ? (() => {
+            const sHref = (c.secondaryCtaHref?.trim() || '#contact') as string;
+            const sExt = /^https?:\/\//i.test(sHref);
+            const sAttrs = sExt ? ' target="_blank" rel="noopener noreferrer"' : '';
+            return `<a class="cta" href="${escapeHtml(sHref)}"${sAttrs} style="background:#fff;color:var(--brand);border:1px solid color-mix(in oklch, var(--brand) 30%, white);margin-left:12px">${escapeHtml(c.secondaryCta)}</a>`;
+          })()
+        : '';
       return `<section class="hero"><div class="wrap">
         <span class="eyebrow">${escapeHtml(c.eyebrow)}</span>
         <h1 class="h1">${escapeHtml(c.headline)}</h1>
         <p class="sub">${escapeHtml(c.subhead)}</p>
-        <a class="cta" href="#contact">${escapeHtml(c.primaryCta)}</a>
+        <a class="cta" href="${escapeHtml(pHref)}"${pAttrs}>${escapeHtml(c.primaryCta)}</a>
+        ${secondaryHtml}
         ${mediaHtml}
       </div></section>`;
     }
@@ -211,8 +225,13 @@ function serializeModule(
             `<div class="card" style="margin-top:8px"><strong>${escapeHtml(it.q)}</strong><p class="muted">${escapeHtml(it.a)}</p></div>`,
         )
         .join('')}</div></section>`;
-    case 'cta':
-      return `<section class="section"><div class="wrap"><div style="background:linear-gradient(135deg,var(--brand),color-mix(in oklch,var(--brand) 60%,#0b1020));color:#fff;padding:56px;border-radius:calc(var(--radius,16px) * 1.5);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><h3 style="font-size:28px">${escapeHtml(c.headline)}</h3><p style="opacity:.8;margin-top:8px">${escapeHtml(c.subhead)}</p></div><a href="#contact" style="background:#fff;color:#0b1020;padding:14px 22px;border-radius:var(--radius);text-decoration:none;font-weight:500">${escapeHtml(c.button)}</a></div></div></section>`;
+    case 'cta': {
+      // Match runtime CTA module: honor buttonHref, default to #contact.
+      const bHref = (c.buttonHref?.trim() || '#contact') as string;
+      const bExt = /^https?:\/\//i.test(bHref);
+      const bAttrs = bExt ? ' target="_blank" rel="noopener noreferrer"' : '';
+      return `<section class="section"><div class="wrap"><div style="background:linear-gradient(135deg,var(--brand),color-mix(in oklch,var(--brand) 60%,#0b1020));color:#fff;padding:56px;border-radius:calc(var(--radius,16px) * 1.5);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><h3 style="font-size:28px">${escapeHtml(c.headline)}</h3><p style="opacity:.8;margin-top:8px">${escapeHtml(c.subhead)}</p></div><a href="${escapeHtml(bHref)}"${bAttrs} style="background:#fff;color:#0b1020;padding:14px 22px;border-radius:var(--radius);text-decoration:none;font-weight:500">${escapeHtml(c.button)}</a></div></div></section>`;
+    }
     case 'form': {
       const mode = c.mode ?? 'inline';
       // External mode: render as a CTA-style card linking to the external
