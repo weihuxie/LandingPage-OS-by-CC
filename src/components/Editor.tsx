@@ -1069,6 +1069,31 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
           See `settingsOpen` state doc comment for the rationale. */}
       <aside className="col-span-12 border-r border-ink-100 bg-white p-4 md:col-span-3 lg:col-span-3">
         <div className="mt-0">
+          {/* Variant tab — lives above the module list because switching
+              A/B swaps both the content AND the module ordering
+              (A: hero→social→pain→…; B: hero→social→benefits→…).
+              Pinning it here makes "I'm editing variant A" a visible part
+              of the module list's identity rather than a toolbar toggle
+              people forget is on. */}
+          <div className="mb-3">
+            <div className="label mb-1.5">叙事方案</div>
+            <div className="flex items-center gap-1 rounded-xl border border-ink-100 bg-white p-1 text-xs">
+              <button
+                title="方案 A — 痛点驱动 (Pain-Agitate-Solve)"
+                className={`flex-1 rounded-lg px-2.5 py-1.5 ${project.activeVariant === 'A' ? 'bg-ink-900 text-white' : 'text-ink-700'}`}
+                onClick={() => switchVariant('A')}
+              >
+                A · 痛点
+              </button>
+              <button
+                title="方案 B — 收益驱动 (Benefit-Focused)"
+                className={`flex-1 rounded-lg px-2.5 py-1.5 ${project.activeVariant === 'B' ? 'bg-ink-900 text-white' : 'text-ink-700'}`}
+                onClick={() => switchVariant('B')}
+              >
+                B · 收益
+              </button>
+            </div>
+          </div>
           <div className="label mb-1.5">{t('editor.modules')}</div>
           <ul className="space-y-1">
             {project.modules.map((m, i) => (
@@ -1245,6 +1270,11 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         )}
 
         <div className="mb-3 flex items-center justify-between flex-wrap gap-2">
+          {/* Toolbar left half — only 视图 (device) now. Variant tab moved
+              to the module-list header on the left rail since it governs
+              "which content variant am I editing" (the module list reorders
+              A vs B), not "which viewport". Keeping them in the same row
+              always felt like two unrelated knobs welded together. */}
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 rounded-xl border border-ink-100 bg-white p-1 text-xs">
               <button
@@ -1258,22 +1288,6 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
                 onClick={() => setDevice('mobile')}
               >
                 ▯ {t('editor.mobile')}
-              </button>
-            </div>
-            <div className="flex items-center gap-1 rounded-xl border border-ink-100 bg-white p-1 text-xs">
-              <button
-                title="方案 A — 痛点驱动 (Pain-Agitate-Solve)"
-                className={`rounded-lg px-2.5 py-1.5 ${project.activeVariant === 'A' ? 'bg-ink-900 text-white' : ''}`}
-                onClick={() => switchVariant('A')}
-              >
-                方案 A · 痛点
-              </button>
-              <button
-                title="方案 B — 收益驱动 (Benefit-Focused)"
-                className={`rounded-lg px-2.5 py-1.5 ${project.activeVariant === 'B' ? 'bg-ink-900 text-white' : ''}`}
-                onClick={() => switchVariant('B')}
-              >
-                方案 B · 收益
               </button>
             </div>
           </div>
@@ -1298,16 +1312,18 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               }}
             />
 
-            {/* Toolbar redesign: 4 buttons instead of 6.
+            {/* Toolbar — 4 primary buttons + overflow menu.
                   - 导出 HTML   (always, no state — pure export)
                   - 查看 ↗     (smart: Vercel URL if deployed else /p/slug)
                   - 已发布 / 发布 (atomic — one click = flag + deploy)
-                  - ⋮         (overflow: 复制 Vercel / 复制预览 / 重新部署)
-                The previous 6-button row forced users to know the implicit
-                ordering (deploy → publish → copy-link) and left 已发布
-                looking like a state indicator but actually being a toggle. */}
+                  - ⋮         (overflow: 设置 / 线索 / 复制链接 / 发布模式 / 重新部署)
+                Publish-mode (single vs A/B split) lives in ⋮ now — it's a
+                per-project setting users flip once, not a per-action toggle,
+                so parking it next to the publish button pushed everything
+                else into the flex-wrap zone and squished "已发布 ✓" into a
+                three-line vertical stack on 1400px screens. */}
             <a
-              className="btn btn-secondary px-3 py-1.5 text-xs"
+              className="btn btn-secondary whitespace-nowrap flex-shrink-0 px-3 py-1.5 text-xs"
               href={`/api/projects/${project.id}/export`}
               download={`${project.slug}.html`}
               title="下载当前页面的静态 HTML 文件"
@@ -1315,7 +1331,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               导出 HTML
             </a>
             <a
-              className="btn btn-secondary px-3 py-1.5 text-xs"
+              className="btn btn-secondary whitespace-nowrap flex-shrink-0 px-3 py-1.5 text-xs"
               href={viewUrl}
               target="_blank"
               rel="noreferrer"
@@ -1327,29 +1343,8 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             >
               查看 ↗
             </a>
-            {/* 发布模式 — inline dropdown, right next to Deploy. Was buried
-                in the old 设置 tab; moving it here makes the causal chain
-                (A/B split ↔ Deploy behaviour) visible at the moment of
-                the decision instead of in a different part of the UI. */}
-            <select
-              className="input h-[30px] w-auto px-2 py-0 text-[11px]"
-              value={project.publishMode}
-              title="发布模式"
-              onChange={async (e) => {
-                const mode = e.target.value as 'single' | 'ab-split';
-                setProject((p) => ({ ...p, publishMode: mode }));
-                await fetch(`/api/projects/${project.id}`, {
-                  method: 'PATCH',
-                  headers: { 'content-type': 'application/json' },
-                  body: JSON.stringify({ publishMode: mode }),
-                });
-              }}
-            >
-              <option value="single">单方案</option>
-              <option value="ab-split">A/B 分流</option>
-            </select>
             <button
-              className={`btn px-3 py-1.5 text-xs ${project.published ? 'btn-secondary' : 'btn-primary'}`}
+              className={`btn whitespace-nowrap flex-shrink-0 px-3 py-1.5 text-xs ${project.published ? 'btn-secondary' : 'btn-primary'}`}
               onClick={togglePublish}
               disabled={deploying}
               title={
@@ -1366,7 +1361,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
                   ? `${t('editor.published')} ✓`
                   : t('editor.publish')}
             </button>
-            <div className="relative" ref={menuRef}>
+            <div className="relative flex-shrink-0" ref={menuRef}>
               <button
                 className="btn btn-secondary px-2.5 py-1.5 text-xs"
                 onClick={() => setMenuOpen((o) => !o)}
@@ -1420,6 +1415,49 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
                   >
                     {copied && copiedKind === 'preview' ? '已复制预览链接 ✓' : '复制预览链接'}
                   </button>
+                  <div className="my-1 border-t border-ink-100" />
+                  {/* 发布模式 — was an inline <select> in the toolbar next
+                      to the publish button; that put a decision users rarely
+                      flip (once per project) at the same visual weight as the
+                      publish button itself and got the toolbar squished to
+                      the point where "已发布 ✓" wrapped into three vertical
+                      lines on 1400px screens. Moved here with a radio layout
+                      so the "single vs A/B split" choice reads as a setting,
+                      not a primary action. */}
+                  <div className="px-3 py-2 text-[11px] uppercase tracking-wide text-ink-500">
+                    发布模式
+                  </div>
+                  {([
+                    ['single', '单方案', '所有访客看到当前主 variant'],
+                    ['ab-split', 'A/B 分流', '按 cookie lp_v 粘性分流 A/B'],
+                  ] as const).map(([mode, label, hint]) => (
+                    <button
+                      key={mode}
+                      className={`flex w-full items-start gap-2 px-3 py-2 text-left text-xs hover:bg-ink-50 ${
+                        project.publishMode === mode ? 'text-brand-700' : 'text-ink-700'
+                      }`}
+                      onClick={async () => {
+                        if (project.publishMode === mode) return;
+                        setProject((p) => ({ ...p, publishMode: mode }));
+                        await fetch(`/api/projects/${project.id}`, {
+                          method: 'PATCH',
+                          headers: { 'content-type': 'application/json' },
+                          body: JSON.stringify({ publishMode: mode }),
+                        });
+                      }}
+                      title={hint}
+                    >
+                      <span className="mt-[2px] inline-block h-3 w-3 rounded-full border border-ink-300 bg-white">
+                        {project.publishMode === mode && (
+                          <span className="block h-full w-full scale-[0.55] rounded-full bg-brand-600" />
+                        )}
+                      </span>
+                      <span className="flex-1">
+                        <span className="font-medium">{label}</span>
+                        <span className="block text-[10px] text-ink-500">{hint}</span>
+                      </span>
+                    </button>
+                  ))}
                   <div className="my-1 border-t border-ink-100" />
                   <button
                     className="block w-full px-3 py-2 text-left text-xs text-ink-700 hover:bg-ink-50 disabled:opacity-50"
