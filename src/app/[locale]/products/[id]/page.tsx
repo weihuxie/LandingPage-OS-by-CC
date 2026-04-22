@@ -84,6 +84,20 @@ export default async function ProductDetailPage({
       </div>
 
       <ProductPagesList locale={params.locale} pages={pages} />
+
+      {/* Feishu #6 — guide users to the right place for product-level
+          assets. The global /assets library only exposes brand / compliance
+          / press now; testimonials / case studies / media belong on the
+          product and are edited inline per module. */}
+      <div className="mt-8 rounded-2xl border border-ink-100 bg-ink-100/20 p-4 text-[11px] leading-relaxed text-ink-500">
+        💡 <strong className="text-ink-700">本产品的资产（证言 / 案例 / 截图 / 视频）</strong>
+        在各落地页的模块编辑器里直接添加 —— 按模块就地维护，AI 生成时会自动匹配本产品上下文。
+        跨产品共享的企业资产（品牌 / 合规 / 媒体）在{' '}
+        <Link href={`/${params.locale}/assets`} className="text-brand-700 hover:underline">
+          企业信任资产库
+        </Link>{' '}
+        里维护。
+      </div>
     </div>
   );
 }

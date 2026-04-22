@@ -14,6 +14,27 @@ import {
 } from '@/lib/errors';
 import type { LandingPage, PageLocale, LocalizationStrategy, PageModule } from '@/lib/types';
 
+/**
+ * Feishu #15 · localize inheritance (full version).
+ *
+ * When the user has heavily edited the source-locale version (reorder,
+ * disable, prune form fields, tweak labels) and then adds a new locale,
+ * they expect those structural choices to carry over — only the TEXT
+ * should change. The old path called `generateVariants()` from product
+ * inputs, so every edit was silently wiped by the fresh template: users
+ * who'd spent 20 minutes in English then clicked "+ 日本語" got back a
+ * module list that didn't match their English master at all.
+ *
+ * Inheritance path preserves module order, disabled flags, form schemas,
+ * media refs and IDs from the source locale, and hands the clone to the
+ * localize pass so text gets rewritten in the target locale without
+ * touching structure. `hydrateModulesViaClaude` is skipped — it's a
+ * "from scratch" regenerator and would undo the whole point of inheriting.
+ */
+function cloneModulesForInheritance(source: PageModule[]): PageModule[] {
+  return source.map((m) => structuredClone(m));
+}
+
 export const dynamic = 'force-dynamic';
 // GPT-4o localizes 5 modules × 2 variants in parallel. Each call is ~2-5s,
 // bounded by slowest in the batch. 60s ceiling protects us from the 10s
@@ -51,11 +72,104 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
   const body = (await req.json()) as {
     locale: PageLocale;
     strategy?: LocalizationStrategy;
+    sourceLocale?: PageLocale;
   };
   const locale = body.locale;
   if (!locale) return NextResponse.json({ error: 'locale required' }, { status: 400 });
   if (page.availableLocales.includes(locale)) {
     return NextResponse.json({ page, note: 'locale already exists' });
+  }
+
+  // Inheritance path: when the client passes a valid sourceLocale, skip
+  // the template-based regeneration and clone the source locale's modules.
+  // See the cloneModulesForInheritance doc-comment for the motivation.
+  const sourceLocale =
+    body.sourceLocale && page.availableLocales.includes(body.sourceLocale)
+      ? body.sourceLocale
+      : null;
+  const targetMarket = body.strategy?.targetMarket ?? page.targetMarket;
+
+  if (sourceLocale) {
+    const sourceA = page.variants.A[sourceLocale];
+    const sourceB = page.variants.B[sourceLocale];
+    if (!sourceA || !sourceB) {
+      return NextResponse.json(
+        { error: `sourceLocale ${sourceLocale} has no hydrated modules` },
+        { status: 400 },
+      );
+    }
+
+    // Read admin config so the localize hop respects the same scenario
+    // routing (OpenAI vs. "skip polish") as the from-scratch path below.
+    const llmCfg = await readLLMConfig();
+    const localizePrimary = llmCfg.scenarios.localize;
+
+    let inheritedA: PageModule[] = cloneModulesForInheritance(sourceA);
+    let inheritedB: PageModule[] = cloneModulesForInheritance(sourceB);
+    let fallbackOutcome: FallbackOutcome<{ A: PageModule[]; B: PageModule[] }> | null = null;
+    try {
+      fallbackOutcome = await executeWithFallback(
+        'localize',
+        localizePrimary,
+        async (provider) => {
+          if (provider === 'openai') {
+            const [a, b] = await Promise.all([
+              localizeModulesViaGpt(inheritedA, locale, targetMarket, page.tone),
+              localizeModulesViaGpt(inheritedB, locale, targetMarket, page.tone),
+            ]);
+            return { A: a, B: b };
+          }
+          // No second adapter — keep the clone untranslated. Honest
+          // degradation: structure is preserved, text is still in the
+          // source locale. The UI surfaces the fallback banner so the
+          // user knows a polish pass was skipped.
+          return { A: inheritedA, B: inheritedB };
+        },
+      );
+      inheritedA = fallbackOutcome.result.A;
+      inheritedB = fallbackOutcome.result.B;
+    } catch (e) {
+      if (e instanceof LLMRequiredError || e instanceof LLMCallError) {
+        console.error('[locales] inherit+localize failed; locale NOT added:', e);
+        const { status, body: errBody } = errorResponse(e);
+        return NextResponse.json(errBody, { status });
+      }
+      throw e;
+    }
+
+    page.variants.A[locale] = inheritedA;
+    page.variants.B[locale] = inheritedB;
+    page.availableLocales = [...page.availableLocales, locale];
+
+    const reportsA = Object.values(page.variants.A).map((mods) =>
+      mods ? reportHeroTemplate(mods, product.name) : null,
+    );
+    const reportsB = Object.values(page.variants.B).map((mods) =>
+      mods ? reportHeroTemplate(mods, product.name) : null,
+    );
+    const allTemplate = [...reportsA, ...reportsB]
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .every((r) => r.anyTemplate);
+    page.hydrationFailed = allTemplate;
+
+    await saveLandingPage(page);
+
+    const usedFallback =
+      fallbackOutcome !== null && fallbackOutcome.hops.length > 0;
+    return NextResponse.json({
+      page,
+      inheritedFrom: sourceLocale,
+      ...(usedFallback
+        ? {
+            fallback: {
+              scenario: 'localize' as const,
+              primary: localizePrimary,
+              used: fallbackOutcome!.usedProvider,
+              hops: fallbackOutcome!.hops,
+            },
+          }
+        : {}),
+    });
   }
 
   const inputs = {
@@ -127,7 +241,6 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
   // product's testimonial pool (Phase H.3: auto-filter by primaryLocale).
   const testiPool = product.assets?.testimonials ?? [];
   if (testiPool.length > 0) {
-    const targetMarket = body.strategy?.targetMarket ?? page.targetMarket;
     const picked = pickTopTestimonials(testiPool, locale, targetMarket, 2);
     if (picked.length > 0) {
       const items = testimonialsToModuleItems(picked, locale);
@@ -158,7 +271,6 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
   // output as the final result (still locale-native, just missing GPT's
   // cross-cultural polish). With fallback OFF, the original fail-loud
   // behavior is preserved.
-  const targetMarketForLocalize = body.strategy?.targetMarket ?? page.targetMarket;
   // Read admin-configured localize primary. Prior to this, primary was
   // hardcoded to 'openai', which meant setting "本地化 pass = DeepSeek"
   // in /admin/llm silently had zero effect — every add-locale call still
@@ -200,8 +312,8 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
       async (provider) => {
         if (provider === 'openai') {
           const [a, b] = await Promise.all([
-            localizeModulesViaGpt(claudeOut.A, locale, targetMarketForLocalize, page.tone),
-            localizeModulesViaGpt(claudeOut.B, locale, targetMarketForLocalize, page.tone),
+            localizeModulesViaGpt(claudeOut.A, locale, targetMarket, page.tone),
+            localizeModulesViaGpt(claudeOut.B, locale, targetMarket, page.tone),
           ]);
           return { A: a, B: b };
         }

@@ -101,12 +101,18 @@ export default function MediaField({
           onChange={(e) => set({ alt: e.target.value })}
         />
         {(value?.kind ?? defaultKind) === 'video' && (
-          <input
-            className="input text-sm"
-            placeholder="Poster URL (视频封面,可选)"
-            value={value?.poster ?? ''}
-            onChange={(e) => set({ poster: e.target.value })}
-          />
+          <>
+            <input
+              className="input text-sm"
+              placeholder="Poster URL (视频封面,可选)"
+              value={value?.poster ?? ''}
+              onChange={(e) => set({ poster: e.target.value })}
+            />
+            <p className="rounded-md bg-ink-100/60 px-2 py-1.5 text-[11px] leading-relaxed text-ink-500">
+              💡 视频请先上传到 YouTube / Vimeo / Loom，把分享链接粘到 URL 栏即可。
+              不建议直接上传本地视频文件 —— 单个几百 MB 的 MP4 会拖垮首屏加载、暴涨流量费，也会被 Vercel 4.5MB 请求体上限挡下。
+            </p>
+          </>
         )}
         {(value?.kind ?? defaultKind) === 'gif' && (
           <p className="rounded-md bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-800">

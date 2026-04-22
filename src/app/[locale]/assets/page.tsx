@@ -19,9 +19,10 @@ export default async function AssetsPage({
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold">信任资产库</h1>
+        <h1 className="text-2xl font-semibold">企业信任资产库</h1>
         <p className="mt-1 text-sm text-ink-500">
-          一次维护，所有项目复用。生成时 AI 会按痛点/市场自动匹配。
+          品牌 · 合规 · 媒体背书 —— 跨产品共享的企业级资产。
+          客户证言 / 案例 / 截图等产品级资产请在各「产品」内维护。
         </p>
       </div>
       <AssetLibraryPanel initial={assets} />

@@ -760,7 +760,15 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   };
 
   // Called after the user approves the localization strategy in the modal.
-  const confirmAddLocale = async (strategy: LocalizationStrategy) => {
+  // `sourceLocale` is optional — when set, the server clones that locale's
+  // modules (preserving order / disabled state / form schemas / media
+  // refs / IDs) and only translates the text. When omitted the server
+  // regenerates from scratch via the template + hydrate pipeline (the
+  // legacy behavior, kept for users who want a clean slate).
+  const confirmAddLocale = async (
+    strategy: LocalizationStrategy,
+    sourceLocale?: PageLocale,
+  ) => {
     if (!page || !pendingLocale) return;
     const newLocale = pendingLocale;
     setAddingLocale(true);
@@ -768,7 +776,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
       const res = await fetch(`/api/pages/${page.id}/locales`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ locale: newLocale, strategy }),
+        body: JSON.stringify({ locale: newLocale, strategy, sourceLocale }),
       });
       if (!res.ok) {
         // 503 LLM_REQUIRED (no ANTHROPIC_API_KEY / OPENAI_API_KEY) or
@@ -1498,6 +1506,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               device={device}
               onSelectModule={(id) => setSelectedModuleId(id)}
               selectedId={selectedModuleId}
+              nav={page?.nav}
             />
           </div>
         </div>
@@ -1530,6 +1539,8 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
           /* Don't default to page.targetMarket — adding a new locale almost
              always implies a new market (zh-CN → CN, ja → JP, etc). Modal
              shows a market picker if user wants to override. */
+          availableLocales={page.availableLocales}
+          defaultSourceLocale={page.defaultLocale}
           onApprove={confirmAddLocale}
           onClose={() => setPendingLocale(null)}
         />
@@ -1539,6 +1550,24 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
       <SettingsModal
         project={project}
         productId={page?.productId}
+        pageId={page?.id}
+        navEnabled={page?.nav?.enabled ?? false}
+        onToggleNav={async (enabled) => {
+          if (!page) return;
+          const nextNav = { enabled, items: page.nav?.items };
+          setPage((prev) => (prev ? { ...prev, nav: nextNav } : prev));
+          try {
+            await fetch(`/api/pages/${page.id}`, {
+              method: 'PATCH',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ nav: nextNav }),
+            });
+          } catch {
+            // Keep UI state flipped even if the network call fails; the
+            // next autosave cycle will either succeed or surface the
+            // error via the main save state badge.
+          }
+        }}
         tones={TONES}
         onChangeStyle={changeStyle}
         onChangeTone={changeTone}
@@ -1590,6 +1619,9 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
 function SettingsModal({
   project,
   productId,
+  pageId,
+  navEnabled,
+  onToggleNav,
   tones,
   onChangeStyle,
   onChangeTone,
@@ -1600,6 +1632,9 @@ function SettingsModal({
 }: {
   project: Project;
   productId?: string;
+  pageId?: string;
+  navEnabled: boolean;
+  onToggleNav: (enabled: boolean) => void;
   tones: ToneKey[];
   onChangeStyle: (id: StyleId) => void;
   onChangeTone: (t: ToneKey) => void;
@@ -1787,6 +1822,22 @@ function SettingsModal({
               />
             </div>
           </div>
+          {pageId && (
+            <div className="rounded-xl border border-ink-100 p-3">
+              <div className="label mb-1.5">页面导航</div>
+              <label className="flex items-center gap-2 text-xs text-ink-700">
+                <input
+                  type="checkbox"
+                  checked={navEnabled}
+                  onChange={(e) => onToggleNav(e.target.checked)}
+                />
+                显示顶部导航栏（锚点跳转到各模块）
+              </label>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-ink-500">
+                开启后页面顶部会固定一条导航条，自动列出 hero 以外的启用模块。
+              </p>
+            </div>
+          )}
           <div className="rounded-xl border border-ink-100 p-3 text-xs text-ink-500">
             <div className="font-medium text-ink-700">AI {tLabels.strategyPanel}</div>
             <ul className="mt-2 space-y-1.5">

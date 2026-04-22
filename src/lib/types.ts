@@ -85,7 +85,16 @@ export interface StrategySummary {
   local: string[];
 }
 
-export type HeroLayout = 'split' | 'centered' | 'video-bg';
+export type HeroLayout = 'split' | 'centered' | 'video-bg' | 'bold-stat' | 'editorial';
+
+/**
+ * Per-module font-size scale. Applied to the headline in Hero / CTA to
+ * address the Feishu test feedback "字太小了，还不能设置" (#16). Scoped
+ * to these two modules intentionally — opening it up to every module
+ * would let users break the visual hierarchy they just paid the AI
+ * generator to produce.
+ */
+export type FontScale = 'sm' | 'md' | 'lg' | 'xl';
 
 export interface HeroContent {
   eyebrow: string;
@@ -108,6 +117,7 @@ export interface HeroContent {
   bullets: string[];
   media?: MediaRef;
   layout?: HeroLayout; // default 'split'
+  fontScale?: FontScale; // default 'md' — see FontScale comment
 }
 
 export interface ProductShowcaseContent {
@@ -174,11 +184,21 @@ export function resolveSocialProofLogo(l: SocialProofLogo): ResolvedSocialProofL
   return { kind: 'text', text: '' };
 }
 
+/**
+ * Logo row display mode. 'scroll' renders a horizontally scrolling
+ * marquee strip with pause-on-hover — Feishu #4 ("logo 展现样式无更多，
+ * 如想让 logo 滚动起来"). Pure CSS, duplicates the logo list so the
+ * animation loop has no visual seam. Mobile-safe (prefers-reduced-motion
+ * disables the animation and reverts to the static grid).
+ */
+export type SocialProofLogoMode = 'grid' | 'scroll';
+
 export interface SocialProofContent {
   title: string;
   logos: SocialProofLogo[];
   stats: { label: string; value: string }[];
   variant?: SocialProofVariant; // default 'logos-and-stats'
+  logoMode?: SocialProofLogoMode; // default 'grid'
 }
 
 export interface PainContent {
@@ -258,6 +278,7 @@ export interface CTAContent {
    * `#contact` when omitted. See CLAUDE.md §S1.5 Feishu issue #8.
    */
   buttonHref?: string;
+  fontScale?: FontScale; // default 'md' — see FontScale comment on HeroContent
 }
 
 /**
@@ -270,13 +291,53 @@ export interface CTAContent {
  */
 export type FormMode = 'inline' | 'external';
 
+/**
+ * Lead form field identifiers. `smsCode` is a schema placeholder for
+ * future SMS verification (Feishu #12) — the editor offers it, the
+ * renderer shows a disabled "发送验证码" button with an "S2 上线" tooltip.
+ * Actual SMS service integration is deferred to S2; the key exists now
+ * so pages opting in don't need a data migration later.
+ */
+export type FormFieldKey = 'name' | 'email' | 'company' | 'phone' | 'message' | 'smsCode';
+
+/**
+ * Rich per-field spec (Feishu #11). When `FormContent.fieldSchemas` is
+ * non-empty, it OVERRIDES the legacy string-array `fields` — order,
+ * custom labels, required flag, placeholder all come from here.
+ * Legacy pages without `fieldSchemas` render via `fields` exactly as
+ * before. Editors always write the rich form going forward.
+ */
+export interface FormFieldSpec {
+  key: FormFieldKey;
+  label?: string;
+  required?: boolean;
+  placeholder?: string;
+}
+
 export interface FormContent {
   title: string;
   subtitle: string;
-  fields: Array<'name' | 'email' | 'company' | 'phone' | 'message'>;
+  /**
+   * Legacy simple field list — still the primary source of truth for
+   * pages created before #11 landed. Render path prefers `fieldSchemas`
+   * when present, otherwise falls back to this list.
+   */
+  fields: FormFieldKey[];
+  /** Rich schema override. Presence flips the renderer to the new path. */
+  fieldSchemas?: FormFieldSpec[];
   submitLabel: string;
   mode?: FormMode;          // default 'inline'
   externalUrl?: string;     // required when mode='external'
+}
+
+/**
+ * Resolve the effective ordered field list for rendering and validation.
+ * Used by both PageRenderer (via LeadFormClient) and server-side lead
+ * validation so the two never drift.
+ */
+export function resolveFormFields(c: FormContent): FormFieldSpec[] {
+  if (c.fieldSchemas && c.fieldSchemas.length > 0) return c.fieldSchemas;
+  return c.fields.map((k) => ({ key: k }));
 }
 
 export type ModuleContent =
@@ -590,6 +651,18 @@ export interface LandingPage {
   theme: {
     primary?: string;          // 可覆盖 Product.theme.primary
     styleId?: StyleId;
+  };
+
+  /**
+   * Top-of-page navigation (Feishu #10 "页面无导航"). When `enabled` is
+   * true, PageRenderer prepends a sticky nav bar with anchor links to
+   * each active non-hero module. Default false for old pages so nothing
+   * changes silently. `items` is optional — if omitted the renderer
+   * auto-derives labels from module types + locale.
+   */
+  nav?: {
+    enabled: boolean;
+    items?: Array<{ moduleId: string; label: string }>;
   };
 
   published: boolean;

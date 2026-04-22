@@ -13,6 +13,8 @@ import type {
   FAQContent,
   CTAContent,
   FormContent,
+  FormFieldKey,
+  FormFieldSpec,
   ProductShowcaseContent,
   VideoEmbedContent,
   MediaRef,
@@ -151,7 +153,44 @@ const HERO_LAYOUTS: { id: import('@/lib/types').HeroLayout; name: string; desc: 
   { id: 'split', name: '左文右图', desc: '经典双栏，文案左 + 截图/视频右。适合有产品截图的 SaaS。' },
   { id: 'centered', name: '居中 + 下方大图', desc: '标题居中，下方铺全宽截图。Linear / Notion 风。' },
   { id: 'video-bg', name: '品牌满屏', desc: '渐变色填满，文案叠加居中。适合品牌型/没有截图时。' },
+  { id: 'bold-stat', name: '大数字主导', desc: '用超大数字/指标占视觉主位。适合 ROI / 效率类强数字卖点。' },
+  { id: 'editorial', name: '编辑分栏', desc: '衬线标题 + 黑白 + 分栏感。适合合规/权威/研究类叙事。' },
 ];
+
+const FONT_SCALES: { id: import('@/lib/types').FontScale; name: string }[] = [
+  { id: 'sm', name: '小' },
+  { id: 'md', name: '中' },
+  { id: 'lg', name: '大' },
+  { id: 'xl', name: '特大' },
+];
+
+function FontScalePicker({
+  value,
+  onChange,
+}: {
+  value: import('@/lib/types').FontScale;
+  onChange: (v: import('@/lib/types').FontScale) => void;
+}) {
+  return (
+    <div>
+      <div className="label mb-1.5">标题字号</div>
+      <div className="flex gap-1 rounded-lg border border-ink-100 p-0.5 text-xs">
+        {FONT_SCALES.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onChange(s.id)}
+            className={`flex-1 rounded-md px-2 py-1 transition ${
+              value === s.id ? 'bg-brand-600 text-white' : 'text-ink-500 hover:text-ink-900'
+            }`}
+          >
+            {s.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const BENEFITS_LAYOUTS: { id: import('@/lib/types').BenefitsLayout; name: string; desc: string }[] = [
   { id: 'cards', name: '三列卡片', desc: '每个收益一张卡，简洁并列。适合 3 个核心卖点。' },
@@ -167,6 +206,10 @@ function HeroEditor({ c, setC }: { c: HeroContent; setC: (c: HeroContent) => voi
         value={c.layout ?? 'split'}
         options={HERO_LAYOUTS}
         onChange={(v) => setC({ ...c, layout: v })}
+      />
+      <FontScalePicker
+        value={c.fontScale ?? 'md'}
+        onChange={(v) => setC({ ...c, fontScale: v })}
       />
       <Field label="Eyebrow" value={c.eyebrow} onChange={(v) => setC({ ...c, eyebrow: v })} />
       <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline />
@@ -383,10 +426,27 @@ function SocialProofEditor({ c, setC }: { c: SocialProofContent; setC: (c: Socia
         </div>
       </div>
       {showLogos && (
-        <LogosEditor
-          logos={c.logos}
-          setLogos={(next) => setC({ ...c, logos: next })}
-        />
+        <>
+          <div>
+            <div className="label mb-1.5">Logo 展示</div>
+            <div className="flex gap-1.5">
+              {(['grid', 'scroll'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setC({ ...c, logoMode: m })}
+                  title={m === 'scroll' ? '横向无缝滚动（hover 暂停）' : '网格静态排列'}
+                  className={`pill ${(c.logoMode ?? 'grid') === m ? 'border-brand-200 bg-brand-50 text-brand-700' : ''}`}
+                >
+                  {m === 'scroll' ? '滚动 scroll' : '网格 grid'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <LogosEditor
+            logos={c.logos}
+            setLogos={(next) => setC({ ...c, logos: next })}
+          />
+        </>
       )}
       {showStats && (
         <div>
@@ -725,6 +785,10 @@ function UseCaseEditor({ c, setC }: { c: UseCaseContent; setC: (c: UseCaseConten
 function CTAEditor({ c, setC }: { c: CTAContent; setC: (c: CTAContent) => void }) {
   return (
     <>
+      <FontScalePicker
+        value={c.fontScale ?? 'md'}
+        onChange={(v) => setC({ ...c, fontScale: v })}
+      />
       <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} />
       <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} />
       <Field label="Button" value={c.button} onChange={(v) => setC({ ...c, button: v })} />
@@ -739,12 +803,48 @@ function CTAEditor({ c, setC }: { c: CTAContent; setC: (c: CTAContent) => void }
 
 function FormEditor({ c, setC }: { c: FormContent; setC: (c: FormContent) => void }) {
   const mode = c.mode ?? 'inline';
-  const toggle = (f: FormContent['fields'][number]) => {
-    const has = c.fields.includes(f);
-    setC({ ...c, fields: has ? c.fields.filter((x) => x !== f) : [...c.fields, f] });
-  };
-  const all: FormContent['fields'] = ['name', 'email', 'company', 'phone', 'message'];
   const urlLooksValid = !c.externalUrl || /^https?:\/\//i.test(c.externalUrl);
+
+  // Feishu #11 — schema-driven editor. We treat `fieldSchemas` as the
+  // source of truth. Legacy pages (no fieldSchemas) are upgraded on the
+  // first edit. The legacy `fields` array is kept in sync so readers
+  // that haven't migrated still see the new order.
+  const schema: FormFieldSpec[] =
+    c.fieldSchemas && c.fieldSchemas.length > 0
+      ? c.fieldSchemas
+      : c.fields.map((k) => ({ key: k }));
+
+  const writeSchema = (next: FormFieldSpec[]) => {
+    setC({ ...c, fieldSchemas: next, fields: next.map((s) => s.key) });
+  };
+
+  const toggleKey = (k: FormFieldKey) => {
+    const idx = schema.findIndex((s) => s.key === k);
+    if (idx >= 0) writeSchema(schema.filter((_, i) => i !== idx));
+    else writeSchema([...schema, { key: k }]);
+  };
+
+  const updateAt = (i: number, patch: Partial<FormFieldSpec>) => {
+    const next = [...schema];
+    next[i] = { ...next[i], ...patch };
+    writeSchema(next);
+  };
+
+  const moveUp = (i: number) => {
+    if (i === 0) return;
+    const next = [...schema];
+    [next[i - 1], next[i]] = [next[i], next[i - 1]];
+    writeSchema(next);
+  };
+  const moveDown = (i: number) => {
+    if (i === schema.length - 1) return;
+    const next = [...schema];
+    [next[i], next[i + 1]] = [next[i + 1], next[i]];
+    writeSchema(next);
+  };
+
+  const allKeys: FormFieldKey[] = ['name', 'email', 'company', 'phone', 'message', 'smsCode'];
+
   return (
     <>
       <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
@@ -784,20 +884,90 @@ function FormEditor({ c, setC }: { c: FormContent; setC: (c: FormContent) => voi
           </div>
         </>
       ) : (
-        <div>
-          <div className="label mb-1.5">Fields</div>
-          <div className="flex flex-wrap gap-1.5">
-            {all.map((f) => (
-              <button
-                key={f}
-                onClick={() => toggle(f)}
-                className={`pill ${c.fields.includes(f) ? 'border-brand-200 bg-brand-50 text-brand-700' : ''}`}
-              >
-                {f}
-              </button>
-            ))}
+        <>
+          <div>
+            <div className="label mb-1.5">Fields</div>
+            <div className="flex flex-wrap gap-1.5">
+              {allKeys.map((k) => (
+                <button
+                  key={k}
+                  onClick={() => toggleKey(k)}
+                  className={`pill ${schema.some((s) => s.key === k) ? 'border-brand-200 bg-brand-50 text-brand-700' : ''}`}
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+            <div className="mt-1 text-[11px] text-ink-400">
+              smsCode 目前只渲染占位输入框，发送验证码按钮在 S2 上线前禁用。
+            </div>
           </div>
-        </div>
+          {schema.length > 0 && (
+            <div className="mt-3 space-y-2">
+              <div className="label">字段顺序 / 自定义</div>
+              {schema.map((spec, i) => (
+                <div
+                  key={spec.key}
+                  className="rounded-xl border border-ink-100 bg-white p-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold text-ink-900">{spec.key}</div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => moveUp(i)}
+                        disabled={i === 0}
+                        className="rounded border border-ink-100 px-1.5 py-0.5 text-xs text-ink-500 disabled:opacity-30"
+                        title="上移"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveDown(i)}
+                        disabled={i === schema.length - 1}
+                        className="rounded border border-ink-100 px-1.5 py-0.5 text-xs text-ink-500 disabled:opacity-30"
+                        title="下移"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleKey(spec.key)}
+                        className="rounded border border-red-200 px-1.5 py-0.5 text-xs text-red-600"
+                        title="移除"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <input
+                      className="input text-sm"
+                      placeholder="标签 (默认用 locale 文案)"
+                      value={spec.label ?? ''}
+                      onChange={(e) => updateAt(i, { label: e.target.value || undefined })}
+                    />
+                    <input
+                      className="input text-sm"
+                      placeholder="placeholder (可选)"
+                      value={spec.placeholder ?? ''}
+                      onChange={(e) => updateAt(i, { placeholder: e.target.value || undefined })}
+                    />
+                  </div>
+                  <label className="mt-2 flex items-center gap-2 text-xs text-ink-500">
+                    <input
+                      type="checkbox"
+                      checked={spec.required ?? (spec.key === 'name' || spec.key === 'email')}
+                      onChange={(e) => updateAt(i, { required: e.target.checked })}
+                    />
+                    必填
+                  </label>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </>
   );

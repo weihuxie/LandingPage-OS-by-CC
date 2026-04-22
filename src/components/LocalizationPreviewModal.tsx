@@ -25,18 +25,45 @@ export default function LocalizationPreviewModal({
   pageId,
   targetLocale,
   targetMarket,
+  availableLocales,
+  defaultSourceLocale,
   onApprove,
   onClose,
 }: {
   pageId: string;
   targetLocale: PageLocale;
   targetMarket?: MarketCode;
-  onApprove: (strategy: LocalizationStrategy) => Promise<void>;
+  /**
+   * Feishu #15 — if the page already has hydrated locales, offer the
+   * user a choice between "inherit from an existing locale" (preserves
+   * all manual edits: module order, disabled state, form schemas, media
+   * refs) and "generate from scratch" (classic template + hydrate path).
+   * When the list is empty or undefined the picker is hidden and the
+   * from-scratch path is the only option.
+   */
+  availableLocales?: PageLocale[];
+  defaultSourceLocale?: PageLocale;
+  onApprove: (
+    strategy: LocalizationStrategy,
+    sourceLocale?: PageLocale,
+  ) => Promise<void>;
   onClose: () => void;
 }) {
   const [strategy, setStrategy] = useState<LocalizationStrategy | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  // Inheritance defaults ON when the page already has ≥1 hydrated locale.
+  // Users who deliberately want a clean-slate regeneration can flip to
+  // "from scratch" in the modal; everyone else gets structure-preserving
+  // inheritance without having to opt in.
+  const inheritableLocales = (availableLocales ?? []).filter(
+    (l) => l !== targetLocale,
+  );
+  const [sourceLocale, setSourceLocale] = useState<PageLocale | null>(
+    inheritableLocales.includes(defaultSourceLocale as PageLocale)
+      ? (defaultSourceLocale as PageLocale)
+      : inheritableLocales[0] ?? null,
+  );
 
   useEffect(() => {
     let live = true;
@@ -61,7 +88,10 @@ export default function LocalizationPreviewModal({
     if (!strategy) return;
     setSubmitting(true);
     try {
-      await onApprove({ ...strategy, approvedByUser: true });
+      await onApprove(
+        { ...strategy, approvedByUser: true },
+        sourceLocale ?? undefined,
+      );
     } finally {
       setSubmitting(false);
     }
@@ -113,6 +143,37 @@ export default function LocalizationPreviewModal({
           <div className="py-16 text-center text-sm text-ink-500">AI 分析中…</div>
         ) : (
           <div className="space-y-4">
+            {/* Inheritance source (Feishu #15).
+                Hidden when no other locales exist yet — the first locale
+                has nothing to inherit from. */}
+            {inheritableLocales.length > 0 && (
+              <Row label="📋 来源版本">
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    className="input text-sm"
+                    value={sourceLocale ?? ''}
+                    onChange={(e) =>
+                      setSourceLocale(
+                        (e.target.value || null) as PageLocale | null,
+                      )
+                    }
+                  >
+                    {inheritableLocales.map((l) => (
+                      <option key={l} value={l}>
+                        继承自 {nativeLabel(l)}
+                      </option>
+                    ))}
+                    <option value="">从头生成（不继承）</option>
+                  </select>
+                  <span className="text-[11px] text-ink-500">
+                    {sourceLocale
+                      ? '保留来源版本的模块顺序 / 隐藏 / 表单字段 / 图片，仅翻译文案'
+                      : '按默认模板重新生成 — 你在其他语言里做的手动编辑不会保留'}
+                  </span>
+                </div>
+              </Row>
+            )}
+
             {/* Target market */}
             <Row label="目标市场">
               <select

@@ -1,12 +1,13 @@
 'use client';
 import { useState } from 'react';
-import type { FormContent } from '@/lib/types';
+import type { FormContent, FormFieldKey, FormFieldSpec } from '@/lib/types';
+import { resolveFormFields } from '@/lib/types';
 
 const labels = {
-  en: { name: 'Name', email: 'Work Email', company: 'Company', phone: 'Phone', message: 'What do you want to learn?', consent: "I've read and agree to the privacy policy", success: "Got it — we'll be in touch shortly." },
-  'zh-CN': { name: '姓名', email: '工作邮箱', company: '公司', phone: '电话', message: '想了解什么？', consent: '我已阅读并同意隐私政策', success: '已收到，我们会尽快联系你。' },
-  'zh-TW': { name: '姓名', email: '工作信箱', company: '公司', phone: '電話', message: '想了解什麼?', consent: '我已閱讀並同意隱私政策', success: '已收到,我們會盡快聯絡你。' },
-  ja: { name: '氏名', email: 'ビジネスメール', company: '会社名', phone: '電話番号', message: 'ご相談内容', consent: 'プライバシーポリシーに同意します', success: '送信を受け付けました。担当よりご連絡します。' },
+  en: { name: 'Name', email: 'Work Email', company: 'Company', phone: 'Phone', message: 'What do you want to learn?', smsCode: 'SMS code', sendSms: 'Send code', consent: "I've read and agree to the privacy policy", success: "Got it — we'll be in touch shortly." },
+  'zh-CN': { name: '姓名', email: '工作邮箱', company: '公司', phone: '电话', message: '想了解什么？', smsCode: '短信验证码', sendSms: '发送验证码', consent: '我已阅读并同意隐私政策', success: '已收到，我们会尽快联系你。' },
+  'zh-TW': { name: '姓名', email: '工作信箱', company: '公司', phone: '電話', message: '想了解什麼?', smsCode: '簡訊驗證碼', sendSms: '發送驗證碼', consent: '我已閱讀並同意隱私政策', success: '已收到,我們會盡快聯絡你。' },
+  ja: { name: '氏名', email: 'ビジネスメール', company: '会社名', phone: '電話番号', message: 'ご相談内容', smsCode: 'SMSコード', sendSms: 'コード送信', consent: 'プライバシーポリシーに同意します', success: '送信を受け付けました。担当よりご連絡します。' },
 } as const;
 
 export default function LeadFormClient({
@@ -95,20 +96,19 @@ export default function LeadFormClient({
     ja: '有効な電話番号を入力してください。',
   } as any;
 
+  // Effective ordered schema — falls back to the legacy `fields[]` path
+  // when the editor hasn't written fieldSchemas yet (Feishu #11).
+  const schema = resolveFormFields(content);
+  const hasField = (k: FormFieldKey) => schema.some((s) => s.key === k);
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!interactive) return;
     const nextErrors: { consent?: string; phone?: string } = {};
-    // Validate consent first — it's the most common reason submit "does
-    // nothing" in QA, so surface it loudly (visible red text under the
-    // checkbox) instead of the old silent disabled-button behavior.
     if (!consent) {
       nextErrors.consent = (consentError[locale] ?? consentError.en) as string;
     }
-    // Phone is optional (only validate if present and the field is
-    // actually in the form). Old submit path accepted any string so
-    // leads like "asdf" went to KV without complaint.
-    if (content.fields.includes('phone') && form.phone && form.phone.trim()) {
+    if (hasField('phone') && form.phone && form.phone.trim()) {
       if (!PHONE_RE.test(form.phone.trim())) {
         nextErrors.phone = (phoneError[locale] ?? phoneError.en) as string;
       }
@@ -124,7 +124,6 @@ export default function LeadFormClient({
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ slug, locale, variant, ...form }),
     });
-    // also fire event
     fetch('/api/events', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -150,59 +149,21 @@ export default function LeadFormClient({
           </div>
         ) : (
           <form className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2" onSubmit={onSubmit}>
-            {content.fields.includes('name') && (
-              <input
-                className="input"
-                placeholder={L.name}
-                value={form.name ?? ''}
-                onChange={(e) => update('name', e.target.value)}
-                required
+            {schema.map((spec) => (
+              <FieldRow
+                key={spec.key}
+                spec={spec}
+                L={L}
+                value={form[spec.key] ?? ''}
+                onChange={(v) => {
+                  update(spec.key, v);
+                  if (spec.key === 'phone' && errors.phone) {
+                    setErrors((x) => ({ ...x, phone: undefined }));
+                  }
+                }}
+                error={spec.key === 'phone' ? errors.phone : undefined}
               />
-            )}
-            {content.fields.includes('email') && (
-              <input
-                className="input"
-                type="email"
-                placeholder={L.email}
-                value={form.email ?? ''}
-                onChange={(e) => update('email', e.target.value)}
-                required
-              />
-            )}
-            {content.fields.includes('company') && (
-              <input
-                className="input"
-                placeholder={L.company}
-                value={form.company ?? ''}
-                onChange={(e) => update('company', e.target.value)}
-              />
-            )}
-            {content.fields.includes('phone') && (
-              <div>
-                <input
-                  className="input w-full"
-                  type="tel"
-                  inputMode="tel"
-                  placeholder={L.phone}
-                  value={form.phone ?? ''}
-                  onChange={(e) => {
-                    update('phone', e.target.value);
-                    if (errors.phone) setErrors((x) => ({ ...x, phone: undefined }));
-                  }}
-                />
-                {errors.phone && (
-                  <div className="mt-1 text-xs text-red-600">{errors.phone}</div>
-                )}
-              </div>
-            )}
-            {content.fields.includes('message') && (
-              <textarea
-                className="input sm:col-span-2 min-h-[96px]"
-                placeholder={L.message}
-                value={form.message ?? ''}
-                onChange={(e) => update('message', e.target.value)}
-              />
-            )}
+            ))}
             <div className="sm:col-span-2">
               <label className="flex items-center gap-2 text-xs text-ink-500">
                 <input
@@ -232,4 +193,110 @@ export default function LeadFormClient({
       </div>
     </div>
   );
+}
+
+/**
+ * Per-field renderer. Uses the spec's `label` / `placeholder` when set,
+ * otherwise falls back to the localized default label. `smsCode` renders
+ * as a paired input + disabled "send code" button — actual SMS service
+ * integration is deferred to S2 (Feishu #12).
+ */
+function FieldRow({
+  spec,
+  L,
+  value,
+  onChange,
+  error,
+}: {
+  spec: FormFieldSpec;
+  L: Record<string, string>;
+  value: string;
+  onChange: (v: string) => void;
+  error?: string;
+}) {
+  const defaultLabel = L[spec.key] ?? spec.key;
+  const placeholder = spec.placeholder ?? spec.label ?? defaultLabel;
+  const required = spec.required ?? (spec.key === 'name' || spec.key === 'email');
+
+  switch (spec.key) {
+    case 'name':
+      return (
+        <input
+          className="input"
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          required={required}
+        />
+      );
+    case 'email':
+      return (
+        <input
+          className="input"
+          type="email"
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          required={required}
+        />
+      );
+    case 'company':
+      return (
+        <input
+          className="input"
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          required={required}
+        />
+      );
+    case 'phone':
+      return (
+        <div>
+          <input
+            className="input w-full"
+            type="tel"
+            inputMode="tel"
+            placeholder={placeholder}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            required={required}
+          />
+          {error && <div className="mt-1 text-xs text-red-600">{error}</div>}
+        </div>
+      );
+    case 'message':
+      return (
+        <textarea
+          className="input sm:col-span-2 min-h-[96px]"
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          required={required}
+        />
+      );
+    case 'smsCode':
+      // Renderer placeholder only — send-code button is disabled until
+      // the SMS provider lands (S2). Tooltip explains the gap so QA
+      // doesn't file it as a broken button.
+      return (
+        <div className="flex gap-2">
+          <input
+            className="input flex-1"
+            placeholder={placeholder}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            required={required}
+          />
+          <button
+            type="button"
+            disabled
+            title="S2 上线后可用"
+            className="shrink-0 rounded-lg border border-ink-100 bg-ink-100/40 px-3 py-2 text-xs text-ink-400"
+          >
+            {L.sendSms}
+          </button>
+        </div>
+      );
+  }
 }

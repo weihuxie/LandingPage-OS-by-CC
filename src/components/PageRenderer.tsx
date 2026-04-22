@@ -19,6 +19,7 @@ import type {
   MarketCode,
   HeroLayout,
   BenefitsLayout,
+  FontScale,
 } from '@/lib/types';
 import { resolveSocialProofLogo } from '@/lib/types';
 import { STYLE_PRESETS, cssVarsForStyle } from '@/lib/styles';
@@ -31,6 +32,11 @@ import {
   isInlineLoopingVideo,
 } from '@/lib/media';
 
+type NavConfig = {
+  enabled: boolean;
+  items?: Array<{ moduleId: string; label: string }>;
+};
+
 type Props = {
   project: Project;
   device: 'desktop' | 'mobile';
@@ -39,6 +45,7 @@ type Props = {
   interactive?: boolean; // true only on public page
   locale?: string;
   variant?: 'A' | 'B';
+  nav?: NavConfig; // Feishu #10 — sticky anchor nav when nav.enabled
 };
 
 export default function PageRenderer({
@@ -49,11 +56,16 @@ export default function PageRenderer({
   interactive,
   locale,
   variant,
+  nav,
 }: Props) {
   const primary = project.theme.primary || '#4861ff';
   const styleId = project.theme.styleId ?? 'saas-modern';
   const preset = STYLE_PRESETS[styleId] ?? STYLE_PRESETS['saas-modern'];
   const styleVars = cssVarsForStyle(preset, primary);
+  const pageLocale = (locale ?? project.inputs.locale) as PageLocale;
+
+  const activeModules = project.modules.filter((m) => m.enabled !== false);
+  const navItems = nav?.enabled ? resolveNavItems(activeModules, nav.items, pageLocale) : [];
 
   return (
     <div
@@ -61,26 +73,105 @@ export default function PageRenderer({
       style={{ ...(styleVars as React.CSSProperties), fontFamily: preset.fontStack }}
       data-style={styleId}
     >
-      {project.modules
-        .filter((m) => m.enabled !== false)
-        .map((m) => (
-          <section
-            key={m.id}
-            onClick={() => onSelectModule?.(m.id)}
-            className={`relative ${
-              onSelectModule
-                ? `cursor-pointer transition ${selectedId === m.id ? 'outline outline-2 outline-offset-[-2px] outline-brand-400' : 'hover:outline hover:outline-1 hover:outline-ink-300'}`
-                : ''
-            }`}
-          >
-            <ModuleBody module={m} device={device} interactive={interactive} project={project} locale={locale} variant={variant} />
-          </section>
-        ))}
+      {nav?.enabled && navItems.length > 0 && (
+        <Nav
+          items={navItems}
+          productName={project.inputs.name}
+        />
+      )}
+      {activeModules.map((m) => (
+        <section
+          key={m.id}
+          id={`mod-${m.id}`}
+          onClick={() => onSelectModule?.(m.id)}
+          className={`relative scroll-mt-20 ${
+            onSelectModule
+              ? `cursor-pointer transition ${selectedId === m.id ? 'outline outline-2 outline-offset-[-2px] outline-brand-400' : 'hover:outline hover:outline-1 hover:outline-ink-300'}`
+              : ''
+          }`}
+        >
+          <ModuleBody module={m} device={device} interactive={interactive} project={project} locale={locale} variant={variant} />
+        </section>
+      ))}
       <footer className="border-t border-ink-100 px-6 py-6 text-center text-xs text-ink-300">
         © {new Date().getFullYear()} {project.inputs.name} · Built with LandingPage OS by CC
       </footer>
     </div>
   );
+}
+
+/**
+ * Sticky top navigation (Feishu #10). Renders once per page above all
+ * module sections; items jump to `#mod-<moduleId>`. Hero is excluded from
+ * the default item list because the page already starts on it.
+ */
+function Nav({
+  items,
+  productName,
+}: {
+  items: Array<{ moduleId: string; label: string }>;
+  productName: string;
+}) {
+  return (
+    <nav className="sticky top-0 z-40 border-b border-ink-100 bg-white/90 backdrop-blur">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
+        <div className="truncate text-sm font-semibold text-ink-900">{productName}</div>
+        <ul className="hidden items-center gap-5 text-sm text-ink-700 sm:flex">
+          {items.map((it) => (
+            <li key={it.moduleId}>
+              <a
+                href={`#mod-${it.moduleId}`}
+                className="transition hover:text-ink-900"
+              >
+                {it.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </nav>
+  );
+}
+
+// Default nav labels per module type, keyed by locale. Hero is never a
+// nav item — it's the landing page itself.
+const NAV_LABELS: Record<PageLocale, Partial<Record<PageModule['type'], string>>> = {
+  'zh-CN': {
+    socialProof: '客户', pain: '痛点', solution: '方案', benefits: '价值',
+    useCase: '场景', testimonial: '证言', faq: '常见问题', cta: '开始', form: '联系',
+    productShowcase: '产品', videoEmbed: '演示',
+  },
+  'zh-TW': {
+    socialProof: '客戶', pain: '痛點', solution: '方案', benefits: '價值',
+    useCase: '場景', testimonial: '證言', faq: '常見問題', cta: '開始', form: '聯絡',
+    productShowcase: '產品', videoEmbed: '示範',
+  },
+  'ja': {
+    socialProof: '導入企業', pain: '課題', solution: 'ソリューション', benefits: '価値',
+    useCase: '活用例', testimonial: 'お客様の声', faq: 'FAQ', cta: '開始', form: 'お問い合わせ',
+    productShowcase: '製品', videoEmbed: 'デモ',
+  },
+  'en': {
+    socialProof: 'Customers', pain: 'Problem', solution: 'Solution', benefits: 'Benefits',
+    useCase: 'Use cases', testimonial: 'Testimonials', faq: 'FAQ', cta: 'Get started', form: 'Contact',
+    productShowcase: 'Product', videoEmbed: 'Demo',
+  },
+};
+
+function resolveNavItems(
+  modules: PageModule[],
+  explicit: Array<{ moduleId: string; label: string }> | undefined,
+  locale: PageLocale,
+): Array<{ moduleId: string; label: string }> {
+  if (explicit && explicit.length > 0) {
+    // Filter to modules that still exist and are enabled.
+    const ids = new Set(modules.map((m) => m.id));
+    return explicit.filter((it) => ids.has(it.moduleId));
+  }
+  const labels = NAV_LABELS[locale] ?? NAV_LABELS['en'];
+  return modules
+    .filter((m) => m.type !== 'hero' && labels[m.type])
+    .map((m) => ({ moduleId: m.id, label: labels[m.type]! }));
 }
 
 function ModuleBody({
@@ -190,6 +281,28 @@ function ModuleBody({
 
 // --- Blocks -------------------------------------------------------------
 
+/**
+ * Multiplier for the headline class in Hero / CTA. See FontScale in
+ * types.ts — scoped to these two modules so users can fix "字太小了"
+ * (Feishu #16) without wrecking hierarchy elsewhere.
+ */
+function headlineSizeClass(
+  scale: FontScale | undefined,
+  mobile: boolean,
+  base: string,
+): string {
+  const s = scale ?? 'md';
+  if (s === 'md') return base;
+  if (mobile) {
+    return s === 'sm' ? 'text-2xl' : s === 'lg' ? 'text-4xl' : 'text-5xl';
+  }
+  return s === 'sm'
+    ? 'text-3xl md:text-4xl'
+    : s === 'lg'
+      ? 'text-6xl md:text-7xl'
+      : 'text-7xl md:text-8xl';
+}
+
 function Hero({
   content,
   device,
@@ -219,11 +332,19 @@ function Hero({
     </div>
   );
 
+  const baseHeadlineSize = mobile
+    ? 'text-3xl'
+    : layout === 'centered'
+      ? 'text-5xl md:text-6xl'
+      : hasMedia
+        ? 'text-4xl md:text-5xl'
+        : 'text-5xl md:text-6xl';
+  const isDark = layout === 'video-bg' || layout === 'editorial';
   const headline = (
     <h1
       className={`mt-4 tracking-tight ${layout === 'video-bg' ? 'text-white' : 'text-ink-900'} ${
-        mobile ? 'text-3xl' : layout === 'centered' ? 'text-5xl md:text-6xl' : hasMedia ? 'text-4xl md:text-5xl' : 'text-5xl md:text-6xl'
-      }`}
+        layout === 'editorial' ? 'font-serif' : ''
+      } ${headlineSizeClass(content.fontScale, mobile, baseHeadlineSize)}`}
       style={{ fontWeight: 'var(--heading-weight, 600)' as any, lineHeight: 1.15 }}
     >
       {content.headline}
@@ -305,6 +426,74 @@ function Hero({
           {eyebrow}{headline}{sub}{ctas}{bullets}
           {hasMedia && (
             <div className="mx-auto mt-10 max-w-4xl">
+              <HeroMedia media={content.media!} resolved={media!} device={device} />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Layout: bold-stat (大数字主导) ----
+  if (layout === 'bold-stat') {
+    const firstBullet = content.bullets?.[0];
+    const bg = 'linear-gradient(135deg, #0b1020 0%, color-mix(in oklch, var(--brand) 70%, #0b1020) 100%)';
+    return (
+      <div className="relative overflow-hidden text-white" style={{ background: bg }}>
+        <div className={`mx-auto px-6 ${mobile ? 'py-16' : 'max-w-6xl py-24'} ${mobile ? '' : 'grid grid-cols-5 items-center gap-10'}`}>
+          <div className={mobile ? '' : 'col-span-2'}>
+            <div
+              className={`font-extrabold leading-none ${mobile ? 'text-6xl' : 'text-8xl md:text-9xl'}`}
+              style={{ color: 'color-mix(in oklch, var(--brand) 60%, white)' }}
+            >
+              {firstBullet?.match(/[\d][\d.,×%+]*/)?.[0] ?? '3×'}
+            </div>
+            <div className="mt-2 text-sm uppercase tracking-widest text-white/60">
+              {firstBullet ?? content.eyebrow ?? 'OUTCOME'}
+            </div>
+          </div>
+          <div className={mobile ? 'mt-6' : 'col-span-3'}>
+            {content.eyebrow && (
+              <div className="inline-block border border-white/30 px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-white/80" style={{ borderRadius: 'var(--radius, 16px)' }}>
+                {content.eyebrow}
+              </div>
+            )}
+            <h1
+              className={`mt-4 tracking-tight text-white ${headlineSizeClass(content.fontScale, mobile, mobile ? 'text-3xl' : 'text-4xl md:text-5xl')}`}
+              style={{ fontWeight: 'var(--heading-weight, 600)' as any, lineHeight: 1.15 }}
+            >
+              {content.headline}
+            </h1>
+            <p className={`mt-4 text-white/70 ${mobile ? 'text-base' : 'text-lg'} max-w-2xl`}>
+              {content.subhead}
+            </p>
+            {ctas}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Layout: editorial (衬线分栏) ----
+  if (layout === 'editorial') {
+    return (
+      <div className="relative overflow-hidden border-b-2 border-ink-900 bg-white">
+        <div className={`mx-auto px-6 ${mobile ? 'py-12' : 'max-w-5xl py-20'}`}>
+          {content.eyebrow && (
+            <div className="border-b border-ink-900 pb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-ink-900">
+              {content.eyebrow}
+            </div>
+          )}
+          {headline}
+          <div className={`mt-6 ${mobile ? '' : 'grid grid-cols-2 gap-10'}`}>
+            <p className={`text-ink-700 ${mobile ? 'text-base' : 'text-lg'}`} style={{ lineHeight: 1.7 }}>
+              {content.subhead}
+            </p>
+            {bullets}
+          </div>
+          {ctas}
+          {hasMedia && (
+            <div className="mt-10 border-t border-ink-100 pt-10">
               <HeroMedia media={content.media!} resolved={media!} device={device} />
             </div>
           )}
@@ -420,12 +609,13 @@ function SocialProof({ content }: { content: SocialProofContent }) {
   const variant = content.variant ?? 'logos-and-stats';
   const showLogos = variant !== 'stats-only' && content.logos?.length > 0;
   const showStats = variant !== 'logos-only' && content.stats?.length > 0;
+  const scroll = content.logoMode === 'scroll';
   return (
     <div className="mx-auto max-w-6xl px-6 py-12">
       <div className="text-center text-xs font-medium uppercase tracking-wider text-ink-500">
         {content.title}
       </div>
-      {showLogos && (
+      {showLogos && !scroll && (
         <div className="mt-5 grid grid-cols-3 items-center gap-4 sm:grid-cols-6">
           {content.logos.map((l, i) => {
             const r = resolveSocialProofLogo(l);
@@ -453,6 +643,7 @@ function SocialProof({ content }: { content: SocialProofContent }) {
           })}
         </div>
       )}
+      {showLogos && scroll && <LogoScroll logos={content.logos} />}
       {showStats && (
         <div className={`grid grid-cols-3 gap-3 ${showLogos ? 'mt-8' : 'mt-5'}`}>
           {content.stats.map((s, i) => (
@@ -466,6 +657,70 @@ function SocialProof({ content }: { content: SocialProofContent }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Marquee logo strip (Feishu #4). Pure CSS animation; duplicates the list
+ * so the loop has no visual seam. `prefers-reduced-motion` stops the
+ * animation (WCAG) and edges fade to mask the seam on hover-pause.
+ */
+function LogoScroll({ logos }: { logos: SocialProofContent['logos'] }) {
+  // Duplicate so the second copy slides in as the first slides out.
+  const doubled = [...logos, ...logos];
+  return (
+    <div
+      className="logo-scroll-mask mt-5 overflow-hidden"
+      style={{
+        WebkitMaskImage:
+          'linear-gradient(90deg, transparent, black 10%, black 90%, transparent)',
+        maskImage:
+          'linear-gradient(90deg, transparent, black 10%, black 90%, transparent)',
+      }}
+    >
+      <div
+        className="logo-scroll-track flex gap-6 py-2"
+        style={{
+          width: 'max-content',
+          animation: `logoScroll ${Math.max(20, logos.length * 3)}s linear infinite`,
+        }}
+      >
+        {doubled.map((l, i) => {
+          const r = resolveSocialProofLogo(l);
+          return r.kind === 'image' ? (
+            <div
+              key={i}
+              className="flex h-14 w-36 flex-shrink-0 items-center justify-center rounded-lg border border-ink-100 bg-white p-3"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={r.src}
+                alt={r.alt ?? ''}
+                loading="lazy"
+                className="max-h-8 max-w-full object-contain"
+              />
+            </div>
+          ) : (
+            <div
+              key={i}
+              className="flex h-14 w-36 flex-shrink-0 items-center justify-center rounded-lg border border-ink-100 bg-white text-sm font-medium text-ink-500"
+            >
+              {r.text}
+            </div>
+          );
+        })}
+      </div>
+      <style jsx>{`
+        @keyframes logoScroll {
+          from { transform: translateX(0); }
+          to { transform: translateX(-50%); }
+        }
+        .logo-scroll-track:hover { animation-play-state: paused; }
+        @media (prefers-reduced-motion: reduce) {
+          .logo-scroll-track { animation: none !important; transform: none !important; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -861,7 +1116,9 @@ function CTA({ content }: { content: CTAContent }) {
         style={{ background: 'linear-gradient(135deg, var(--brand), color-mix(in oklch, var(--brand) 60%, #0b1020))' }}
       >
         <div>
-          <h3 className="text-2xl font-semibold">{content.headline}</h3>
+          <h3 className={`font-semibold ${headlineSizeClass(content.fontScale, false, 'text-2xl')}`}>
+            {content.headline}
+          </h3>
           <p className="mt-1 text-white/80">{content.subhead}</p>
         </div>
         <a

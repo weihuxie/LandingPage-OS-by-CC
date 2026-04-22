@@ -121,6 +121,7 @@ export default async function PublicPage({
         interactive
         locale={locale}
         variant={variant}
+        nav={page.nav}
       />
       <LanguageSwitcherPublic
         slug={page.slug}
