@@ -6,20 +6,25 @@
  * separated from writes so an admin endpoint can preview impact (`?dryRun=1`)
  * before committing.
  *
- * Decisions locked with user:
+ * Decisions locked with user (方案 B · 一次继承后各自独立):
  *   · Primary sibling = the row with locale === page.defaultLocale. Keeps
  *     the original id so legacy URLs (/zh-CN/projects/<id>), leads.projectId,
  *     and analytics events.projectId stay valid. Also owns the slug-map
  *     pointer so `getLandingPageBySlug` still resolves to a canonical row.
+ *     Inherits `published` / `publishedAt` / `deploy` from source — the
+ *     Vercel HTML already referred to this locale.
  *   · Non-primary siblings = new rows (fresh nanoid). Same productId, slug,
- *     localeGroupId. `deploy` left null — the original Vercel HTML was a
- *     defaultLocale render, sibling deploys land in P5.
- *   · `published` inherited from source (flag clones to all siblings); user
- *     unpublishes each sibling independently after migration.
+ *     localeGroupId. `deploy` = null, `published` = false, `publishedAt`
+ *     cleared. They start unpublished because they have no independent
+ *     deploy record; user re-publishes each explicitly when ready (P5).
+ *     This matches the rule "写入新 KV row: published=false, 不继承源的
+ *     发布状态" — applied consistently to any newly-created sibling row,
+ *     whether created via migration (P2) or user-initiated localize (P4).
  *   · `hydrationFailed` inherited (if source had it, all siblings do; user
  *     re-hydrates individually).
- *   · First-time inheritance only — content is copied once at migration,
- *     then each sibling diverges independently (no sync-back to source).
+ *   · First-time inheritance only — content is copied once here (and, in
+ *     P4, again on user-initiated localize), then each sibling diverges.
+ *     Editing zh-CN never touches en; deleting zh-CN never deletes en.
  *
  * Idempotency: if `page.localeGroupId` is already set, `planPageMigration`
  * returns `alreadyMigrated: true` and an empty siblings list. `applyPageMigration`
@@ -118,7 +123,12 @@ function buildSibling(
       A: { [locale]: variantA } as LocalizedContent,
       B: { [locale]: variantB } as LocalizedContent,
     },
+    // Primary inherits deploy/published (legacy HTML was its render);
+    // non-primary starts fresh and unpublished — rule: "published=false,
+    // 不继承源的发布状态".
     deploy: isPrimary ? (src.deploy ?? null) : null,
+    published: isPrimary ? src.published : false,
+    publishedAt: isPrimary ? src.publishedAt : undefined,
     createdAt: isPrimary ? src.createdAt : Date.now(),
     updatedAt: Date.now(),
     stats: {
