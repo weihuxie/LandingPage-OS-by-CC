@@ -535,7 +535,26 @@ export async function getLandingPageBySlug(slug: string): Promise<LandingPage | 
   return list.find((p) => p.slug === slug) ?? null;
 }
 
-export async function saveLandingPage(page: LandingPage): Promise<LandingPage> {
+/**
+ * Save options.
+ *
+ *   skipSlugMap — don't write the `lp:v2:slug:<slug> -> id` pointer. Set
+ *                 by non-primary siblings during parallel-locale migration:
+ *                 N siblings share the same slug, and only the primary
+ *                 (locale === page.defaultLocale) should own the slug-map
+ *                 pointer. Without this, each subsequent sibling save
+ *                 overwrites the primary's pointer and `getLandingPageBySlug`
+ *                 starts returning random sibling rows instead of the
+ *                 canonical one.
+ */
+export interface SaveLandingPageOpts {
+  skipSlugMap?: boolean;
+}
+
+export async function saveLandingPage(
+  page: LandingPage,
+  opts: SaveLandingPageOpts = {},
+): Promise<LandingPage> {
   page.updatedAt = Date.now();
   if (useKV()) {
     // Was: Promise.all([set(data), sadd(index), set(slug)]) — any rejection
@@ -548,7 +567,8 @@ export async function saveLandingPage(page: LandingPage): Promise<LandingPage> {
     //      self-heals on next dashboard load).
     //   3. SLUG MAP — best-effort; slug lookups fall back to scan if
     //      the map is stale, so we log and swallow rather than poison
-    //      the whole save over a secondary index.
+    //      the whole save over a secondary index. Skipped entirely when
+    //      `opts.skipSlugMap` is set (non-primary sibling writes).
     //   4. LOCALE GROUP — best-effort too; only written when the page
     //      carries a `localeGroupId`. `getLandingPageGroup` degrades
     //      gracefully (empty list) if this set is out of sync.
@@ -560,16 +580,18 @@ export async function saveLandingPage(page: LandingPage): Promise<LandingPage> {
       () => kv.sadd(PAGE_INDEX_KEY, page.id),
       `saveLandingPage:${page.id}:sadd`,
     );
-    try {
-      await withKVRetry(
-        () => kv.set(SLUG_MAP_KEY_PREFIX + page.slug, page.id),
-        `saveLandingPage:${page.id}:slug-map`,
-      );
-    } catch (e) {
-      console.error(
-        `[saveLandingPage] slug-map write failed for ${page.slug}; /p/${page.slug} will use scan fallback:`,
-        e,
-      );
+    if (!opts.skipSlugMap) {
+      try {
+        await withKVRetry(
+          () => kv.set(SLUG_MAP_KEY_PREFIX + page.slug, page.id),
+          `saveLandingPage:${page.id}:slug-map`,
+        );
+      } catch (e) {
+        console.error(
+          `[saveLandingPage] slug-map write failed for ${page.slug}; /p/${page.slug} will use scan fallback:`,
+          e,
+        );
+      }
     }
     if (page.localeGroupId) {
       try {
