@@ -70,9 +70,14 @@ export default function ProductCard({
       : '该产品下目前没有落地页。';
 
   return (
-    <div className="card relative block p-5 transition hover:border-brand-200 hover:shadow-soft">
+    <div className="card group relative block cursor-pointer p-5 transition hover:border-brand-200 hover:shadow-soft">
       {/* Cover link: full-bleed, zero content, sits at z-0. Click anywhere
-          on the card (except the kebab) opens the product detail page. */}
+          on the card (except the kebab) opens the product detail page.
+          `cursor-pointer` is on the outer card (not the Link) because the
+          z-10 content layer covers most of the clickable surface — without
+          it the pointer cursor only shows on the sliver of padding where
+          the Link is actually the topmost element, which feels like "the
+          cursor takes a second to appear" when dragging across text. */}
       <Link
         href={`/${locale}/products/${product.id}`}
         aria-label={`打开 ${product.name}`}
@@ -140,7 +145,7 @@ export default function ProductCard({
           📊 {totalViews.toLocaleString()} UV ·{' '}
           {totalLeads.toLocaleString()} leads
         </span>
-        <span className="text-brand-700">打开产品 →</span>
+        <span className="text-brand-700 group-hover:underline">打开产品 →</span>
       </div>
     </div>
   );
