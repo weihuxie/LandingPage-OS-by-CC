@@ -123,8 +123,20 @@ export function migrateProjectToV2(
  * Project-like view computed from a LandingPage + Product, for legacy API
  * compat. Old /api/projects/:id endpoints rewrap into this shape so existing
  * clients/editor keep working while we roll out UI changes.
+ *
+ * `siblings` is the P1 parallel-locale seam: when the parallel-instance model
+ * is active, callers may pass the full sibling group so future phases can
+ * merge per-locale variant cells from sibling rows into one Project view.
+ * P1 accepts the param for API shape stability but doesn't read it — existing
+ * behavior is fully preserved. P3+ will use it to expose locale tabs backed
+ * by independent sibling rows.
  */
-export function projectViewFromV2(page: LandingPage, product: Product): Project {
+export function projectViewFromV2(
+  page: LandingPage,
+  product: Product,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  siblings?: LandingPage[],
+): Project {
   const locale = page.activeVariant ? page.defaultLocale : 'zh-CN';
   const variantA = page.variants.A[page.defaultLocale] ?? [];
   const variantB = page.variants.B[page.defaultLocale] ?? [];
@@ -169,4 +181,21 @@ export function projectViewFromV2(page: LandingPage, product: Product): Project 
     abStats: page.stats.abStats,
     deploy: page.deploy,
   };
+}
+
+/**
+ * Sibling-aware Project view (P1 parallel-locale seam, no current consumers).
+ *
+ * Constructed so the eventual /api/projects/:id path in the MULTI_LOCALE_AS_INSTANCES
+ * world can call this instead of the single-page helper and have each sibling's
+ * locale cell folded into the returned view. Today this is a thin wrapper so the
+ * surface exists for P3/P4 to bind against without another storage signature
+ * change later — and a diagnostic export so callers know the group was resolved.
+ */
+export function siblingsToProjectViewGroup(
+  primary: LandingPage,
+  siblings: LandingPage[],
+  product: Product,
+): Project {
+  return projectViewFromV2(primary, product, siblings);
 }

@@ -11,7 +11,15 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { kv } from '@vercel/kv';
-import type { Project, Lead, AssetLibrary, Product, LandingPage, Brand } from './types';
+import type {
+  Project,
+  Lead,
+  AssetLibrary,
+  Product,
+  LandingPage,
+  Brand,
+  PageLocale,
+} from './types';
 import { migrateProjectToV2, projectViewFromV2 } from './migrate-v2';
 import { StorageRequiredError } from './errors';
 
@@ -46,6 +54,26 @@ function assertStorageOk(): void {
   if (isVercel() && !useKV()) {
     throw new StorageRequiredError();
   }
+}
+
+/**
+ * Parallel-locale refactor feature flag (CLAUDE.md §四 TODO #1, 2026-04).
+ *
+ * When `MULTI_LOCALE_AS_INSTANCES=1`, callers that create new LandingPage
+ * rows are expected to stamp `locale` + `localeGroupId` on each row so
+ * `saveLandingPage` maintains the locale-group index set. When off
+ * (default), new pages continue to embed every locale inside a single
+ * row's `variants.{A|B}.{locale}` map and the group index stays empty.
+ *
+ * The storage helpers (`getLandingPageGroup`, `getLandingPageBySlugLocale`,
+ * `getSiblings`) work under both shapes — they degrade gracefully when a
+ * page has no `localeGroupId`, so P1 can land without changing any
+ * observable behavior. P2 will add a migration script that backfills
+ * groups for existing rows; P3+ will gate new-code paths on this flag.
+ */
+export function multiLocaleInstances(): boolean {
+  // eslint-disable-next-line dot-notation
+  return process.env['MULTI_LOCALE_AS_INSTANCES'] === '1';
 }
 
 // --- KV reliability helpers -------------------------------------------
@@ -338,6 +366,14 @@ const PRODUCT_KEY_PREFIX = 'lp:v2:product:';
 const PRODUCT_INDEX_KEY = 'lp:v2:product-ids';
 const SLUG_MAP_KEY_PREFIX = 'lp:v2:slug:';
 
+/**
+ * SADD-indexed set of LandingPage ids that share a localeGroupId. Written
+ * by `saveLandingPage` when the page declares a group; read by
+ * `getLandingPageGroup` / `getSiblings`. Legacy rows without a group are
+ * simply absent from every such set.
+ */
+const LOCALE_GROUP_KEY_PREFIX = 'lp:v2:locale-group:';
+
 // --- Products ----------------------------------------------------------
 
 export async function readProducts(): Promise<Product[]> {
@@ -513,6 +549,9 @@ export async function saveLandingPage(page: LandingPage): Promise<LandingPage> {
     //   3. SLUG MAP — best-effort; slug lookups fall back to scan if
     //      the map is stale, so we log and swallow rather than poison
     //      the whole save over a secondary index.
+    //   4. LOCALE GROUP — best-effort too; only written when the page
+    //      carries a `localeGroupId`. `getLandingPageGroup` degrades
+    //      gracefully (empty list) if this set is out of sync.
     await withKVRetry(
       () => kv.set(PAGE_KEY_PREFIX + page.id, page),
       `saveLandingPage:${page.id}:set`,
@@ -532,6 +571,19 @@ export async function saveLandingPage(page: LandingPage): Promise<LandingPage> {
         e,
       );
     }
+    if (page.localeGroupId) {
+      try {
+        await withKVRetry(
+          () => kv.sadd(LOCALE_GROUP_KEY_PREFIX + page.localeGroupId, page.id),
+          `saveLandingPage:${page.id}:locale-group`,
+        );
+      } catch (e) {
+        console.error(
+          `[saveLandingPage] locale-group SADD failed for group=${page.localeGroupId} page=${page.id}; getSiblings may miss this row until next save:`,
+          e,
+        );
+      }
+    }
     return page;
   }
   const list = await readFs<LandingPage[]>(KEY_PAGES, []);
@@ -549,11 +601,85 @@ export async function deleteLandingPage(id: string): Promise<void> {
       kv.del(PAGE_KEY_PREFIX + id),
       kv.srem(PAGE_INDEX_KEY, id),
       page ? kv.del(SLUG_MAP_KEY_PREFIX + page.slug) : Promise.resolve(),
+      page?.localeGroupId
+        ? kv.srem(LOCALE_GROUP_KEY_PREFIX + page.localeGroupId, id)
+        : Promise.resolve(),
     ]);
     return;
   }
   const list = await readFs<LandingPage[]>(KEY_PAGES, []);
   await writeFs(KEY_PAGES, list.filter((p) => p.id !== id));
+}
+
+// --- Parallel-locale sibling queries ---------------------------------
+//
+// These helpers are the read side of the parallel-locale refactor. They
+// work correctly regardless of the MULTI_LOCALE_AS_INSTANCES flag:
+//   - when the group index set is populated, they resolve siblings via
+//     SMEMBERS + pipelined GETs;
+//   - when a page has no groupId (legacy row or flag off), they return a
+//     single-element list containing just the page itself, so callers
+//     can iterate unconditionally.
+//
+// Writing callers (localize / delete-locale / per-sibling deploy) land in
+// P3–P5. P1 only introduces the reads + `saveLandingPage` index
+// bookkeeping so old hot paths keep producing legacy-shaped rows.
+
+/**
+ * Load every sibling row that shares the given group id. Returns `[]`
+ * when KV is off, the group is empty, or every member key has been
+ * deleted out from under the index. Callers should treat the empty
+ * list as "no group / fall back to primary row".
+ */
+export async function getLandingPageGroup(groupId: string): Promise<LandingPage[]> {
+  if (!useKV()) return [];
+  const raw = (await kv.smembers(LOCALE_GROUP_KEY_PREFIX + groupId)) as string[] | null;
+  const ids = raw ?? [];
+  if (ids.length === 0) return [];
+  const pipeline = kv.pipeline();
+  for (const id of ids) pipeline.get(PAGE_KEY_PREFIX + id);
+  const results = await pipeline.exec();
+  return (results ?? []).filter((r): r is LandingPage => !!r);
+}
+
+/**
+ * Resolve a (slug, locale) pair to the specific sibling row that owns
+ * that locale. Designed for the P3 route `/p/[slug]/[locale]`.
+ *
+ * Resolution order:
+ *   1. Look up the slug — if missing, return null.
+ *   2. If the resolved row has no groupId (legacy / flag off), return it
+ *      as-is; the caller still has to pick the locale at render time
+ *      from the multi-locale variants map. Callers that strictly require
+ *      one-row-per-locale should check `page.locale === locale` themselves.
+ *   3. If the resolved row already matches the requested locale, short-circuit.
+ *   4. Otherwise, walk the group and return whichever sibling owns the locale,
+ *      or null when no sibling matches.
+ */
+export async function getLandingPageBySlugLocale(
+  slug: string,
+  locale: PageLocale,
+): Promise<LandingPage | null> {
+  const page = await getLandingPageBySlug(slug);
+  if (!page) return null;
+  if (!page.localeGroupId) return page;
+  if (page.locale === locale) return page;
+  const siblings = await getLandingPageGroup(page.localeGroupId);
+  return siblings.find((s) => s.locale === locale) ?? null;
+}
+
+/**
+ * All sibling rows of `page`, including itself. Legacy rows without a
+ * group return `[page]` so callers can iterate without null-checking the
+ * group id. When the group exists but somehow failed to include `page`
+ * (index drift), `page` is appended defensively so the caller never sees
+ * a set that excludes its own input.
+ */
+export async function getSiblings(page: LandingPage): Promise<LandingPage[]> {
+  if (!page.localeGroupId) return [page];
+  const all = await getLandingPageGroup(page.localeGroupId);
+  if (all.length === 0) return [page];
+  return all.some((s) => s.id === page.id) ? all : [...all, page];
 }
 
 const DEFAULT_BRAND: Brand = {

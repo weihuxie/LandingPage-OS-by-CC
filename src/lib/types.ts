@@ -681,6 +681,34 @@ export interface LandingPage {
    */
   hydrationFailed?: boolean;
 
+  /**
+   * Parallel-locale instance fields (2026-04 refactor · CLAUDE.md §四 TODO #1).
+   *
+   * The v2 shape stored every locale inside a single LandingPage.variants.{A|B}.{locale}
+   * map — "one page owns all locales". That conflates publish state, A/B variant,
+   * lead counts, and deploy URLs across languages and makes Feishu #15 ("generated
+   * locale can't sync previously edited source content") structurally unfixable:
+   * there's no "source version" to inherit from and no "independent instance" to
+   * diverge into. The parallel-instance model splits each (slug, locale) into its
+   * own KV row so locales can be created, published, deleted, A/B'd, and analyzed
+   * independently.
+   *
+   *   locale         — the single locale this row owns. When set, variants.{A|B}
+   *                    typically only has this one key populated and the row is
+   *                    treated as "the instance" for that language.
+   *   localeGroupId  — shared id linking all sibling rows of the same product page
+   *                    across locales. Rows in the same group share productId and
+   *                    slug; they differ only in locale.
+   *
+   * Both fields are OPTIONAL for backward compat. Legacy rows leave them undefined
+   * and continue to render via the multi-locale variants map. New rows created
+   * with MULTI_LOCALE_AS_INSTANCES=1 populate both and the locale-group index set
+   * in KV tracks siblings. P1 of the refactor adds the fields + storage helpers
+   * but changes no behavior — existing save paths still produce legacy-shaped rows.
+   */
+  locale?: PageLocale;
+  localeGroupId?: string;
+
   stats: {
     views: number;
     leads: number;
