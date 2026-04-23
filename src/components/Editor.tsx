@@ -993,10 +993,16 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     }
   };
 
+  // `?lang=<editingLocale>` forces /p/[slug] to render the tab the user is
+  // currently looking at. Without this query, the public route falls back
+  // through cookie → Accept-Language → geo → defaultLocale, so clicking
+  // "查看" while on the English tab would open the Chinese page on any
+  // browser with zh-CN at the top of Accept-Language — exactly the
+  // "查看 shows 简体中文" bug the user reported 2026-04.
   const publicUrl =
     typeof window !== 'undefined'
-      ? `${window.location.origin}/p/${project.slug}`
-      : `/p/${project.slug}`;
+      ? `${window.location.origin}/p/${project.slug}?lang=${editingLocale}`
+      : `/p/${project.slug}?lang=${editingLocale}`;
 
   const copyLink = async (kind: 'preview' | 'vercel' = 'preview') => {
     const url = kind === 'vercel' ? project.deploy?.url ?? publicUrl : publicUrl;
@@ -1035,15 +1041,28 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   }, [menuOpen]);
 
   // Smart "查看" URL — prefer the live Vercel deploy URL when we have one,
-  // fall back to the internal /p/<slug> preview. Keeps the toolbar button
-  // count down while still giving the user a single predictable "see it
-  // live" click. We use the RELATIVE `/p/<slug>` form here (not the
-  // absolute `publicUrl`) because `publicUrl` depends on
+  // fall back to the internal /p/<slug>?lang=<tab> preview. Keeps the
+  // toolbar button count down while still giving the user a single
+  // predictable "see it live" click. We use the RELATIVE `/p/<slug>` form
+  // here (not the absolute `publicUrl`) because `publicUrl` depends on
   // `window.location.origin` which is only available on the client — using
   // it in JSX triggers a Next.js hydration mismatch ("Server: /p/...
   // Client: http://.../p/..."). The absolute form is still used for
   // clipboard copy (the user wants a pasteable URL), just not for href.
-  const viewUrl = project.deploy?.url ?? `/p/${project.slug}`;
+  //
+  // Locale trap: the Vercel deploy is a single `index.html` with ONE
+  // locale baked in (defaultLocale at deploy time — see /api/projects/
+  // [id]/deploy which uses projectView.modules without a locale arg).
+  // When the user is on a non-default tab, sending them to the Vercel URL
+  // would show the OTHER language's content and they'd think localization
+  // is broken. Route them through the internal preview with `?lang=` so
+  // the page renders the tab they're actually editing.
+  const isDefaultLocaleTab =
+    editingLocale === (page?.defaultLocale ?? project.inputs.locale);
+  const viewUrl =
+    project.deploy?.url && isDefaultLocaleTab
+      ? project.deploy.url
+      : `/p/${project.slug}?lang=${editingLocale}`;
 
   const unusedTypes = ALL_TYPES.filter((t) => !project.modules.some((m) => m.type === t));
 
@@ -1348,9 +1367,11 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               target="_blank"
               rel="noreferrer"
               title={
-                project.deploy?.url
+                project.deploy?.url && isDefaultLocaleTab
                   ? `在新标签页打开 Vercel 上的正式页面\n${project.deploy.url}`
-                  : `在新标签页打开本地预览\n/p/${project.slug}`
+                  : project.deploy?.url && !isDefaultLocaleTab
+                    ? `当前在 ${editingLocale} 标签；Vercel 上只发布了 ${page?.defaultLocale ?? project.inputs.locale} 版本，改打开本地预览\n${viewUrl}`
+                    : `在新标签页打开本地预览（${editingLocale}）\n${viewUrl}`
               }
             >
               查看 ↗
