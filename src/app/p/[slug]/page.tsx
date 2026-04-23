@@ -1,8 +1,10 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { cookies, headers } from 'next/headers';
 import {
   getLandingPageBySlug,
   getProduct,
+  getSiblings,
+  multiLocaleInstances,
 } from '@/lib/storage';
 import { projectViewFromV2 } from '@/lib/migrate-v2';
 import PageRenderer from '@/components/PageRenderer';
@@ -11,7 +13,7 @@ import LanguageSwitcherPublic from '@/components/LanguageSwitcherPublic';
 import HrefLangHead from '@/components/HrefLangHead';
 import { detectLocale, PAGE_LOCALES } from '@/lib/i18n-detect';
 import type { Metadata } from 'next';
-import type { NarrativeVariant, PageLocale } from '@/lib/types';
+import type { LandingPage, NarrativeVariant, PageLocale } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -47,6 +49,47 @@ export default async function PublicPage({
 }) {
   const page = await getLandingPageBySlug(params.slug);
   if (!page) notFound();
+
+  const h = headers();
+  const cookieJar = cookies();
+
+  // Parallel-instance redirect (P3): when the feature flag is on AND the
+  // resolved page is part of a locale group, this route becomes a thin
+  // locale-detection shim that 307s into `/p/[slug]/[locale]`. Legacy
+  // (no groupId) pages keep rendering inline below. We hit this path both
+  // from organic traffic that lands on /p/<slug> directly and from
+  // bookmarks that predate the migration — the 307 lets old URLs stay
+  // reachable while search engines and new inbound links settle on the
+  // per-locale canonical.
+  if (multiLocaleInstances() && page.localeGroupId) {
+    const siblings = await getSiblings(page);
+    const publishedLocales = siblings
+      .filter((s): s is LandingPage & { locale: PageLocale } =>
+        !!s.locale && s.published,
+      )
+      .map((s) => s.locale);
+    if (publishedLocales.length > 0) {
+      const detect = detectLocale({
+        urlLang: searchParams.lang ?? null,
+        cookieLang: cookieJar.get('lp_lang')?.value ?? null,
+        acceptLanguage: h.get('accept-language'),
+        country: h.get('x-vercel-ip-country') ?? h.get('cf-ipcountry'),
+        available: publishedLocales,
+        fallback: publishedLocales.includes(page.defaultLocale)
+          ? page.defaultLocale
+          : publishedLocales[0],
+      });
+      // 307 keeps method + body (not that GET has one, but stays honest
+      // about temporary-ness so we can flip to 308 in P5 cleanup).
+      const target = searchParams.v
+        ? `/p/${params.slug}/${detect.locale}?v=${encodeURIComponent(searchParams.v)}`
+        : `/p/${params.slug}/${detect.locale}`;
+      redirect(target);
+    }
+    // No published siblings → fall through to the "not published yet"
+    // shell below so the user sees a readable message instead of a 404.
+  }
+
   if (!page.published) {
     return (
       <div className="mx-auto max-w-xl px-6 py-24 text-center">
@@ -58,10 +101,7 @@ export default async function PublicPage({
   const product = await getProduct(page.productId);
   if (!product) notFound();
 
-  const h = headers();
-  const cookieJar = cookies();
-
-  // Detect locale (PRD v5.1 Q3 / §2.1)
+  // Detect locale (PRD v5.1 Q3 / §2.1) — legacy single-row path only.
   const detect = detectLocale({
     urlLang: searchParams.lang ?? null,
     cookieLang: cookieJar.get('lp_lang')?.value ?? null,

@@ -5,19 +5,31 @@ import { nativeLabel } from '@/lib/i18n-detect';
 
 /**
  * Public-facing language switcher — sticky pill at the bottom of /p/[slug].
- * Click → persists choice to cookie `lp_lang` + updates URL ?lang=xx.
- * Re-render happens via client-side navigation.
+ * Click → persists choice to cookie `lp_lang` + navigates.
+ *
+ * Two URL shapes:
+ *   · Legacy: `slug` prop drives `?lang=xx` query-string switching on the
+ *     same slug (matches `/p/[slug]` single-row render).
+ *   · Parallel: `urlByLocale` prop maps locale → full URL, used when each
+ *     locale is a separate sibling at `/p/[slug]/[locale]`. When provided,
+ *     clicking navigates to that absolute URL (cookie still set for future
+ *     visits that land on `/p/[slug]` without a locale segment).
+ *
+ * Re-render happens via full-page navigation (not next/router) so the
+ * server re-resolves the locale and revalidates KV.
  */
 export default function LanguageSwitcherPublic({
   slug,
   current,
   available,
   allLocales,
+  urlByLocale,
 }: {
   slug: string;
   current: PageLocale;
   available: PageLocale[];
   allLocales: PageLocale[];
+  urlByLocale?: Partial<Record<PageLocale, string>>;
 }) {
   const [busy, setBusy] = useState<PageLocale | null>(null);
 
@@ -25,9 +37,13 @@ export default function LanguageSwitcherPublic({
     if (!available.includes(locale)) return;
     if (locale === current) return;
     setBusy(locale);
-    // Sticky cookie (30 days)
+    // Sticky cookie (30 days) — honored by the /p/[slug] entry point on
+    // future visits so the user's pick is remembered even across browsers.
     document.cookie = `lp_lang=${locale}; Max-Age=${60 * 60 * 24 * 30}; Path=/; SameSite=Lax`;
-    // Navigate with ?lang= so server re-renders with the new locale
+    if (urlByLocale && urlByLocale[locale]) {
+      window.location.href = urlByLocale[locale]!;
+      return;
+    }
     const url = new URL(window.location.href);
     url.searchParams.set('lang', locale);
     window.location.href = url.toString();
