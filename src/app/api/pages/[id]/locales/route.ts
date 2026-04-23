@@ -99,35 +99,46 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
       );
     }
 
-    // Read admin config so the localize hop respects the same scenario
-    // routing (OpenAI vs. "skip polish") as the from-scratch path below.
+    // Inheritance path CANNOT honor admin's `scenarios.localize` setting
+    // the way the from-scratch path below can. The from-scratch path runs
+    // `hydrateModulesViaClaude` FIRST — Claude produces locale-native
+    // target-locale text — and then OpenAI polishes on top. If OpenAI's
+    // slot is non-openai there, the executor's else-branch returns the
+    // Claude output unchanged ("skip polish"): the copy is still in the
+    // target locale, just missing cross-cultural polish. Safe degradation.
+    //
+    // Inheritance has no such safety net. We literally clone zh-CN modules
+    // and hand them off; if the executor's else-branch returns the clone
+    // unchanged we ship CHINESE text under the English tab and the user
+    // never sees a banner because the HTTP response was 200. That was the
+    // 2026-04 bug (admin set localize=deepseek — which has no localize
+    // adapter — and inheriting from zh-CN produced zh-CN text in English).
+    //
+    // Fix: inheritance path FORCES OpenAI. We still read the admin config
+    // to log the divergence and to keep a consistent response shape, but
+    // the executor never branches on the admin-selected provider.
+    // If OPENAI_API_KEY is missing, `localizeModulesViaGpt` throws
+    // LLMRequiredError → 503 with a clear code, which is the correct
+    // behavior (inheritance genuinely can't complete without GPT today).
     const llmCfg = await readLLMConfig();
     const localizePrimary = llmCfg.scenarios.localize;
+    if (localizePrimary !== 'openai') {
+      console.warn(
+        `[locales] inherit path ignoring admin config scenarios.localize=${localizePrimary}; ` +
+          `inheritance requires OpenAI (no Claude/DeepSeek localize adapter exists). ` +
+          `Forcing openai. Consider setting scenarios.localize=openai in /admin/llm.`,
+      );
+    }
 
     let inheritedA: PageModule[] = cloneModulesForInheritance(sourceA);
     let inheritedB: PageModule[] = cloneModulesForInheritance(sourceB);
-    let fallbackOutcome: FallbackOutcome<{ A: PageModule[]; B: PageModule[] }> | null = null;
     try {
-      fallbackOutcome = await executeWithFallback(
-        'localize',
-        localizePrimary,
-        async (provider) => {
-          if (provider === 'openai') {
-            const [a, b] = await Promise.all([
-              localizeModulesViaGpt(inheritedA, locale, targetMarket, page.tone),
-              localizeModulesViaGpt(inheritedB, locale, targetMarket, page.tone),
-            ]);
-            return { A: a, B: b };
-          }
-          // No second adapter — keep the clone untranslated. Honest
-          // degradation: structure is preserved, text is still in the
-          // source locale. The UI surfaces the fallback banner so the
-          // user knows a polish pass was skipped.
-          return { A: inheritedA, B: inheritedB };
-        },
-      );
-      inheritedA = fallbackOutcome.result.A;
-      inheritedB = fallbackOutcome.result.B;
+      const [a, b] = await Promise.all([
+        localizeModulesViaGpt(inheritedA, locale, targetMarket, page.tone),
+        localizeModulesViaGpt(inheritedB, locale, targetMarket, page.tone),
+      ]);
+      inheritedA = a;
+      inheritedB = b;
     } catch (e) {
       if (e instanceof LLMRequiredError || e instanceof LLMCallError) {
         console.error('[locales] inherit+localize failed; locale NOT added:', e);
@@ -154,18 +165,22 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
 
     await saveLandingPage(page);
 
-    const usedFallback =
-      fallbackOutcome !== null && fallbackOutcome.hops.length > 0;
+    // Inheritance path uses a hard-coded OpenAI call (see rationale above),
+    // so there's no fallback chain to report. `localizePrimary` is surfaced
+    // on the response purely so the client can detect "admin set a non-
+    // openai primary" and prompt the user to update the config — the text
+    // itself is always GPT-localized, so this is an advisory field only.
     return NextResponse.json({
       page,
       inheritedFrom: sourceLocale,
-      ...(usedFallback
+      localizeProviderUsed: 'openai' as const,
+      ...(localizePrimary !== 'openai'
         ? {
-            fallback: {
-              scenario: 'localize' as const,
-              primary: localizePrimary,
-              used: fallbackOutcome!.usedProvider,
-              hops: fallbackOutcome!.hops,
+            localizeAdminOverrideWarning: {
+              configured: localizePrimary,
+              actual: 'openai',
+              reason:
+                'inheritance path has no Claude/DeepSeek localize adapter; forced openai to avoid shipping source-locale text as target-locale',
             },
           }
         : {}),

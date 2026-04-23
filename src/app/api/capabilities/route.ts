@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { storageBackend } from '@/lib/storage';
 import { describeRouting } from '@/lib/llm-provider';
+import { readLLMConfig } from '@/lib/llm-config';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -35,6 +36,18 @@ export async function GET() {
   // reads /admin/llm's KV config to determine the effective primary.
   const routing = await describeRouting();
 
+  // Expose the `localize` scenario's configured provider so the UI can
+  // warn users when admin has set it to a non-OpenAI provider. The only
+  // provider with a real localize adapter is OpenAI — setting it to
+  // Claude/DeepSeek in /admin/llm is a no-op on the from-scratch add-
+  // locale path (graceful degradation via hydrate output) but outright
+  // breaks the #15 inheritance path if the route didn't force-override.
+  // With the 2026-04 inheritance fix this is informational; without that
+  // fix it was silent breakage.
+  const localizeCfg = await readLLMConfig()
+    .then((c) => c.scenarios.localize)
+    .catch(() => 'openai' as const);
+
   return NextResponse.json({
     hasClaude,
     hasOpenAI,
@@ -45,6 +58,14 @@ export async function GET() {
     // calls at the current configuration. The `reason` string is
     // human-readable and can be surfaced directly in a tooltip.
     llm: routing,
+    // Admin-configured localize scenario primary. With the inheritance
+    // fix this is advisory — the route will force openai regardless —
+    // but the UI surfaces a warning if it's non-openai so the admin
+    // notices the config is effectively a no-op.
+    localize: {
+      configured: localizeCfg,
+      effective: hasOpenAI ? 'openai' : null,
+    },
     storage: storageBackend(),
     // Vercel + FS = the bad combination where writes go to /tmp and get
     // lost on next cold start. Surface explicitly so the UI can slap a
