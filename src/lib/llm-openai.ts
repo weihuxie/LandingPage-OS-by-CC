@@ -84,13 +84,40 @@ async function resolveModel(): Promise<string> {
   }
 }
 
-/** Which module types get routed through GPT-4o. Others pass through. */
-const OPENAI_MODULE_TYPES: ReadonlySet<ModuleType> = new Set([
+/**
+ * Which module types get routed through GPT-4o.
+ *
+ * 2026-04 post-inheritance fix: this was previously a narrow 5-type allow-
+ * list (hero/pain/benefits/solution/cta). That was safe for the from-
+ * scratch path because hydrate produces target-locale text for those 5
+ * modules and the rest (form / testimonial / faq / useCase / socialProof /
+ * productShowcase / videoEmbed / logosScroll) happen to default to locale-
+ * aware templates via ai.ts `L`. But the inheritance path clones the
+ * SOURCE-LOCALE modules verbatim, so the skipped 5+ types stayed in source
+ * language even after localize ran — user reported the "适合这些人" title
+ * and "产品市场 / 获客团队 / 创业者" items still in Chinese under the English
+ * tab.
+ *
+ * Fix: route every module type through GPT and lean on the system prompt's
+ * "preserve customer names / URLs / enum keys" rules to protect the few
+ * fields that shouldn't be translated (testimonial.items[].author/company,
+ * form.fields[], any MediaRef URLs). Cost is ~10 GPT calls per variant
+ * (was ~5) when inheriting; still parallelized, still under the 60s
+ * maxDuration ceiling.
+ */
+const OPENAI_MODULE_TYPES: ReadonlySet<ModuleType> = new Set<ModuleType>([
   'hero',
   'pain',
   'benefits',
   'solution',
   'cta',
+  'useCase',
+  'faq',
+  'form',
+  'testimonial',
+  'socialProof',
+  'productShowcase',
+  'videoEmbed',
 ]);
 
 const LOCALIZE_SYSTEM = `You are a senior B2B SaaS copywriter and cross-cultural localization lead. You receive a landing-page module's content written in one locale, and you produce the TARGET-LOCALE version.
@@ -120,6 +147,29 @@ This is NOT translation. It is NATIVE REWRITING. The goal is: if a native speake
 - Do NOT add new fields. Do NOT add commentary. Return ONLY the JSON object.
 - Match the requested tone: professional / executive / sales / friendly / saas / japanese (japanese = extra restraint).
 - One primary CTA only. If the source has a primaryCta, the output's primaryCta must be semantically the same action, just in the target locale's natural phrasing.
+
+## Per-schema field rules (applies to ANY module type we send you)
+
+These rules override any instinct to "translate everything". If a field in the source JSON matches one of these patterns, keep it as-is in the output:
+
+- **Proper nouns**: customer names, author names, company names — exactly as the source spelled them, even if the alphabet differs from the target locale. ("张三" stays "张三" in the English version; "Acme Corp" stays "Acme Corp" in the Chinese version.) Applies to: testimonial.items[].author, testimonial.items[].company, socialProof.logos[].name.
+- **URLs / href / externalUrl / src / poster / slug**: never translated. Copy the string byte-for-byte.
+- **Enum keys and IDs**: form.fields[] is an array of machine keys like "name" / "email" / "company" / "phone" / "message" / "smsCode". NEVER translate them. form.fieldSchemas[].key is the same contract.
+- **Media references**: MediaRef objects (kind / url / alt). \`kind\` and \`url\` are verbatim. \`alt\` IS user-facing — translate it.
+- **Layout / mode / fontScale / variant**: string enums like 'cards' | 'alternating', 'inline' | 'external', 'sm' | 'md' | 'lg' — keep as-is.
+
+## Per-module intent (what counts as "display text")
+
+- hero / pain / solution / cta: eyebrow, headline, subhead, body, button, primaryCta / secondaryCta labels = translate. Numbers in headlines = keep the digit, translate any unit (e.g. "120+ hours/month" in zh-CN: "120+ 小时/月").
+- benefits: title, items[].title, items[].body = translate.
+- useCase: title, items[].role, items[].scenario = translate. These are AUDIENCE LABELS and USE-CASE DESCRIPTIONS, not user quotes — always translate. Previous inheritance bug left "适合这些人 / 产品市场 / 获客团队" in Chinese under an English tab; do not repeat that.
+- faq: title, items[].q, items[].a = translate. Preserve the same number of FAQ items.
+- testimonial: title = translate. items[].quote = translate (this is NOT a legal quote; it's a landing-page social-proof string, and leaving source-locale quotes under a target-locale tab looks broken to readers). items[].author / items[].company = PRESERVE as noted above.
+- form: title, subtitle, submitLabel = translate. fieldSchemas[].label / fieldSchemas[].placeholder = translate. fields[] and fieldSchemas[].key = PRESERVE (enum).
+- socialProof: label / title / description fields = translate. logos[].name = PRESERVE (brand names). URL fields = PRESERVE.
+- productShowcase / videoEmbed: title, caption, any alt text = translate. All URL/src/poster fields = PRESERVE.
+
+If a field isn't user-facing text (no natural-language sentence, no audience-facing copy), default to PRESERVE. Better to leave a technical string untouched than to translate an enum and break rendering.
 
 ## Output format
 
