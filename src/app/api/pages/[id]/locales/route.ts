@@ -1,18 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getLandingPage, saveLandingPage, getProduct } from '@/lib/storage';
+import { nanoid } from 'nanoid';
+import {
+  getLandingPage,
+  saveLandingPage,
+  getProduct,
+  multiLocaleInstances,
+  getLandingPageBySlugLocale,
+  getSiblings,
+  deleteLandingPage,
+} from '@/lib/storage';
 import { generateVariants, hydrateModulesViaClaude } from '@/lib/ai';
 import { pickTopTestimonials, testimonialsToModuleItems } from '@/lib/testimonial-match';
 import { localizeModulesViaGpt } from '@/lib/llm-openai';
 import { executeWithFallback, type FallbackOutcome } from '@/lib/llm-fallback';
 import { readLLMConfig } from '@/lib/llm-config';
 import { reportHeroTemplate } from '@/lib/template-detection';
+import { planPageMigration, applyPageMigration } from '@/lib/migrate-parallel-locales';
 import {
   errorResponse,
   LLMRequiredError,
   LLMCallError,
   StorageRequiredError,
 } from '@/lib/errors';
-import type { LandingPage, PageLocale, LocalizationStrategy, PageModule } from '@/lib/types';
+import type {
+  LandingPage,
+  PageLocale,
+  LocalizationStrategy,
+  PageModule,
+  LocalizedContent,
+} from '@/lib/types';
 
 /**
  * Feishu #15 · localize inheritance (full version).
@@ -76,8 +92,162 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
   };
   const locale = body.locale;
   if (!locale) return NextResponse.json({ error: 'locale required' }, { status: 400 });
-  if (page.availableLocales.includes(locale)) {
+
+  const isParallel = multiLocaleInstances();
+
+  // "locale already added" check. In legacy mode the source-of-truth is
+  // the single row's availableLocales array. In parallel mode each
+  // sibling's availableLocales only holds its own locale, so we have to
+  // ask the group — otherwise we'd false-negative and happily try to
+  // recreate an existing sibling.
+  if (isParallel) {
+    const existing = await getLandingPageBySlugLocale(page.slug, locale);
+    if (existing) {
+      return NextResponse.json({ page: existing, note: 'locale already exists' });
+    }
+  } else if (page.availableLocales.includes(locale)) {
     return NextResponse.json({ page, note: 'locale already exists' });
+  }
+
+  // ---- Parallel sibling-creation path (P4 of 方案 B) ----------------
+  //
+  // When MULTI_LOCALE_AS_INSTANCES=1, add-locale creates a new sibling KV
+  // row instead of stuffing the locale into the current row's variants map.
+  //
+  // Rule lock (2026-04-24): inherit ONCE from the source sibling's current
+  // (already edited) modules → GPT-4o translate + culturally adapt →
+  // `published=false` / `publishedAt=undefined` / `deploy=null` on the
+  // new sibling (never inherits the source's publish state). After this
+  // one-time inheritance each sibling is independent — editing zh-CN
+  // never touches en, deleting zh-CN never deletes en.
+  //
+  // The source sibling is ALWAYS the one identified by params.id (the
+  // sibling the user is currently editing). body.sourceLocale is ignored
+  // in this branch for simplicity — there's no UX for cross-sibling
+  // inheritance yet.
+  if (isParallel) {
+    const targetMarket = body.strategy?.targetMarket ?? page.targetMarket;
+
+    // On-demand migration: promote a legacy row into a group in place so
+    // subsequent sibling creation has a group to join. Idempotent.
+    let sourceSibling = page;
+    if (!sourceSibling.localeGroupId) {
+      const plan = planPageMigration(sourceSibling);
+      if (!plan.alreadyMigrated) {
+        await applyPageMigration(plan);
+        const reloaded = await getLandingPage(params.id);
+        if (!reloaded) {
+          return NextResponse.json(
+            { error: 'page disappeared after migration' },
+            { status: 500 },
+          );
+        }
+        sourceSibling = reloaded;
+      }
+    }
+    if (!sourceSibling.localeGroupId) {
+      return NextResponse.json(
+        { error: 'migration produced no localeGroupId; refusing to create sibling' },
+        { status: 500 },
+      );
+    }
+
+    const sourceLocaleUsed: PageLocale = sourceSibling.locale ?? sourceSibling.defaultLocale;
+    const sourceA = sourceSibling.variants.A[sourceLocaleUsed];
+    const sourceB = sourceSibling.variants.B[sourceLocaleUsed];
+    if (!sourceA || !sourceB || sourceA.length === 0 || sourceB.length === 0) {
+      return NextResponse.json(
+        { error: `source sibling ${sourceLocaleUsed} has no hydrated modules to inherit` },
+        { status: 400 },
+      );
+    }
+
+    // Parallel inheritance always runs the OpenAI localize pass — same
+    // reasoning as the legacy sourceLocale branch below (no Claude/DeepSeek
+    // localize adapter exists; without OpenAI we'd ship source-locale text
+    // under the new sibling's tab). If OPENAI_API_KEY is missing,
+    // localizeModulesViaGpt throws LLMRequiredError → 503.
+    const llmCfg = await readLLMConfig();
+    const localizePrimary = llmCfg.scenarios.localize;
+    if (localizePrimary !== 'openai') {
+      console.warn(
+        `[locales] parallel inherit ignoring admin scenarios.localize=${localizePrimary}; ` +
+          `inheritance requires OpenAI (no Claude/DeepSeek localize adapter). Forcing openai.`,
+      );
+    }
+
+    let translatedA: PageModule[] = sourceA.map((m) => structuredClone(m));
+    let translatedB: PageModule[] = sourceB.map((m) => structuredClone(m));
+    try {
+      const [a, b] = await Promise.all([
+        localizeModulesViaGpt(translatedA, locale, targetMarket, sourceSibling.tone),
+        localizeModulesViaGpt(translatedB, locale, targetMarket, sourceSibling.tone),
+      ]);
+      translatedA = a;
+      translatedB = b;
+    } catch (e) {
+      if (e instanceof LLMRequiredError || e instanceof LLMCallError) {
+        console.error('[locales] parallel inherit+localize failed; sibling NOT created:', e);
+        const { status, body: errBody } = errorResponse(e);
+        return NextResponse.json(errBody, { status });
+      }
+      throw e;
+    }
+
+    const now = Date.now();
+    const newSibling: LandingPage = {
+      ...structuredClone(sourceSibling),
+      id: `p_${nanoid(12)}`,
+      locale,
+      localeGroupId: sourceSibling.localeGroupId,
+      defaultLocale: locale,
+      availableLocales: [locale],
+      variants: {
+        A: { [locale]: translatedA } as LocalizedContent,
+        B: { [locale]: translatedB } as LocalizedContent,
+      },
+      // 方案 B rule: never inherit publish state. New sibling starts dark.
+      published: false,
+      publishedAt: undefined,
+      deploy: null,
+      createdAt: now,
+      updatedAt: now,
+      // Reset analytics — this is a fresh audience slice.
+      stats: {
+        views: 0,
+        leads: 0,
+        byLocale: { [locale]: { views: 0, leads: 0 } },
+        byVariantLocale: {
+          A: { [locale]: { views: 0, leads: 0 } },
+          B: { [locale]: { views: 0, leads: 0 } },
+        },
+        abStats: {
+          A: { views: 0, leads: 0 },
+          B: { views: 0, leads: 0 },
+        },
+      },
+      hydrationFailed: false,
+    };
+
+    await saveLandingPage(newSibling, { skipSlugMap: true });
+
+    return NextResponse.json({
+      page: newSibling,
+      siblingCreated: true,
+      inheritedFrom: sourceLocaleUsed,
+      localeGroupId: sourceSibling.localeGroupId,
+      localizeProviderUsed: 'openai' as const,
+      ...(localizePrimary !== 'openai'
+        ? {
+            localizeAdminOverrideWarning: {
+              configured: localizePrimary,
+              actual: 'openai',
+              reason:
+                'parallel inheritance has no Claude/DeepSeek localize adapter; forced openai',
+            },
+          }
+        : {}),
+    });
   }
 
   // Inheritance path: when the client passes a valid sourceLocale, skip
@@ -396,7 +566,17 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
 
 /**
  * Remove a locale from a LandingPage.
- * Refuses to delete the default locale unless another is promoted first.
+ *
+ * Legacy mode: strips the locale from the single row's variants map and
+ * availableLocales array. Refuses to delete the default locale unless
+ * another is promoted first.
+ *
+ * Parallel mode (MULTI_LOCALE_AS_INSTANCES=1, page has a localeGroupId):
+ * deletes the sibling row whose `locale === target`. Refuses to delete
+ * the last surviving sibling — use the page's own delete endpoint if the
+ * user really wants to wipe the whole page. `deleteLandingPage` handles
+ * slug-map handoff to a surviving sibling when the target was the
+ * slug-map owner (see storage.ts).
  */
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   const page = await getLandingPage(params.id);
@@ -404,6 +584,34 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
 
   const body = (await req.json()) as { locale: PageLocale };
   const locale = body.locale;
+
+  // Parallel branch: delete a sibling row, not a locale-cell.
+  if (multiLocaleInstances() && page.localeGroupId) {
+    const target = await getLandingPageBySlugLocale(page.slug, locale);
+    if (!target) {
+      return NextResponse.json(
+        { error: `no sibling found for locale ${locale}` },
+        { status: 400 },
+      );
+    }
+    const siblings = await getSiblings(page);
+    if (siblings.length <= 1) {
+      return NextResponse.json(
+        {
+          error:
+            'cannot delete the last sibling in the group; delete the page itself instead',
+        },
+        { status: 400 },
+      );
+    }
+    await deleteLandingPage(target.id);
+    return NextResponse.json({
+      deletedSiblingId: target.id,
+      locale,
+      remainingSiblings: siblings.length - 1,
+    });
+  }
+
   if (locale === page.defaultLocale && page.availableLocales.length > 1) {
     return NextResponse.json(
       { error: 'cannot remove default locale; switch default first' },

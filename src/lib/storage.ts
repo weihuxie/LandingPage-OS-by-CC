@@ -524,10 +524,18 @@ export async function getLandingPage(id: string): Promise<LandingPage | null> {
 
 export async function getLandingPageBySlug(slug: string): Promise<LandingPage | null> {
   if (useKV()) {
-    // Check slug→id map
+    // Fast path: slug→id map.
     const id = await kv.get<string>(SLUG_MAP_KEY_PREFIX + slug);
-    if (id) return getLandingPage(id);
-    // Fallback: scan all (slower, but catches unmapped slugs)
+    if (id) {
+      const hit = await getLandingPage(id);
+      if (hit) return hit;
+      // Stale pointer — falls through to scan. Happens when the slug-map
+      // still points at a row that's been deleted (e.g. sibling delete
+      // without survivor handoff, or the narrow race between
+      // deleteLandingPage's slug-map del and a surviving sibling's next
+      // save reclaiming ownership). Without this fall-through /p/[slug]
+      // would 404 even when a live sibling on the same slug exists.
+    }
     const all = await readLandingPages();
     return all.find((p) => p.slug === slug) ?? null;
   }
@@ -582,10 +590,32 @@ export async function saveLandingPage(
     );
     if (!opts.skipSlugMap) {
       try {
-        await withKVRetry(
-          () => kv.set(SLUG_MAP_KEY_PREFIX + page.slug, page.id),
-          `saveLandingPage:${page.id}:slug-map`,
-        );
+        // Ownership check before write. Non-primary siblings should pass
+        // `skipSlugMap: true` explicitly, but forgetful callers that don't
+        // would — under the old blind-overwrite behavior — silently seize
+        // the slug-map from a live primary, making /p/[slug] resolve to
+        // whichever sibling last saved. Decision table:
+        //   · no owner        → claim it.
+        //   · self            → idempotent refresh.
+        //   · stale owner     → take over (holder row is gone).
+        //   · live other      → skip + loud warn so the caller learns.
+        const currentOwner = await kv.get<string>(SLUG_MAP_KEY_PREFIX + page.slug);
+        let shouldWrite = true;
+        if (currentOwner && currentOwner !== page.id) {
+          const holder = await kv.get<LandingPage>(PAGE_KEY_PREFIX + currentOwner);
+          if (holder) shouldWrite = false;
+        }
+        if (shouldWrite) {
+          await withKVRetry(
+            () => kv.set(SLUG_MAP_KEY_PREFIX + page.slug, page.id),
+            `saveLandingPage:${page.id}:slug-map`,
+          );
+        } else {
+          console.warn(
+            `[saveLandingPage] slug=${page.slug} already owned by live page ${currentOwner}; ` +
+              `skipping slug-map write for ${page.id} (pass skipSlugMap:true to silence).`,
+          );
+        }
       } catch (e) {
         console.error(
           `[saveLandingPage] slug-map write failed for ${page.slug}; /p/${page.slug} will use scan fallback:`,
@@ -619,10 +649,47 @@ export async function saveLandingPage(
 export async function deleteLandingPage(id: string): Promise<void> {
   if (useKV()) {
     const page = await getLandingPage(id);
+
+    // Slug-map handling for parallel-locale siblings.
+    //
+    // Legacy assumption: every page owns its slug 1:1, so deletion should
+    // also drop the slug-map pointer. That's wrong the moment siblings
+    // share a slug — dropping the pointer on a non-owning sibling delete
+    // is harmless (scan fallback still resolves), but dropping it on the
+    // owning sibling delete when survivors exist makes every remaining
+    // sibling lose its canonical URL until their next save.
+    //
+    // Policy:
+    //   · page owns slug-map AND survivors exist
+    //        → hand off pointer to the oldest survivor; no del.
+    //   · page owns slug-map AND no survivors
+    //        → del (nothing left to resolve).
+    //   · page does not own slug-map
+    //        → leave the pointer alone; whichever live sibling currently
+    //          owns it keeps owning it.
+    let slugMapOp: Promise<unknown> = Promise.resolve();
+    if (page) {
+      const currentOwner = await kv.get<string>(SLUG_MAP_KEY_PREFIX + page.slug);
+      const ownsSlugMap = currentOwner === id;
+      if (ownsSlugMap) {
+        let survivors: LandingPage[] = [];
+        if (page.localeGroupId) {
+          const group = await getLandingPageGroup(page.localeGroupId);
+          survivors = group.filter((s) => s.id !== id);
+        }
+        if (survivors.length > 0) {
+          const handoff = [...survivors].sort((a, b) => a.createdAt - b.createdAt)[0];
+          slugMapOp = kv.set(SLUG_MAP_KEY_PREFIX + page.slug, handoff.id);
+        } else {
+          slugMapOp = kv.del(SLUG_MAP_KEY_PREFIX + page.slug);
+        }
+      }
+    }
+
     await Promise.all([
       kv.del(PAGE_KEY_PREFIX + id),
       kv.srem(PAGE_INDEX_KEY, id),
-      page ? kv.del(SLUG_MAP_KEY_PREFIX + page.slug) : Promise.resolve(),
+      slugMapOp,
       page?.localeGroupId
         ? kv.srem(LOCALE_GROUP_KEY_PREFIX + page.localeGroupId, id)
         : Promise.resolve(),
