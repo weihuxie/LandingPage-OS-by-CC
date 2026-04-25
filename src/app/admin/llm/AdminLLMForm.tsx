@@ -57,8 +57,9 @@ const INCOMPATIBLE_MODELS: Partial<
     {
       id: 'deepseek-reasoner',
       reason:
-        'R1 不支持 tool_choice，当前 adapter 依赖 tool_choice 做结构化输出。' +
-        '选它后调用会被自动回退到 deepseek-chat（server 日志会 warn）。',
+        'R1 系列不支持 tool_choice，当前 adapter 依赖 tool_choice 做结构化输出。' +
+        '选它后调用会被自动回退到 deepseek-v4-pro（server 日志会 warn）。' +
+        '官方 2026-07-24 弃用。',
     },
   ],
 };

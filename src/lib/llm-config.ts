@@ -131,7 +131,7 @@ export const DEFAULT_LLM_CONFIG: LLMConfig = {
   version: 1,
   providers: {
     claude: { model: 'claude-opus-4-20250514' },
-    deepseek: { model: 'deepseek-chat' },
+    deepseek: { model: 'deepseek-v4-pro' },
     openai: { model: 'gpt-4o-2024-08-06' },
     gemini: { model: 'gemini-3.0-pro' },
   },
@@ -179,7 +179,9 @@ export const MODEL_OPTIONS: Record<
     { id: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash (旧)' },
   ],
   deepseek: [
-    { id: 'deepseek-chat', label: 'DeepSeek V3 Chat (通用 · 成本最低)' },
+    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (最新旗舰 · 推荐)' },
+    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (V4 轻量 · 更快更便宜)' },
+    { id: 'deepseek-chat', label: 'DeepSeek V3 Chat (旧 · 2026-07-24 弃用)' },
     // NOTE: deepseek-reasoner (R1) intentionally omitted. This codebase's
     // DeepSeek adapter uses tool_choice to force structured JSON, and
     // reasoner returns HTTP 400 ("does not support this tool_choice") —
@@ -187,7 +189,9 @@ export const MODEL_OPTIONS: Record<
     // separate code path (response_format: json_object + prompt-level
     // JSON spec) is viable future work, not in scope today. If admin
     // types it into the 自定义 field anyway, llm-deepseek's resolveModel
-    // coerces it back to deepseek-chat with a warning.
+    // coerces it back to the current default with a warning.
+    // (deepseek-reasoner is also slated for 2026-07-24 deprecation per
+    // the official model list.)
   ],
   openai: [
     { id: 'gpt-4o-2024-08-06', label: 'GPT-4o 2024-08 (推荐)' },

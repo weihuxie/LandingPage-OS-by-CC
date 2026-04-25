@@ -69,7 +69,7 @@ export function hasDeepseekKey(): boolean {
 }
 
 // Model comes from the admin-configurable llm-config at runtime; the
-// default here (deepseek-chat) lives in DEFAULT_LLM_CONFIG.
+// default lives in DEFAULT_LLM_CONFIG (currently deepseek-v4-pro).
 //
 // deepseek-reasoner (R1) is NOT supported by this adapter — both strategy
 // and module-regen paths use `tool_choice: { type: 'function', ... }` to
@@ -92,8 +92,10 @@ const BASE_URL = 'https://api.deepseek.com/v1';
  * etc. They all reject `tool_choice: {type: 'function', ...}` with
  * `400 ... does not support this tool_choice`. Match the whole family
  * case-insensitively so admin can't slip one in via the 自定义 field
- * by typing a non-canonical alias. Coercion to `deepseek-chat` is safe
- * because both share the same prompt → JSON contract on the happy path.
+ * by typing a non-canonical alias. Coercion to the current default
+ * (DEFAULT_LLM_CONFIG.providers.deepseek.model — currently deepseek-v4-pro)
+ * is safe because all chat-family models share the same prompt → JSON
+ * contract on the happy path.
  */
 const REASONER_FAMILY_RE = /^deepseek-(reasoner|r\d+)\b/i;
 
