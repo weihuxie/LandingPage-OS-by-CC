@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { put } from '@vercel/blob';
 import { errorResponse, UploadRequiredError } from '@/lib/errors';
+import { requireUserApi } from '@/lib/server-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,6 +58,8 @@ export async function POST(req: NextRequest) {
 }
 
 async function postImpl(req: NextRequest) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const form = await req.formData();
   const file = form.get('file');
   if (!(file instanceof File)) {

@@ -10,6 +10,7 @@ import {
   LLMRequiredError,
   LLMCallError,
 } from '@/lib/errors';
+import { requireUserApi } from '@/lib/server-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,10 +43,16 @@ export async function POST(_req: NextRequest, ctx: { params: { id: string } }) {
 }
 
 async function postImpl(_req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const page = await getLandingPage(params.id);
-  if (!page) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  if (!page || page.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
   const product = await getProduct(page.productId);
-  if (!product) return NextResponse.json({ error: 'product not found' }, { status: 404 });
+  if (!product || product.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'product not found' }, { status: 404 });
+  }
 
   const projectView = await getProjectCompat(params.id);
   if (!projectView) return NextResponse.json({ error: 'not found' }, { status: 404 });

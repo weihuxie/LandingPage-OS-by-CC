@@ -8,12 +8,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import {
-  LEGACY_TENANT_ID,
   listProjectsCompat,
   readProducts,
   saveProduct,
   saveLandingPage,
 } from '@/lib/storage';
+import { requireUserApi } from '@/lib/server-auth';
 import { generateStrategy, generateVariants, hydrateModulesViaClaude } from '@/lib/ai';
 import { extractFromTextSmart, mergeContexts } from '@/lib/extract';
 import { extractSiteContent } from '@/lib/brand';
@@ -45,7 +45,16 @@ export const revalidate = 0;
 export const maxDuration = 60;
 
 export async function GET() {
-  const projects = await listProjectsCompat();
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
+  const all = await listProjectsCompat();
+  // Compat shim: filter the legacy "projects" view by tenant via the
+  // underlying LandingPage's tenantId (Project view is built from
+  // LandingPage in projectViewFromV2; tenantId lives on the page).
+  const projects = all.filter((p: any) => {
+    const t = p.tenantId ?? p.ownerId ?? 'default';
+    return t === auth.tenant.id;
+  });
   return NextResponse.json({ projects });
 }
 
@@ -72,6 +81,8 @@ export async function POST(req: NextRequest) {
 }
 
 async function postImpl(req: NextRequest) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const body = (await req.json()) as {
     inputs: ProductInputs;
     strategy?: StrategySummary;
@@ -128,14 +139,13 @@ async function postImpl(req: NextRequest) {
   const variants = generateVariants(body.inputs, tone, strategy, context);
   const now = Date.now();
 
-  // Find-or-create Product by name (simple MVP dedupe)
-  const products = await readProducts();
+  // Find-or-create Product by name within this tenant (simple MVP dedupe)
+  const products = await readProducts({ tenantId: auth.tenant.id });
   let product = products.find((p) => p.name === body.inputs.name);
   if (!product) {
     product = {
       id: `p_${nanoid(10)}`,
-      // S2 / C1: stays LEGACY_TENANT_ID until C3 wires up requireUser().
-      tenantId: LEGACY_TENANT_ID,
+      tenantId: auth.tenant.id,
       createdAt: now,
       updatedAt: now,
       name: body.inputs.name,

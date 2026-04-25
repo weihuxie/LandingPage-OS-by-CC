@@ -117,3 +117,60 @@ export async function requireUserAndTenant(returnTo?: string): Promise<AuthConte
   }
   return { user, ...tenantCtx };
 }
+
+// --- API-handler helper -----------------------------------------------
+
+import { NextResponse } from 'next/server';
+
+/**
+ * Result of `requireUserApi`: either the resolved auth context or a
+ * NextResponse to return immediately. Caller pattern:
+ *
+ *   const auth = await requireUserApi(req);
+ *   if ('response' in auth) return auth.response;
+ *   const { user, tenant } = auth;
+ *   ...
+ *
+ * Different shape from the SSR helper because API handlers can't use
+ * Next.js `redirect()` (it's SSR-only) — they need to return a 401
+ * with a structured body so the client can react. The chosen pattern
+ * keeps the happy path readable without throwing across module
+ * boundaries (which would force every caller into try/catch).
+ */
+export type ApiAuthResult =
+  | { response: NextResponse }
+  | AuthContext;
+
+export async function requireUserApi(): Promise<ApiAuthResult> {
+  const user = await getCurrentUser();
+  if (!user) {
+    return {
+      response: NextResponse.json(
+        {
+          error: 'unauthorized',
+          code: 'UNAUTHORIZED',
+          message: 'Login required.',
+        },
+        { status: 401 },
+      ),
+    };
+  }
+  const tenantCtx = await getCurrentTenant(user);
+  if (!tenantCtx) {
+    // Logged in but no tenants. /app's onboarding handles the human
+    // path; APIs return 409 to make it visually distinct from "not
+    // logged in" so client-side handlers can route the user to /app
+    // instead of /login.
+    return {
+      response: NextResponse.json(
+        {
+          error: 'no-tenant',
+          code: 'NO_TENANT',
+          message: 'You have no workspace yet. Visit /app to create one.',
+        },
+        { status: 409 },
+      ),
+    };
+  }
+  return { user, ...tenantCtx };
+}

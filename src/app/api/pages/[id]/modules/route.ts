@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getLandingPage, saveLandingPage, getProduct } from '@/lib/storage';
+import { requireUserApi } from '@/lib/server-auth';
 import type { NarrativeVariant, PageLocale, PageModule } from '@/lib/types';
 import { reportHeroTemplate } from '@/lib/template-detection';
 
@@ -11,8 +12,12 @@ export const dynamic = 'force-dynamic';
  * the EN tab and vice-versa.
  */
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const page = await getLandingPage(params.id);
-  if (!page) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  if (!page || page.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
   const body = (await req.json()) as {
     variant: NarrativeVariant;
     locale: PageLocale;

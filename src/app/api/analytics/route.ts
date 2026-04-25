@@ -5,6 +5,7 @@ import {
   readEvents,
   readLeads,
 } from '@/lib/storage';
+import { requireUserApi } from '@/lib/server-auth';
 import type { LandingPage, Product, PageLocale } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -18,12 +19,19 @@ export const revalidate = 0;
  *       → per-locale stats + per-(variant,locale) A/B split
  */
 export async function GET() {
-  const [products, pages, events, leads] = await Promise.all([
-    readProducts(),
-    readLandingPages(),
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
+  // Pull tenant-scoped lists. Events read globally then filter via the
+  // page id set; we don't have tenantId on PageEvent (would require a
+  // schema bump for events too) so we filter via page set membership.
+  const [products, pages, allEvents, leads] = await Promise.all([
+    readProducts({ tenantId: auth.tenant.id }),
+    readLandingPages({ tenantId: auth.tenant.id }),
     readEvents(),
-    readLeads(),
+    readLeads({ tenantId: auth.tenant.id }),
   ]);
+  const tenantPageIds = new Set(pages.map((p) => p.id));
+  const events = allEvents.filter((e) => tenantPageIds.has(e.projectId));
 
   const totalViews = events.filter((e) => e.type === 'view').length;
   const totalLeads = leads.length;

@@ -17,6 +17,7 @@ import {
   LLMCallError,
   StorageRequiredError,
 } from '@/lib/errors';
+import { requireUserApi } from '@/lib/server-auth';
 import { reportHeroTemplate } from '@/lib/template-detection';
 import type {
   LandingPage,
@@ -33,7 +34,17 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
-  const pages = await readLandingPages(params.id);
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
+  // Verify the product itself belongs to the tenant — otherwise the
+  // GET would let a user enumerate page lists for any product id by
+  // tenant-filtering the pages response down to nothing while still
+  // returning 200.
+  const product = await getProduct(params.id);
+  if (!product || product.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
+  const pages = await readLandingPages({ tenantId: auth.tenant.id, productId: params.id });
   return NextResponse.json({ pages });
 }
 
@@ -58,8 +69,12 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
 }
 
 async function postImpl(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const product = await getProduct(params.id);
-  if (!product) return NextResponse.json({ error: 'product not found' }, { status: 404 });
+  if (!product || product.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'product not found' }, { status: 404 });
+  }
 
   const body = (await req.json()) as {
     name?: string;

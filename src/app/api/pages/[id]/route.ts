@@ -6,20 +6,29 @@ import {
   getProduct,
 } from '@/lib/storage';
 import { regenerateModule, generateVariants } from '@/lib/ai';
+import { requireUserApi } from '@/lib/server-auth';
 import type { LandingPage, NarrativeVariant, PageLocale } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const page = await getLandingPage(params.id);
-  if (!page) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  if (!page || page.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
   const product = await getProduct(page.productId);
   return NextResponse.json({ page, product });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const page = await getLandingPage(params.id);
-  if (!page) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  if (!page || page.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
   const body = (await req.json()) as Partial<LandingPage> & {
     switchVariant?: NarrativeVariant;
     setActiveLocale?: PageLocale;
@@ -78,6 +87,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
+  const page = await getLandingPage(params.id);
+  if (!page || page.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
   await deleteLandingPage(params.id);
   return NextResponse.json({ ok: true });
 }

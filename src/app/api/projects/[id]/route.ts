@@ -37,6 +37,7 @@ import {
   StorageRequiredError,
   DeployRequiredError,
 } from '@/lib/errors';
+import { requireUserApi } from '@/lib/server-auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -44,8 +45,16 @@ export const revalidate = 0;
 type StrategyBlock = 'audience' | 'goal' | 'narrative' | 'local';
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const project = await getProjectCompat(params.id);
   if (!project) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  // Cross-tenant attempts get 404 (same as not-found) — no info leak.
+  // The Project compat view exposes tenantId via the underlying page.
+  const projectTenant = (project as any).tenantId ?? (project as any).ownerId ?? 'default';
+  if (projectTenant !== auth.tenant.id) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
   return NextResponse.json({ project });
 }
 
@@ -67,10 +76,16 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
 }
 
 async function patchImpl(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const page = await getLandingPage(params.id);
-  if (!page) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  if (!page || page.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
   const product = await getProduct(page.productId);
-  if (!product) return NextResponse.json({ error: 'product not found' }, { status: 404 });
+  if (!product || product.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'product not found' }, { status: 404 });
+  }
 
   const body = (await req.json()) as any & {
     modules?: PageModule[];
@@ -230,6 +245,12 @@ async function patchImpl(req: NextRequest, { params }: { params: { id: string } 
 }
 
 export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
+  const page = await getLandingPage(params.id);
+  if (!page || page.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
   await deleteLandingPage(params.id);
   return NextResponse.json({ ok: true });
 }

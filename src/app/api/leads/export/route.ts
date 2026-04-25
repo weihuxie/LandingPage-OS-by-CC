@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readLeads, readLandingPages, readProducts } from '@/lib/storage';
+import { requireUserApi } from '@/lib/server-auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -16,14 +17,16 @@ export const revalidate = 0;
  * it, Excel mis-detects as Windows-1252 and all CJK becomes garbage).
  */
 export async function GET(req: NextRequest) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const url = req.nextUrl;
   const pageFilter = url.searchParams.get('pageId')?.trim() ?? '';
   const productFilter = url.searchParams.get('productId')?.trim() ?? '';
 
   const [leads, pages, products] = await Promise.all([
-    readLeads(),
-    readLandingPages(),
-    readProducts(),
+    readLeads({ tenantId: auth.tenant.id }),
+    readLandingPages({ tenantId: auth.tenant.id }),
+    readProducts({ tenantId: auth.tenant.id }),
   ]);
   const pageById = new Map(pages.map((p) => [p.id, p]));
   const productById = new Map(products.map((p) => [p.id, p]));

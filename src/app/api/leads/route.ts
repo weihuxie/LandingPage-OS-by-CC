@@ -7,13 +7,18 @@ import {
   getLandingPage,
   saveLandingPage,
 } from '@/lib/storage';
+import { requireUserApi } from '@/lib/server-auth';
 import type { Lead, PageLocale, NarrativeVariant } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
+// GET requires auth — only the tenant's leads are exposed. POST stays
+// public (form submissions come from anonymous visitors of /p/[slug]).
 export async function GET(req: NextRequest) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const projectId = req.nextUrl.searchParams.get('projectId') ?? undefined;
-  const leads = await readLeads(projectId);
+  const leads = await readLeads({ tenantId: auth.tenant.id, projectId });
   return NextResponse.json({ leads });
 }
 

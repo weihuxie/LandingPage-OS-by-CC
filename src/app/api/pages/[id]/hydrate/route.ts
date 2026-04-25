@@ -8,6 +8,7 @@ import {
   LLMCallError,
   StorageRequiredError,
 } from '@/lib/errors';
+import { requireUserApi } from '@/lib/server-auth';
 import type { PageLocale } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -56,10 +57,16 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
 }
 
 async function postImpl(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireUserApi();
+  if ('response' in auth) return auth.response;
   const page = await getLandingPage(params.id);
-  if (!page) return NextResponse.json({ error: 'page not found' }, { status: 404 });
+  if (!page || page.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'page not found' }, { status: 404 });
+  }
   const product = await getProduct(page.productId);
-  if (!product) return NextResponse.json({ error: 'product not found' }, { status: 404 });
+  if (!product || product.tenantId !== auth.tenant.id) {
+    return NextResponse.json({ error: 'product not found' }, { status: 404 });
+  }
 
   const body = (await req.json().catch(() => ({}))) as {
     locale?: PageLocale;
