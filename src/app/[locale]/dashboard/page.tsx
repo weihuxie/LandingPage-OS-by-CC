@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { readProducts, readLandingPages } from '@/lib/storage';
 import { providerStatus } from '@/lib/llm';
 import { storageBackend } from '@/lib/storage';
+import { requireUserAndTenant } from '@/lib/server-auth';
 import ProductCard from '@/components/ProductCard';
 
 // `dynamic = 'force-dynamic'` alone was NOT enough.
@@ -27,12 +28,20 @@ export default async function Dashboard({
   params: { locale: string };
 }) {
   unstable_setRequestLocale(locale);
+  // S2: gate behind login. requireUserAndTenant throws via redirect()
+  // when no session — execution never falls through. returnTo carries
+  // the dashboard path back so post-login lands the user where they
+  // came from.
+  const { tenant } = await requireUserAndTenant(`/${locale}/dashboard`);
   // Belt-and-suspenders: opt this render out of the Data Cache at the
   // call site. Without noStore(), the first render after deploy can
   // freeze the product list onto a stale KV snapshot for subsequent
   // SSR hits until the cache evicts.
   noStore();
-  const [products, pages] = await Promise.all([readProducts(), readLandingPages()]);
+  const [products, pages] = await Promise.all([
+    readProducts({ tenantId: tenant.id }),
+    readLandingPages({ tenantId: tenant.id }),
+  ]);
   const llm = providerStatus();
   const storage = storageBackend();
 

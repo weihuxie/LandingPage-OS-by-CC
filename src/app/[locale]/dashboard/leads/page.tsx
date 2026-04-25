@@ -2,6 +2,7 @@ import { unstable_setRequestLocale } from 'next-intl/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import Link from 'next/link';
 import { readLeads, readLandingPages, readProducts } from '@/lib/storage';
+import { requireUserAndTenant } from '@/lib/server-auth';
 
 // Same Data Cache avoidance as /dashboard — see CLAUDE.md §一.4 and §一.4.1
 // for why `force-dynamic` alone is not enough when reading KV.
@@ -25,12 +26,14 @@ export default async function LeadsPage({
   searchParams?: { pageId?: string; productId?: string };
 }) {
   unstable_setRequestLocale(locale);
+  // S2: gate behind login + scope all reads to current tenant
+  const { tenant } = await requireUserAndTenant(`/${locale}/dashboard/leads`);
   noStore();
 
   const [leads, pages, products] = await Promise.all([
-    readLeads(),
-    readLandingPages(),
-    readProducts(),
+    readLeads({ tenantId: tenant.id }),
+    readLandingPages({ tenantId: tenant.id }),
+    readProducts({ tenantId: tenant.id }),
   ]);
 
   // Filters: `pageId` narrows to one landing page's leads; `productId`

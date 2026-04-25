@@ -4,6 +4,7 @@ import { unstable_setRequestLocale } from 'next-intl/server';
 import { unstable_noStore as noStore } from 'next/cache';
 import { getProduct, readLandingPages } from '@/lib/storage';
 import { nativeLabel } from '@/lib/i18n-detect';
+import { requireUserAndTenant } from '@/lib/server-auth';
 import ProductPagesList from '@/components/ProductPagesList';
 import DeleteButton from '@/components/DeleteButton';
 
@@ -19,6 +20,10 @@ export default async function ProductDetailPage({
   params: { locale: string; id: string };
 }) {
   unstable_setRequestLocale(params.locale);
+  // S2: gate behind login + resolve tenant
+  const { tenant } = await requireUserAndTenant(
+    `/${params.locale}/products/${params.id}`,
+  );
   noStore();
   // readLandingPages keys off the product id, which equals params.id
   // before the 404 check — so we can run both KV reads in parallel
@@ -28,9 +33,11 @@ export default async function ProductDetailPage({
   // latency instead of stacking on it.
   const [product, pages] = await Promise.all([
     getProduct(params.id),
-    readLandingPages(params.id),
+    readLandingPages({ tenantId: tenant.id, productId: params.id }),
   ]);
-  if (!product) notFound();
+  // 404 covers both "no such product" and "product belongs to another
+  // tenant" — same UX, no info leak about whether the id exists.
+  if (!product || product.tenantId !== tenant.id) notFound();
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">

@@ -2,6 +2,7 @@ import AssetLibraryPanel from '@/components/AssetLibraryPanel';
 import { readAssets } from '@/lib/storage';
 import { unstable_setRequestLocale } from 'next-intl/server';
 import { unstable_noStore as noStore } from 'next/cache';
+import { requireUserAndTenant } from '@/lib/server-auth';
 
 // See CLAUDE.md §一.4 — force-dynamic alone doesn't prevent the Data
 // Cache from serving a stale KV snapshot on the asset library.
@@ -14,6 +15,10 @@ export default async function AssetsPage({
   params: { locale: string };
 }) {
   unstable_setRequestLocale(locale);
+  // S2: gate behind login. readAssets is the legacy global asset library
+  // (still pre-tenant). C5 / future work will scope it; for now login is
+  // enough to remove "any visitor sees brand assets".
+  await requireUserAndTenant(`/${locale}/assets`);
   noStore();
   const assets = await readAssets();
   return (

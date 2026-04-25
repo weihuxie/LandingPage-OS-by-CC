@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
 import { unstable_setRequestLocale } from 'next-intl/server';
+import { requireUserAndTenant } from '@/lib/server-auth';
 
 // Analytics body is a client component (AnalyticsDashboard) that fetches
 // via /api/analytics, so the SSR payload itself doesn't hit KV. Still,
@@ -9,8 +10,11 @@ import { unstable_setRequestLocale } from 'next-intl/server';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export default function AnalyticsPage({ params }: { params: { locale: string } }) {
+export default async function AnalyticsPage({ params }: { params: { locale: string } }) {
   unstable_setRequestLocale(params.locale);
+  // S2: gate behind login. /api/analytics fetched by the client side
+  // will also be tenant-scoped in C3.
+  await requireUserAndTenant(`/${params.locale}/analytics`);
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
       <div className="mb-6 flex items-center justify-between">
