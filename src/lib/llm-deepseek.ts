@@ -84,8 +84,22 @@ export function hasDeepseekKey(): boolean {
 // exposed through the tool-call path anyway.
 const MAX_TOKENS = 4096;
 const BASE_URL = 'https://api.deepseek.com/v1';
-/** Models the adapter knows are incompatible with its tool_choice flow. */
-const UNSUPPORTED_DEEPSEEK_MODELS = new Set(['deepseek-reasoner']);
+/**
+ * Models the adapter knows are incompatible with its tool_choice flow.
+ *
+ * Pattern (not exact-match Set): the reasoner family includes `deepseek-
+ * reasoner`, `deepseek-r1`, future `deepseek-r2`, `deepseek-reasoner-pro`
+ * etc. They all reject `tool_choice: {type: 'function', ...}` with
+ * `400 ... does not support this tool_choice`. Match the whole family
+ * case-insensitively so admin can't slip one in via the 自定义 field
+ * by typing a non-canonical alias. Coercion to `deepseek-chat` is safe
+ * because both share the same prompt → JSON contract on the happy path.
+ */
+const REASONER_FAMILY_RE = /^deepseek-(reasoner|r\d+)\b/i;
+
+export function isReasonerFamily(model: string): boolean {
+  return REASONER_FAMILY_RE.test(model.trim());
+}
 
 async function resolveModel(): Promise<string> {
   let configured: string;
@@ -95,7 +109,7 @@ async function resolveModel(): Promise<string> {
   } catch {
     configured = DEFAULT_LLM_CONFIG.providers.deepseek.model;
   }
-  if (UNSUPPORTED_DEEPSEEK_MODELS.has(configured)) {
+  if (isReasonerFamily(configured)) {
     console.warn(
       `[deepseek] configured model "${configured}" doesn't support tool_choice — ` +
       `falling back to ${DEFAULT_LLM_CONFIG.providers.deepseek.model}. ` +
@@ -104,6 +118,26 @@ async function resolveModel(): Promise<string> {
     return DEFAULT_LLM_CONFIG.providers.deepseek.model;
   }
   return configured;
+}
+
+/**
+ * DeepSeek's API reply for unsupported tool_choice. Match by message body
+ * so we catch any future reasoner-family alias that slips through
+ * resolveModel — belt-and-suspenders for the admin who pastes raw names
+ * into the 自定义 field. Returns true if the error is the specific
+ * tool_choice-not-supported case, regardless of which model name DeepSeek
+ * canonicalized to in its error reply.
+ */
+export function isToolChoiceUnsupportedError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const status = (err as { status?: number }).status;
+  if (status !== 400) return false;
+  const msg = String(
+    (err as { message?: string }).message ??
+      (err as { error?: { message?: string } }).error?.message ??
+      '',
+  );
+  return /does not support this tool_choice/i.test(msg);
 }
 
 function getClient(): OpenAI {
@@ -211,10 +245,10 @@ Verbatim rules:
 - If the tagline "${inputs.tagline || '(none)'}" contains a concrete promise, echo its key nouns/verbs.
 - Any named customer, metric, or pain phrase from the extracted materials must appear verbatim — do not round, paraphrase, or soften.`;
 
-  const model = await resolveModel();
-  try {
-    const response = await client.chat.completions.create({
-      model,
+  let model = await resolveModel();
+  const callApi = (m: string) =>
+    client.chat.completions.create({
+      model: m,
       max_tokens: MAX_TOKENS,
       temperature: 0.4,
       messages: [
@@ -237,6 +271,25 @@ Verbatim rules:
         function: { name: STRATEGY_TOOL_NAME },
       },
     });
+  try {
+    let response;
+    try {
+      response = await callApi(model);
+    } catch (e) {
+      // Belt-and-suspenders: even if resolveModel didn't catch a reasoner-
+      // family alias, DeepSeek itself tells us the model rejected
+      // tool_choice. Retry once with deepseek-chat before giving up.
+      if (isToolChoiceUnsupportedError(e) && model !== DEFAULT_LLM_CONFIG.providers.deepseek.model) {
+        const fallback = DEFAULT_LLM_CONFIG.providers.deepseek.model;
+        console.warn(
+          `[deepseek] model "${model}" rejected tool_choice at runtime — retrying once with ${fallback}.`,
+        );
+        model = fallback;
+        response = await callApi(model);
+      } else {
+        throw e;
+      }
+    }
 
     const choice = response.choices[0];
     const toolCall = choice?.message?.tool_calls?.[0];
@@ -391,31 +444,71 @@ export async function regenerateModuleViaDeepseek(
     `Rewrite the ${type.toUpperCase()} module. Call the ${toolName} tool with the content in ${locale}. Tone: ${tone}.`,
   ].join('\n');
 
-  const model = await resolveModel();
+  let model = await resolveModel();
   async function attempt(): Promise<Partial<ClaudeModuleContent> | null> {
-    const response = await client.chat.completions.create({
-      model,
-      max_tokens: MAX_TOKENS,
-      temperature: 0.5,
-      messages: [
-        { role: 'system', content: MODULE_SYSTEM },
-        { role: 'user', content: userPrompt },
-      ],
-      tools: [
-        {
-          type: 'function',
-          function: {
-            name: toolName,
-            description: MODULE_TOOL_DESCRIPTIONS[type],
-            parameters: MODULE_SCHEMAS[type] as Record<string, unknown>,
+    let response;
+    try {
+      response = await client.chat.completions.create({
+        model,
+        max_tokens: MAX_TOKENS,
+        temperature: 0.5,
+        messages: [
+          { role: 'system', content: MODULE_SYSTEM },
+          { role: 'user', content: userPrompt },
+        ],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: toolName,
+              description: MODULE_TOOL_DESCRIPTIONS[type],
+              parameters: MODULE_SCHEMAS[type] as Record<string, unknown>,
+            },
           },
+        ],
+        tool_choice: {
+          type: 'function',
+          function: { name: toolName },
         },
-      ],
-      tool_choice: {
-        type: 'function',
-        function: { name: toolName },
-      },
-    });
+      });
+    } catch (e) {
+      // Belt-and-suspenders for the same case as the strategy path: if
+      // DeepSeek itself rejects the model's tool_choice support at runtime,
+      // bring the model to deepseek-chat for the rest of this call (and
+      // for the retry-loop's next iteration) and try again immediately.
+      if (isToolChoiceUnsupportedError(e) && model !== DEFAULT_LLM_CONFIG.providers.deepseek.model) {
+        const fallback = DEFAULT_LLM_CONFIG.providers.deepseek.model;
+        console.warn(
+          `[deepseek] module ${type}: model "${model}" rejected tool_choice at runtime — retrying once with ${fallback}.`,
+        );
+        model = fallback;
+        response = await client.chat.completions.create({
+          model,
+          max_tokens: MAX_TOKENS,
+          temperature: 0.5,
+          messages: [
+            { role: 'system', content: MODULE_SYSTEM },
+            { role: 'user', content: userPrompt },
+          ],
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: toolName,
+                description: MODULE_TOOL_DESCRIPTIONS[type],
+                parameters: MODULE_SCHEMAS[type] as Record<string, unknown>,
+              },
+            },
+          ],
+          tool_choice: {
+            type: 'function',
+            function: { name: toolName },
+          },
+        });
+      } else {
+        throw e;
+      }
+    }
 
     const choice = response.choices[0];
     const toolCall = choice?.message?.tool_calls?.[0];
