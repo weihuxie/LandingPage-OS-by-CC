@@ -174,6 +174,22 @@ export async function saveTenant(tenant: Tenant): Promise<Tenant> {
   return tenant;
 }
 
+/**
+ * Count tenants in the system. Used by /api/tenants POST to decide
+ * whether the freshly-created tenant should claim the legacy data pool
+ * (the first tenant in a fresh deployment grabs everything currently
+ * stamped LEGACY_TENANT_ID; everyone after that starts empty).
+ */
+export async function countTenants(): Promise<number> {
+  assertStorageOk();
+  if (useKV()) {
+    const ids = (await kv.smembers(K.tenantIndex)) as string[] | null;
+    return ids?.length ?? 0;
+  }
+  const list = await fsReadJson<Tenant[]>('tenants.json', []);
+  return list.length;
+}
+
 // --- Tenant members (user ↔ tenant join table) -------------------------
 
 export async function getMember(tenantId: string, userId: string): Promise<TenantMember | null> {

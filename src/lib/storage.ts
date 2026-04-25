@@ -232,6 +232,84 @@ async function writeRaw<T>(key: string, value: T): Promise<void> {
   await writeFs(key, value);
 }
 
+// --- Tenant claim (S2 / C4) -------------------------------------------
+//
+// Re-stamp every Product / LandingPage / Lead / Brand currently sitting
+// under LEGACY_TENANT_ID with the given new tenant id. Idempotent — second
+// call is a no-op because nothing matches LEGACY_TENANT_ID anymore.
+//
+// Use case: pre-S2 prod has data created without auth. The first user to
+// log in + create a workspace can take ownership of that pool so the
+// dashboard isn't empty for them. Subsequent users see only their own
+// stuff (the legacy pool is gone).
+//
+// Race: if two users are mid-flight when the first claim runs, the second
+// runs as a no-op (legacy data already moved). Both callers finish OK.
+export async function claimLegacyData(newTenantId: string): Promise<{
+  productsClaimed: number;
+  pagesClaimed: number;
+  leadsClaimed: number;
+  brandClaimed: boolean;
+}> {
+  if (!newTenantId || newTenantId === LEGACY_TENANT_ID) {
+    throw new Error('claimLegacyData: refusing to claim into LEGACY_TENANT_ID');
+  }
+
+  // Products
+  const allProducts = await readProducts(); // unfiltered: see legacy + claimed
+  const legacyProducts = allProducts.filter(
+    (p) => (coerceTenant(p as any) as Product).tenantId === LEGACY_TENANT_ID,
+  );
+  for (const p of legacyProducts) {
+    await saveProduct({ ...p, tenantId: newTenantId });
+  }
+
+  // LandingPages
+  const allPages = await readLandingPages(); // unfiltered
+  const legacyPages = allPages.filter(
+    (pg) => (coerceTenant(pg as any) as LandingPage).tenantId === LEGACY_TENANT_ID,
+  );
+  for (const pg of legacyPages) {
+    await saveLandingPage({ ...pg, tenantId: newTenantId });
+  }
+
+  // Leads — single blob; rewrite once
+  const allLeads = (await readRaw<Lead[]>(KEY_LEADS, [])) ?? [];
+  let leadsClaimed = 0;
+  const updatedLeads = allLeads.map((l) => {
+    const t = (l as any).tenantId ?? LEGACY_TENANT_ID;
+    if (t === LEGACY_TENANT_ID) {
+      leadsClaimed++;
+      return { ...l, tenantId: newTenantId };
+    }
+    return l;
+  });
+  if (leadsClaimed > 0) await writeRaw(KEY_LEADS, updatedLeads);
+
+  // Brand — copy legacy global brand to per-tenant key. Don't delete the
+  // legacy key (other concurrent claimers might still be reading it; they
+  // become no-ops after this call but the data stays harmless).
+  const legacyBrand = await readRaw<Brand>(KEY_BRAND, DEFAULT_BRAND);
+  const filled =
+    legacyBrand &&
+    (legacyBrand.companyName ||
+      legacyBrand.logos.length ||
+      legacyBrand.certifications.length);
+  let brandClaimed = false;
+  if (filled) {
+    const claimed: Brand = { ...legacyBrand, tenantId: newTenantId };
+    await writeBrand(claimed);
+    brandClaimed = true;
+  }
+
+  return {
+    productsClaimed: legacyProducts.length,
+    pagesClaimed: legacyPages.length,
+    leadsClaimed,
+    brandClaimed,
+  };
+}
+
 // --- FS adapter --------------------------------------------------------
 
 // Priority: explicit DATA_DIR → /tmp on Vercel (writable, ephemeral) → project-relative .data/

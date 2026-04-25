@@ -14,7 +14,9 @@ import {
   addMember,
   newId,
   listTenantsForUser,
+  countTenants,
 } from '@/lib/auth-storage';
+import { claimLegacyData } from '@/lib/storage';
 import type { Tenant } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -58,6 +60,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Snapshot the tenant count BEFORE creating, so we can detect the
+  // "you're the very first tenant" case below for legacy data claim.
+  const priorCount = await countTenants();
+
   const tenant: Tenant = {
     id: newId('tnt'),
     name,
@@ -73,7 +79,29 @@ export async function POST(req: NextRequest) {
     // No invitedVia — self-created tenants have no invite.
   });
 
-  return NextResponse.json({ tenant });
+  // S2/C4 claim mode: if there were zero tenants before this one, the
+  // creator inherits all pre-S2 data (Products / Pages / Leads / Brand
+  // currently stamped LEGACY_TENANT_ID='default'). Subsequent tenants
+  // start empty as expected.
+  let claim:
+    | Awaited<ReturnType<typeof claimLegacyData>>
+    | null = null;
+  if (priorCount === 0) {
+    try {
+      claim = await claimLegacyData(tenant.id);
+      console.warn(
+        `[tenants] first-tenant claim: tenant=${tenant.id} ` +
+          `products=${claim.productsClaimed} pages=${claim.pagesClaimed} ` +
+          `leads=${claim.leadsClaimed} brand=${claim.brandClaimed}`,
+      );
+    } catch (e) {
+      // Don't fail the tenant create if claim hits storage. The tenant
+      // exists; admin can re-run claim manually if needed.
+      console.error('[tenants] legacy claim failed (tenant created OK):', e);
+    }
+  }
+
+  return NextResponse.json({ tenant, claim });
 }
 
 /**
