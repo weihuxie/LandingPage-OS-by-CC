@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import {
+  LEGACY_TENANT_ID,
   listProjectsCompat,
   readProducts,
   saveProduct,
@@ -133,7 +134,8 @@ async function postImpl(req: NextRequest) {
   if (!product) {
     product = {
       id: `p_${nanoid(10)}`,
-      ownerId: 'default',
+      // S2 / C1: stays LEGACY_TENANT_ID until C3 wires up requireUser().
+      tenantId: LEGACY_TENANT_ID,
       createdAt: now,
       updatedAt: now,
       name: body.inputs.name,
@@ -155,6 +157,9 @@ async function postImpl(req: NextRequest) {
 
   const page: LandingPage = {
     id: `lp_${nanoid(10)}`,
+    // S2 / C1: LandingPage now carries tenantId. Stamps from product so
+    // page+product always share the same tenant invariant.
+    tenantId: product.tenantId,
     productId: product.id,
     slug,
     createdAt: now,

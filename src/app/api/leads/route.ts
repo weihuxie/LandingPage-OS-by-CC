@@ -43,6 +43,10 @@ export async function POST(req: NextRequest) {
 
   const lead: Lead = {
     id: nanoid(10),
+    // S2: tenant comes from the LandingPage. Public form submitters have
+    // no session, but the page they're submitting to belongs to a tenant
+    // — copy that here so dashboard filtering works without a join.
+    tenantId: page.tenantId,
     projectId: page.id,
     createdAt: Date.now(),
     name, email, company, phone, message,

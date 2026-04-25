@@ -128,6 +128,8 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
 
   const page: LandingPage = {
     id: `lp_${nanoid(10)}`,
+    // S2: inherit tenant from the parent product
+    tenantId: product.tenantId,
     productId: product.id,
     slug,
     createdAt: now,

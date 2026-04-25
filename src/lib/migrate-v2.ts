@@ -19,19 +19,22 @@ import type {
   PageModule,
 } from './types';
 
-const DEFAULT_USER_ID = 'default'; // single-user mode for MVP
+const LEGACY_TENANT_FALLBACK = 'default'; // S2: pre-tenant rows land here
 
 export function migrateProjectToV2(
   project: any,
   existingProductId?: string,
 ): { product: Product; page: LandingPage } {
-  const ownerId = project.ownerId ?? DEFAULT_USER_ID;
+  // S2: tenant inheritance — prefer the new tenantId field, fall back to
+  // the legacy ownerId, fall back finally to the LEGACY_TENANT_FALLBACK
+  // sentinel. Old `Project` rows had ownerId='default' for everyone.
+  const tenantId = project.tenantId ?? project.ownerId ?? LEGACY_TENANT_FALLBACK;
   const locale: PageLocale = project.inputs?.locale ?? 'zh-CN';
   const market: MarketCode = project.inputs?.market ?? 'GLOBAL';
 
   const product: Product = {
     id: existingProductId ?? `p_${nanoid(10)}`,
-    ownerId,
+    tenantId,
     createdAt: project.createdAt ?? Date.now(),
     updatedAt: project.updatedAt ?? Date.now(),
 
@@ -63,6 +66,7 @@ export function migrateProjectToV2(
 
   const page: LandingPage = {
     id: project.id,                 // preserve id
+    tenantId,                       // S2: copy from the parent product
     productId: product.id,
     slug: project.slug,              // preserve slug
     createdAt: project.createdAt ?? Date.now(),

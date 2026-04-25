@@ -156,6 +156,56 @@ const KEY_PRODUCTS = 'lp:v2:products';     // v2
 const KEY_PAGES = 'lp:v2:pages';           // v2
 const KEY_BRAND = 'lp:v2:brand';           // v2 (single brand per user in MVP)
 
+// --- Tenant scoping (S2 多租户改造) ------------------------------------
+//
+// Pre-S2 every Product / LandingPage / Brand was stamped `ownerId:'default'`
+// (no real auth enforced anywhere). After S2 we want per-tenant isolation,
+// but we don't want a forced data migration before the first user logs in
+// — they might never log in, in which case the existing dashboard should
+// keep working unchanged.
+//
+// The compromise: existing 'default'-owned rows continue to live under a
+// reserved tenant id named 'default' (the LEGACY_TENANT_ID below). Reads
+// coerce row.ownerId → row.tenantId on the fly so the rest of the code
+// only ever sees the new shape. C4 (claim mode) will, on first login,
+// create a real Tenant for the user and rewrite all rows from
+// LEGACY_TENANT_ID → that tenant's id, after which the legacy id is
+// effectively retired.
+export const LEGACY_TENANT_ID = 'default';
+
+/**
+ * Read-time coercion for v2 entities that may predate the tenantId field.
+ * Old KV blobs only have `ownerId`; new ones have `tenantId`. We read both
+ * and produce a single canonical `tenantId` field. Falls back to
+ * LEGACY_TENANT_ID rather than throwing so half-migrated states don't
+ * crash the dashboard.
+ */
+function coerceTenant<T extends { tenantId?: string }>(row: T | null | undefined): T | null {
+  if (!row) return null;
+  if (row.tenantId) return row;
+  // Old shape: ownerId field. Cast away — types.ts no longer declares
+  // ownerId on Product / Brand but legacy KV rows do carry it.
+  const legacy = (row as unknown as { ownerId?: string }).ownerId;
+  return { ...row, tenantId: legacy ?? LEGACY_TENANT_ID };
+}
+
+/**
+ * Apply a tenant filter to a list. `undefined` filter returns the input
+ * untouched (back-compat for callers that haven't been updated yet).
+ * Coerces every row through `coerceTenant` first so legacy rows are
+ * comparable.
+ */
+function filterByTenant<T extends { tenantId?: string }>(
+  list: T[],
+  tenantId: string | undefined,
+): T[] {
+  const coerced = list
+    .map((r) => coerceTenant(r))
+    .filter((r): r is T & { tenantId: string } => !!r);
+  if (!tenantId) return coerced;
+  return coerced.filter((r) => r.tenantId === tenantId);
+}
+
 const DEFAULT_ASSETS: AssetLibrary = {
   brand: null,
   testimonials: [],
@@ -255,9 +305,19 @@ export async function deleteProject(id: string): Promise<void> {
 
 // --- Leads -------------------------------------------------------------
 
-export async function readLeads(projectId?: string): Promise<Lead[]> {
+/**
+ * List leads. Same options shape as readLandingPages — pass `tenantId`
+ * to scope, `projectId` for the per-page detail view (the dashboard
+ * /leads listing). Back-compat: bare-string positional arg still works.
+ */
+export async function readLeads(
+  opts?: string | { tenantId?: string; projectId?: string },
+): Promise<Lead[]> {
+  const filter = typeof opts === 'string' ? { projectId: opts } : opts ?? {};
   const all = (await readRaw<Lead[]>(KEY_LEADS, [])) ?? [];
-  return projectId ? all.filter((l) => l.projectId === projectId) : all;
+  let scoped = filterByTenant(all, filter.tenantId);
+  if (filter.projectId) scoped = scoped.filter((l) => l.projectId === filter.projectId);
+  return scoped;
 }
 
 export async function appendLead(lead: Lead): Promise<void> {
@@ -376,7 +436,13 @@ const LOCALE_GROUP_KEY_PREFIX = 'lp:v2:locale-group:';
 
 // --- Products ----------------------------------------------------------
 
-export async function readProducts(): Promise<Product[]> {
+/**
+ * List products. Pass `tenantId` to scope to one tenant — required by
+ * SSR pages and APIs after S2. Omit (undefined) for unscoped reads
+ * (admin tools, migration scripts). Legacy rows without tenantId get
+ * coerced to LEGACY_TENANT_ID before filtering.
+ */
+export async function readProducts(opts: { tenantId?: string } = {}): Promise<Product[]> {
   if (useKV()) {
     // SCAN is the authoritative enumeration. Key existence wins over
     // index-set membership, so orphaned writes (data committed but
@@ -414,9 +480,10 @@ export async function readProducts(): Promise<Product[]> {
       }
     })();
 
-    return products;
+    return filterByTenant(products, opts.tenantId);
   }
-  return (await readFs<Product[]>(KEY_PRODUCTS, []));
+  const list = await readFs<Product[]>(KEY_PRODUCTS, []);
+  return filterByTenant(list, opts.tenantId);
 }
 
 export async function writeProducts(list: Product[]): Promise<void> {
@@ -426,10 +493,10 @@ export async function writeProducts(list: Product[]): Promise<void> {
 
 export async function getProduct(id: string): Promise<Product | null> {
   if (useKV()) {
-    return (await kv.get<Product>(PRODUCT_KEY_PREFIX + id)) ?? null;
+    return coerceTenant(await kv.get<Product>(PRODUCT_KEY_PREFIX + id));
   }
   const list = await readFs<Product[]>(KEY_PRODUCTS, []);
-  return list.find((p) => p.id === id) ?? null;
+  return coerceTenant(list.find((p) => p.id === id) ?? null);
 }
 
 export async function saveProduct(product: Product): Promise<Product> {
@@ -472,7 +539,22 @@ export async function deleteProductAndPages(id: string): Promise<void> {
 
 // --- Landing Pages -----------------------------------------------------
 
-export async function readLandingPages(productId?: string): Promise<LandingPage[]> {
+/**
+ * List landing pages. Two filters available:
+ *   - `tenantId` for cross-product tenant scoping (dashboard / API)
+ *   - `productId` for the existing product-detail use case
+ * Both can combine. Legacy LandingPage rows lack tenantId — coerced to
+ * LEGACY_TENANT_ID by `coerceTenant`. Backward-compat: `readLandingPages(id)`
+ * positional call still works (string is treated as productId).
+ */
+export async function readLandingPages(
+  opts?: string | { tenantId?: string; productId?: string },
+): Promise<LandingPage[]> {
+  // Back-compat: callers that pass `productId` as a positional string
+  // continue to work. New callers should pass an options object.
+  const filter =
+    typeof opts === 'string' ? { productId: opts } : opts ?? {};
+
   if (useKV()) {
     // SCAN as source of truth; see readProducts() comment.
     const keys = await scanKeysByPrefix(PAGE_KEY_PREFIX);
@@ -503,10 +585,14 @@ export async function readLandingPages(productId?: string): Promise<LandingPage[
       }
     })();
 
-    return productId ? all.filter((p) => p.productId === productId) : all;
+    let scoped = filterByTenant(all, filter.tenantId);
+    if (filter.productId) scoped = scoped.filter((p) => p.productId === filter.productId);
+    return scoped;
   }
   const list = (await readFs<LandingPage[]>(KEY_PAGES, [])) ?? [];
-  return productId ? list.filter((p) => p.productId === productId) : list;
+  let scoped = filterByTenant(list, filter.tenantId);
+  if (filter.productId) scoped = scoped.filter((p) => p.productId === filter.productId);
+  return scoped;
 }
 
 export async function writeLandingPages(list: LandingPage[]): Promise<void> {
@@ -516,10 +602,10 @@ export async function writeLandingPages(list: LandingPage[]): Promise<void> {
 
 export async function getLandingPage(id: string): Promise<LandingPage | null> {
   if (useKV()) {
-    return (await kv.get<LandingPage>(PAGE_KEY_PREFIX + id)) ?? null;
+    return coerceTenant(await kv.get<LandingPage>(PAGE_KEY_PREFIX + id));
   }
   const list = await readFs<LandingPage[]>(KEY_PAGES, []);
-  return list.find((p) => p.id === id) ?? null;
+  return coerceTenant(list.find((p) => p.id === id) ?? null);
 }
 
 export async function getLandingPageBySlug(slug: string): Promise<LandingPage | null> {
@@ -783,7 +869,7 @@ export async function getSiblings(page: LandingPage): Promise<LandingPage[]> {
 }
 
 const DEFAULT_BRAND: Brand = {
-  ownerId: 'default',
+  tenantId: LEGACY_TENANT_ID,
   updatedAt: 0,
   companyName: '',
   logos: [],
@@ -793,12 +879,35 @@ const DEFAULT_BRAND: Brand = {
   sharedCases: [],
 };
 
-export async function readBrand(): Promise<Brand> {
-  return (await readRaw<Brand>(KEY_BRAND, DEFAULT_BRAND)) ?? DEFAULT_BRAND;
+/**
+ * Read the Brand for a tenant. Pre-S2 there was a single global Brand
+ * stored under `lp:v2:brand`; this still works (legacy callers omit
+ * `tenantId`). When a tenant id is provided, the per-tenant key
+ * `lp:v2:brand:<tenantId>` is preferred and the legacy global key is the
+ * fallback, so the dashboard works during the transition window before
+ * any tenant has saved their own Brand.
+ */
+export async function readBrand(opts: { tenantId?: string } = {}): Promise<Brand> {
+  if (opts.tenantId && opts.tenantId !== LEGACY_TENANT_ID) {
+    const scoped = await readRaw<Brand>(`${KEY_BRAND}:${opts.tenantId}`, DEFAULT_BRAND);
+    // If the per-tenant key has data (companyName / logos / etc), return
+    // it; otherwise fall back to the global brand so legacy data shows up
+    // until the tenant explicitly overrides.
+    const filled = scoped && (scoped.companyName || scoped.logos.length || scoped.certifications.length);
+    if (filled) return coerceTenant(scoped) ?? DEFAULT_BRAND;
+  }
+  const legacy = await readRaw<Brand>(KEY_BRAND, DEFAULT_BRAND);
+  return coerceTenant(legacy ?? DEFAULT_BRAND) ?? DEFAULT_BRAND;
 }
 
 export async function writeBrand(brand: Brand): Promise<void> {
   brand.updatedAt = Date.now();
+  // Per-tenant key when the brand carries a non-legacy tenantId; otherwise
+  // continue writing to the global key so legacy dashboards keep working.
+  if (brand.tenantId && brand.tenantId !== LEGACY_TENANT_ID) {
+    await writeRaw(`${KEY_BRAND}:${brand.tenantId}`, brand);
+    return;
+  }
   await writeRaw(KEY_BRAND, brand);
 }
 

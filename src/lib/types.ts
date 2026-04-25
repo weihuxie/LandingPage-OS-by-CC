@@ -401,6 +401,9 @@ export interface DeployRecord {
 
 export interface Lead {
   id: string;
+  // tenantId 在 S2 加上 — 来自 leads 所属 LandingPage 的 tenant，写入时
+  // 直接 copy。读时缺 tenantId 的老数据视为 'default'（legacy tenant）。
+  tenantId: string;
   projectId: string;
   createdAt: number;
   name?: string;
@@ -563,9 +566,12 @@ export interface ProjectVariants {
 
 // --- v2: Product / Brand / LandingPage 三层模型 ------------------------
 
-// Single Brand per user (per user's Q1 answer)
+// Single Brand per tenant. tenantId replaces the legacy ownerId field
+// (S2 multi-tenant work, 2026-04-25). Legacy rows in KV with
+// ownerId:'default' are read-time coerced to tenantId:'default' (the
+// LEGACY_TENANT_ID sentinel) — see storage.ts coerceTenant().
 export interface Brand {
-  ownerId: string;
+  tenantId: string;
   updatedAt: number;
   companyName: string;
   logos: string[];
@@ -577,10 +583,11 @@ export interface Brand {
   sharedCases: CaseStudyAsset[];        // 公司级标杆客户
 }
 
-// Product = 品牌下的一个具体产品，归属一个用户
+// Product = 品牌下的一个具体产品，归属一个 tenant（S2 起 ownerId 字段
+// 升级为 tenantId — 一个 tenant 可有多个 user 通过 tenant_members 协作）
 export interface Product {
   id: string;
-  ownerId: string;
+  tenantId: string;
   createdAt: number;
   updatedAt: number;
 
@@ -615,8 +622,12 @@ export interface Product {
 export type LocalizedContent = Partial<Record<PageLocale, PageModule[]>>;
 
 // LandingPage = 一个具体的页面（产品主站 / 某活动 / 某市场切片）
+// tenantId 在 S2 加上以做 tenant 范围隔离 — 同 productId 推断（落地页
+// 永远跟所属产品同一个 tenant），但冗余存在 LP 上避免每次过滤都回查
+// product。读时如缺 tenantId，从 product.tenantId 推断或 fallback 'default'。
 export interface LandingPage {
   id: string;
+  tenantId: string;
   productId: string;
   slug: string;
   createdAt: number;

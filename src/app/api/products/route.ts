@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
 import {
+  LEGACY_TENANT_ID,
   readProducts,
   saveProduct,
 } from '@/lib/storage';
@@ -21,9 +22,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'name required' }, { status: 400 });
   }
   const now = Date.now();
+  // S2 / C1: tenantId still LEGACY_TENANT_ID until C3 wires up
+  // requireUser() and stamps the caller's actual tenant. Existing
+  // unauthenticated POST keeps working in the meantime.
   const product: Product = {
     id: `p_${nanoid(10)}`,
-    ownerId: 'default',
+    tenantId: LEGACY_TENANT_ID,
     createdAt: now,
     updatedAt: now,
     name: body.name,
