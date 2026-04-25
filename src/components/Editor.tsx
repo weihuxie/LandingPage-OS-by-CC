@@ -933,7 +933,26 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         return false;
       }
       const data = await res.json();
-      if (data?.project) setProject(data.project);
+      // Surgical merge: deploy success returns a fresh ProjectView, but
+      // projectViewFromV2 always anchors `modules` on page.defaultLocale.
+      // If the user is editing a non-default locale tab, blindly calling
+      // setProject(data.project) clobbers the visible modules with source-
+      // language content + the mirror useEffect persists the source content
+      // back into the target-locale slot. User-visible symptom: "界面被
+      // 刷新成源语言" while editingLocale + 查看 link both still point at
+      // the target tab.
+      //
+      // Only the publish/deploy fields should change here. Everything else
+      // (modules / variants / strategy / theme) stays tied to whatever the
+      // user was editing.
+      if (data?.project) {
+        setProject((p) => ({
+          ...p,
+          published: data.project.published ?? p.published,
+          deploy: data.project.deploy ?? p.deploy,
+          publishedLocales: data.project.publishedLocales ?? p.publishedLocales,
+        }));
+      }
       return true;
     } finally {
       setDeploying(false);
