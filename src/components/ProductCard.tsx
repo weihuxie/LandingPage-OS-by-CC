@@ -19,8 +19,9 @@
  * card to open" affordance.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { Product, LandingPage } from '@/lib/types';
 import DeleteButton from './DeleteButton';
 
@@ -35,6 +36,22 @@ export default function ProductCard({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuWrapRef = useRef<HTMLDivElement>(null);
+  // useTransition gives us an isPending flag during client-side
+  // navigation — used to dim the card + show a spinner so the user
+  // knows their click landed even if the RSC fetch + KV read takes
+  // 300–800ms on cold start. loading.tsx fills in the destination
+  // page; this fills in the origin. Together they kill the "stare
+  // at the old dashboard wondering if I missed" gap.
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+  const href = `/${locale}/products/${product.id}`;
+  const handleNavigate = (e: React.MouseEvent) => {
+    // Modifier-clicks (cmd/ctrl/middle-click "open in new tab") need
+    // to keep the native <Link> behavior — don't intercept those.
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    startTransition(() => router.push(href));
+  };
 
   // Close the menu when the user clicks anywhere outside it. Without
   // this the menu stays open forever after a stray mis-click, covering
@@ -70,7 +87,12 @@ export default function ProductCard({
       : '该产品下目前没有落地页。';
 
   return (
-    <div className="card group relative block cursor-pointer p-5 transition hover:border-brand-200 hover:shadow-soft">
+    <div
+      className={`card group relative block cursor-pointer p-5 transition hover:border-brand-200 hover:shadow-soft ${
+        isPending ? 'pointer-events-none opacity-60' : ''
+      }`}
+      aria-busy={isPending}
+    >
       {/* Cover link: full-bleed, zero content, sits at z-0. Click anywhere
           on the card (except the kebab) opens the product detail page.
           `cursor-pointer` is on the outer card (not the Link) because the
@@ -79,10 +101,17 @@ export default function ProductCard({
           the Link is actually the topmost element, which feels like "the
           cursor takes a second to appear" when dragging across text. */}
       <Link
-        href={`/${locale}/products/${product.id}`}
+        href={href}
         aria-label={`打开 ${product.name}`}
         className="absolute inset-0 z-0 rounded-[inherit]"
+        onClick={handleNavigate}
       />
+      {isPending && (
+        <div
+          className="pointer-events-none absolute right-3 top-3 z-30 flex h-5 w-5 items-center justify-center rounded-full border-2 border-brand-200 border-t-brand-600 motion-safe:animate-spin"
+          aria-hidden
+        />
+      )}
 
       <div className="relative z-10 flex items-start justify-between">
         <div className="min-w-0 flex-1 pr-2">

@@ -20,9 +20,17 @@ export default async function ProductDetailPage({
 }) {
   unstable_setRequestLocale(params.locale);
   noStore();
-  const product = await getProduct(params.id);
+  // readLandingPages keys off the product id, which equals params.id
+  // before the 404 check — so we can run both KV reads in parallel
+  // instead of waiting one round-trip for getProduct() to return.
+  // On warm-lambda + KV that saves ~50–100ms; on cold start it's
+  // bigger because both round-trips overlap with the cold-start
+  // latency instead of stacking on it.
+  const [product, pages] = await Promise.all([
+    getProduct(params.id),
+    readLandingPages(params.id),
+  ]);
   if (!product) notFound();
-  const pages = await readLandingPages(product.id);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">

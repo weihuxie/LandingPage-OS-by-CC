@@ -1,5 +1,6 @@
 'use client';
-import { useTranslations } from 'next-intl';
+import { useEffect, useState } from 'react';
+import { useLocale, useTranslations } from 'next-intl';
 import type {
   PageModule,
   HeroContent,
@@ -18,6 +19,7 @@ import type {
   ProductShowcaseContent,
   VideoEmbedContent,
   MediaRef,
+  AssetLibrary,
 } from '@/lib/types';
 import { resolveSocialProofLogo } from '@/lib/types';
 import MediaField from './MediaField';
@@ -505,6 +507,7 @@ function LogosEditor({
   logos: SocialProofLogo[];
   setLogos: (next: SocialProofLogo[]) => void;
 }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
   const update = (i: number, next: SocialProofLogo) => {
     const arr = [...logos];
     arr[i] = next;
@@ -610,19 +613,219 @@ function LogosEditor({
           );
         })}
       </div>
-      <button
-        type="button"
-        className="btn btn-secondary mt-2 text-xs"
-        onClick={() => setLogos([...logos, ''])}
-      >
-        + 加 logo
-      </button>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="btn btn-secondary text-xs"
+          onClick={() => setLogos([...logos, ''])}
+        >
+          + 加 logo
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary text-xs"
+          onClick={() => setPickerOpen(true)}
+          title="从资产库里选已维护的品牌 / 认证 logo"
+        >
+          📚 从品牌资产库
+        </button>
+      </div>
       <p className="mt-2 text-xs text-ink-500">
         文字会渲染成品牌名卡片；URL / data: 会渲染成图片。上传经
         <code className="mx-1">/api/assets/upload</code>
         走 Vercel Blob（本地无 <code className="mx-0.5">BLOB_READ_WRITE_TOKEN</code>{' '}
         时以 base64 内嵌，仅限本地调试）。
       </p>
+      {pickerOpen && (
+        <BrandAssetLogoPicker
+          onPick={(logo) => setLogos([...logos, logo])}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Picker over AssetLibrary — surfaces brand.logos[] and certifications[]
+ * (those with logoUrl) as clickable thumbnails. Clicking appends to the
+ * module's logos[] immediately, modal stays open so users can add several
+ * in one pass. Before this existed, brand assets edited at /[locale]/assets
+ * had no path into a page — SocialProof logos could only be typed in or
+ * re-uploaded. User feedback H2 in the feedback base.
+ *
+ * Press assets aren't shown here because PressAsset has no logoUrl field;
+ * they'd need a dedicated consumer module before being "pickable".
+ */
+function BrandAssetLogoPicker({
+  onPick,
+  onClose,
+}: {
+  onPick: (logo: SocialProofLogo) => void;
+  onClose: () => void;
+}) {
+  const locale = useLocale();
+  const [lib, setLib] = useState<AssetLibrary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [flashId, setFlashId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/assets')
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((d) => {
+        if (!cancelled) setLib(d.assets as AssetLibrary);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handlePick = (logo: SocialProofLogo, flashKey: string) => {
+    onPick(logo);
+    setFlashId(flashKey);
+    setTimeout(() => setFlashId((cur) => (cur === flashKey ? null : cur)), 800);
+  };
+
+  const brandLogos = (lib?.brand?.logos ?? []).filter(Boolean);
+  const certLogos = (lib?.certifications ?? []).filter((c) => c.logoUrl);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-ink-100 px-5 py-3">
+          <div className="text-sm font-medium">从品牌资产库选择</div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-ink-500 hover:text-ink-900"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5">
+          {!lib && !error && (
+            <div className="text-sm text-ink-500">加载中…</div>
+          )}
+          {error && (
+            <div className="text-sm text-red-600">加载失败：{error}</div>
+          )}
+          {lib && (
+            <div className="space-y-5">
+              <div>
+                <div className="label mb-2">品牌 Logo</div>
+                {brandLogos.length === 0 ? (
+                  <div className="text-xs text-ink-500">
+                    暂无品牌 logo —— 请到「资产库 → 企业品牌」tab 维护。
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {brandLogos.map((src, i) => {
+                      const key = `brand:${i}`;
+                      const flashed = flashId === key;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => handlePick({ src }, key)}
+                          className={`relative flex h-16 items-center justify-center rounded-lg border bg-white p-2 transition ${
+                            flashed
+                              ? 'border-brand-400 bg-brand-50'
+                              : 'border-ink-100 hover:border-brand-400'
+                          }`}
+                          title="点击加入 logo 列表"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={src}
+                            alt=""
+                            className="max-h-full max-w-full object-contain"
+                          />
+                          {flashed && (
+                            <span className="absolute right-1 top-1 rounded bg-brand-600 px-1 text-[10px] text-white">
+                              ✓
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <div>
+                <div className="label mb-2">认证 Logo</div>
+                {certLogos.length === 0 ? (
+                  <div className="text-xs text-ink-500">
+                    暂无带 logo 的认证 —— 请到「资产库 → 认证合规」tab 给认证填 logo URL。
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {certLogos.map((c) => {
+                      const key = `cert:${c.id}`;
+                      const flashed = flashId === key;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() =>
+                            handlePick({ src: c.logoUrl!, alt: c.name }, key)
+                          }
+                          className={`relative flex flex-col items-center gap-1 rounded-lg border bg-white p-2 transition ${
+                            flashed
+                              ? 'border-brand-400 bg-brand-50'
+                              : 'border-ink-100 hover:border-brand-400'
+                          }`}
+                          title={`点击加入:${c.name}`}
+                        >
+                          <div className="flex h-10 w-full items-center justify-center">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={c.logoUrl!}
+                              alt=""
+                              className="max-h-full max-w-full object-contain"
+                            />
+                          </div>
+                          <div className="w-full truncate text-[10px] text-ink-500">
+                            {c.name}
+                          </div>
+                          {flashed && (
+                            <span className="absolute right-1 top-1 rounded bg-brand-600 px-1 text-[10px] text-white">
+                              ✓
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-between border-t border-ink-100 px-5 py-3 text-xs text-ink-500">
+          <span>💡 点击即添加,可连续多选</span>
+          <a
+            href={`/${locale}/assets`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-brand-600 hover:underline"
+          >
+            去资产库编辑 →
+          </a>
+        </div>
+      </div>
     </div>
   );
 }

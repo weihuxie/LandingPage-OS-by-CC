@@ -375,15 +375,15 @@ npm run build       # 验证 Vercel 部署前会否 build 失败
 
 ## 六、生产域名
 
-- 前台：https://landing-page-os-by-cc-liart.vercel.app/zh-CN
+- 前台：https://landingpage.aiverygen.ai/zh-CN
 - 仓库：https://github.com/weihuxie/LandingPage-OS-by-CC
-- LLM health check：https://landing-page-os-by-cc-liart.vercel.app/api/health
-- 管理员配置：https://landing-page-os-by-cc-liart.vercel.app/admin/llm（需要 `ADMIN_PASSWORD`，见 §2.5）
+- LLM health check：https://landingpage.aiverygen.ai/api/health
+- 管理员配置：https://landingpage.aiverygen.ai/admin/llm（需要 `ADMIN_PASSWORD`，见 §2.5）
 
 **协作约定（2026-04 起）**：每次 `git push` 之后，AI 协作者必须在回复里明确给出：
 1. 稳定生产 URL（上面那个）
 2. 这次推的 commit hash
-3. 部署 live 的确认方式 —— 优先用 `curl -s https://landing-page-os-by-cc-liart.vercel.app/api/health`，它返回里有 `deployedAt` 字段就是当前部署的 commit short SHA。比调 Vercel API 省事，无需 token。
+3. 部署 live 的确认方式 —— 优先用 `curl -s https://landingpage.aiverygen.ai/api/health`，它返回里有 `deployedAt` 字段就是当前部署的 commit short SHA。比调 Vercel API 省事，无需 token。
 
 理由：用户收到"已推送"时想做的第一件事是打开页面验证。把 URL 直接放出来省掉一步复制；commit hash 让他能和 GitHub log 对齐确认没推错分支；health check 命令让他能自己复查 deploy 真的到位了而不是还在 building。
 

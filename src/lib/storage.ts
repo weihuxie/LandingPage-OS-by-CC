@@ -716,19 +716,30 @@ export async function deleteLandingPage(id: string): Promise<void> {
 
 /**
  * Load every sibling row that shares the given group id. Returns `[]`
- * when KV is off, the group is empty, or every member key has been
- * deleted out from under the index. Callers should treat the empty
- * list as "no group / fall back to primary row".
+ * when the group is empty or every member key has been deleted out from
+ * under the index. Callers should treat the empty list as "no group /
+ * fall back to primary row".
+ *
+ * fs mode (local dev, no KV): scan the single pages.json blob for rows
+ * whose `localeGroupId` matches. Originally this branch returned `[]`
+ * unconditionally — the "P1 graceful degrade" — which made the entire
+ * parallel-locale path untestable without KV and caused DELETE /POST
+ * against siblings to 400 "no sibling found" in dev. Scanning the list
+ * is cheap (writeFs already re-reads + re-writes the whole blob every
+ * save) and restores correct behavior across both backends.
  */
 export async function getLandingPageGroup(groupId: string): Promise<LandingPage[]> {
-  if (!useKV()) return [];
-  const raw = (await kv.smembers(LOCALE_GROUP_KEY_PREFIX + groupId)) as string[] | null;
-  const ids = raw ?? [];
-  if (ids.length === 0) return [];
-  const pipeline = kv.pipeline();
-  for (const id of ids) pipeline.get(PAGE_KEY_PREFIX + id);
-  const results = await pipeline.exec();
-  return (results ?? []).filter((r): r is LandingPage => !!r);
+  if (useKV()) {
+    const raw = (await kv.smembers(LOCALE_GROUP_KEY_PREFIX + groupId)) as string[] | null;
+    const ids = raw ?? [];
+    if (ids.length === 0) return [];
+    const pipeline = kv.pipeline();
+    for (const id of ids) pipeline.get(PAGE_KEY_PREFIX + id);
+    const results = await pipeline.exec();
+    return (results ?? []).filter((r): r is LandingPage => !!r);
+  }
+  const list = await readFs<LandingPage[]>(KEY_PAGES, []);
+  return list.filter((p) => p.localeGroupId === groupId);
 }
 
 /**
