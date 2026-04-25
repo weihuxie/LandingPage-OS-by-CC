@@ -92,14 +92,12 @@ export default function ProductCard({
         isPending ? 'pointer-events-none opacity-60' : ''
       }`}
       aria-busy={isPending}
+      onClick={handleNavigate}
     >
-      {/* Cover link: full-bleed, zero content, sits at z-0. Click anywhere
-          on the card (except the kebab) opens the product detail page.
-          `cursor-pointer` is on the outer card (not the Link) because the
-          z-10 content layer covers most of the clickable surface — without
-          it the pointer cursor only shows on the sliver of padding where
-          the Link is actually the topmost element, which feels like "the
-          cursor takes a second to appear" when dragging across text. */}
+      {/* Cover link still here for: keyboard focus, screen readers, cmd/ctrl-
+          click → "open in new tab", middle-click. Outer-div onClick handles
+          plain left-click on visible content (z-10 covered the link before,
+          so text-clicks were dead — that's the "no reaction" the user hit). */}
       <Link
         href={href}
         aria-label={`打开 ${product.name}`}
