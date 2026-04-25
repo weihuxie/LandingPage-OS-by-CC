@@ -12,10 +12,10 @@ test.describe('E2E-HYD · Hydrate banner action', () => {
     test.skip(!caps.hasClaude, 'requires ANTHROPIC_API_KEY');
     test.setTimeout(180_000);
 
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
       // 强制 hydrationFailed=true + 可辨识的模板占位 headline
-      const page0 = await getPage(request, seeded.pageId);
+      const page0 = await getPage(page.context().request, seeded.pageId);
       const placeholder = 'TEMPLATE_PLACEHOLDER_HEADLINE_HYD_001';
       const modsA = page0.variants.A['zh-CN'].map((m: any) =>
         m.type === 'hero' ? { ...m, content: { ...m.content, headline: placeholder } } : m,
@@ -48,12 +48,12 @@ test.describe('E2E-HYD · Hydrate banner action', () => {
       });
 
       // API 层:hero headline 已变
-      const fresh = await getPage(request, seeded.pageId);
+      const fresh = await getPage(page.context().request, seeded.pageId);
       const freshHero = fresh.variants.A['zh-CN'].find((m: any) => m.type === 'hero');
       expect(freshHero.content.headline).not.toBe(placeholder);
       expect(fresh.hydrationFailed).toBe(false);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
@@ -61,7 +61,7 @@ test.describe('E2E-HYD · Hydrate banner action', () => {
     const caps = await getCapabilities(request);
     test.skip(caps.hasClaude, 'only runs when ANTHROPIC_API_KEY is MISSING');
 
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
       await patchPageFixture(seeded.pageId, { hydrationFailed: true });
 
@@ -82,10 +82,10 @@ test.describe('E2E-HYD · Hydrate banner action', () => {
       await expect(page.getByText('Hero 文案可能仍是模板占位符')).toBeVisible();
 
       // API 层 hydrationFailed 未被误触请求刷掉
-      const fresh = await getPage(request, seeded.pageId);
+      const fresh = await getPage(page.context().request, seeded.pageId);
       expect(fresh.hydrationFailed).toBe(true);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });

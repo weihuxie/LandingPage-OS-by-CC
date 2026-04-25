@@ -26,7 +26,7 @@ async function setupTwoPublishedSiblings(
   request: APIRequestContext,
   context: BrowserContext,
 ) {
-  const seeded = await seedMultiLocaleProject(request);
+  const seeded = await seedMultiLocaleProject(context.request);
   await loginAdminViaContext(context);
 
   const migrateRes = await context.request.post(
@@ -67,7 +67,7 @@ test.describe('E2E-LOC-P · Parallel locale public render', () => {
       await expect(page.getByText(seeded.jaHeroHeadline).first()).toBeVisible();
       await expect(page.getByText(seeded.zhHeroHeadline)).toHaveCount(0);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(context.request, seeded.productId);
     }
   });
 
@@ -86,7 +86,7 @@ test.describe('E2E-LOC-P · Parallel locale public render', () => {
       const hasJa = bodyText?.includes(seeded.jaHeroHeadline) ?? false;
       expect(hasZh || hasJa).toBe(true);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(context.request, seeded.productId);
     }
   });
 });

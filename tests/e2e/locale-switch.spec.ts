@@ -10,7 +10,7 @@ test.describe('E2E-LOC · Locale switch & isolation', () => {
     page,
     request,
   }) => {
-    const seeded = await seedMultiLocaleProject(request);
+    const seeded = await seedMultiLocaleProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await expect(page.getByRole('button', { name: /发布|已发布/ })).toBeVisible();
@@ -33,7 +33,7 @@ test.describe('E2E-LOC · Locale switch & isolation', () => {
       // ★ 仍在 zh-CN(默认 locale 位置不变)
       await expect(page.getByRole('button', { name: /简体中文.*★/ })).toBeVisible();
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
@@ -41,7 +41,7 @@ test.describe('E2E-LOC · Locale switch & isolation', () => {
     page,
     request,
   }) => {
-    const seeded = await seedMultiLocaleProject(request);
+    const seeded = await seedMultiLocaleProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await expect(page.getByRole('button', { name: /发布|已发布/ })).toBeVisible();
@@ -50,7 +50,7 @@ test.describe('E2E-LOC · Locale switch & isolation', () => {
       await page.getByRole('button', { name: /日本語/ }).first().click();
 
       // 找到 Hero 模块在列表里的位置(两 variant 的索引可能不同,fixture 构造时 hero 应在首位)
-      const before = await getPage(request, seeded.pageId);
+      const before = await getPage(page.context().request, seeded.pageId);
       const heroIdx = before.variants.A.ja.findIndex((m: any) => m.type === 'hero');
       expect(heroIdx).toBeGreaterThanOrEqual(0);
 
@@ -88,13 +88,13 @@ test.describe('E2E-LOC · Locale switch & isolation', () => {
       await expect(jaAfterReload).toHaveValue(newJaTitle);
 
       // API 层落库验证
-      const fresh = await getPage(request, seeded.pageId);
+      const fresh = await getPage(page.context().request, seeded.pageId);
       const jaHero = fresh.variants.A.ja.find((m: any) => m.type === 'hero');
       const zhHero = fresh.variants.A['zh-CN'].find((m: any) => m.type === 'hero');
       expect(jaHero.content.headline).toBe(newJaTitle);
       expect(zhHero.content.headline).toBe(seeded.zhHeroHeadline);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });

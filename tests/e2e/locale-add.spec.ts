@@ -12,7 +12,7 @@ test.describe('E2E-LOC · Add locale', () => {
     test.skip(!caps.ready.addLocale, 'requires ANTHROPIC_API_KEY + OPENAI_API_KEY');
     test.setTimeout(180_000);
 
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await expect(page.getByRole('button', { name: /发布|已发布/ })).toBeVisible();
@@ -42,14 +42,14 @@ test.describe('E2E-LOC · Add locale', () => {
       );
 
       // API 层验证落库
-      const fresh = await getPage(request, seeded.pageId);
+      const fresh = await getPage(page.context().request, seeded.pageId);
       expect(fresh.availableLocales).toContain('ja');
       const heroJa = fresh.variants.A.ja?.find((m: any) => m.type === 'hero');
       const heroZh = fresh.variants.A['zh-CN'].find((m: any) => m.type === 'hero');
       expect(heroJa?.content?.headline).toBeTruthy();
       expect(heroJa.content.headline).not.toBe(heroZh.content.headline);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
@@ -57,7 +57,7 @@ test.describe('E2E-LOC · Add locale', () => {
     const caps = await getCapabilities(request);
     test.skip(caps.ready.addLocale, 'only runs when Claude/OpenAI key is MISSING');
 
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await expect(page.getByRole('button', { name: /发布|已发布/ })).toBeVisible();
@@ -85,11 +85,11 @@ test.describe('E2E-LOC · Add locale', () => {
 
       // 日文 tab 未被加入 — 直接走 API 断言,避免与下拉中的同名按钮混淆
       // (UI 层"日本語" button 还会出现在 + 加语言下拉里,只有 API 能区分)
-      const fresh = await getPage(request, seeded.pageId);
+      const fresh = await getPage(page.context().request, seeded.pageId);
       expect(fresh.availableLocales).toEqual(['zh-CN']);
       expect(fresh.variants.A.ja).toBeUndefined();
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });

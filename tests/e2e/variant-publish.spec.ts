@@ -9,9 +9,9 @@ import { getCapabilities } from '../helpers/capabilities';
 
 test.describe('E2E-VAR · A/B Variant switch', () => {
   test('E2E-VAR-001 · 切到方案 B,模块顺序切换', async ({ page, request }) => {
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
-      const before = await getPage(request, seeded.pageId);
+      const before = await getPage(page.context().request, seeded.pageId);
       const modsA = before.variants.A['zh-CN'];
       const modsB = before.variants.B['zh-CN'];
       // A 是 10 模块(含 pain),B 是 9 模块(跳过 pain,收益优先)
@@ -42,7 +42,7 @@ test.describe('E2E-VAR · A/B Variant switch', () => {
       const listItems = moduleList.locator('> div > ul > li');
       await expect(listItems).toHaveCount(modsB.length);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });
@@ -52,7 +52,7 @@ test.describe('E2E-PUB · Publish', () => {
     const caps = await getCapabilities(request);
     test.skip(caps.hasDeploy, 'only runs when VC_API_TOKEN is MISSING');
 
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       const publishBtn = page.getByRole('button', { name: /^发布$|发布中|已发布/ });
@@ -77,10 +77,10 @@ test.describe('E2E-PUB · Publish', () => {
       await expect(publishBtn).toHaveText(/^发布$/, { timeout: 10_000 });
 
       // 服务端 page.published 回滚到 false(因为 deploy 失败后 editor 会二次 PATCH 清回 false)
-      const fresh = await getPage(request, seeded.pageId);
+      const fresh = await getPage(page.context().request, seeded.pageId);
       expect(fresh.published).toBe(false);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });

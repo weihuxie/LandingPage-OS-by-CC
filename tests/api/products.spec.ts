@@ -3,9 +3,14 @@
  * 对应用例文档:docs/testcases/api-testcases.md `## 1. 用例清单` API-PROD 行。
  */
 import { test, expect } from '@playwright/test';
+import { loginAndEnsureTenant } from '../helpers/user-auth';
 import { cleanupProject, seedProject, getProduct } from '../helpers/seed';
 
 test.describe('API-PROD · Product CRUD', () => {
+
+  test.beforeEach(async ({ request }) => {
+    await loginAndEnsureTenant(request);
+  });
   test('API-PROD-001 · 创建产品(最小必填)', async ({ request }) => {
     const name = `API-PROD-001-${Date.now()}`;
     const res = await request.post('/api/products', {

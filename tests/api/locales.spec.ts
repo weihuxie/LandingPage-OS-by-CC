@@ -5,6 +5,7 @@
  * 其中 LOC-006(带双 key 添加日语)是 [需 KEY] 用例,用 test.skip 守护。
  */
 import { test, expect } from '@playwright/test';
+import { loginAndEnsureTenant } from '../helpers/user-auth';
 import {
   cleanupProject,
   seedProject,
@@ -15,6 +16,10 @@ import {
 import { getCapabilities } from '../helpers/capabilities';
 
 test.describe('API-LOC · Locales', () => {
+
+  test.beforeEach(async ({ request }) => {
+    await loginAndEnsureTenant(request);
+  });
   test('API-LOC-001 · 跨 locale 单元格写入隔离', async ({ request }) => {
     const seeded = await seedMultiLocaleProject(request);
     try {

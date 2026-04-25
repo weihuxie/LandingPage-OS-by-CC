@@ -14,6 +14,7 @@
  * 测试会看到"POST 走的是 legacy 分支"的错配。
  */
 import { test, expect, type APIRequestContext } from '@playwright/test';
+import { loginAndEnsureTenant } from '../helpers/user-auth';
 import {
   cleanupProject,
   seedProject,
@@ -49,6 +50,10 @@ async function migrateToParallel(
 }
 
 test.describe('API-LOC-P · Parallel locale siblings', () => {
+
+  test.beforeEach(async ({ request }) => {
+    await loginAndEnsureTenant(request);
+  });
   test.skip(
     !process.env.MULTI_LOCALE_AS_INSTANCES,
     'requires MULTI_LOCALE_AS_INSTANCES=1 (dev server must also boot with it)',

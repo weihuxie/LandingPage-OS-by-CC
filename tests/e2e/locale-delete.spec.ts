@@ -7,7 +7,7 @@ import { cleanupProject, seedMultiLocaleProject, getPage } from '../helpers/seed
 
 test.describe('E2E-PAGE · Delete locale tab', () => {
   test('E2E-PAGE-001 · 删除日文 tab 后立即消失,刷新仍不存在', async ({ page, request }) => {
-    const seeded = await seedMultiLocaleProject(request);
+    const seeded = await seedMultiLocaleProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await expect(page.getByRole('button', { name: /发布|已发布/ })).toBeVisible();
@@ -31,10 +31,10 @@ test.describe('E2E-PAGE · Delete locale tab', () => {
       await expect(page.getByRole('button', { name: /日本語/ })).toHaveCount(0);
 
       // API 落库验证
-      const fresh = await getPage(request, seeded.pageId);
+      const fresh = await getPage(page.context().request, seeded.pageId);
       expect(fresh.availableLocales).not.toContain('ja');
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });

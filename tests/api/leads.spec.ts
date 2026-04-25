@@ -3,9 +3,14 @@
  * 对应用例文档:docs/testcases/api-testcases.md API-LEAD 行。
  */
 import { test, expect } from '@playwright/test';
+import { loginAndEnsureTenant } from '../helpers/user-auth';
 import { cleanupProject, seedProject, getPage } from '../helpers/seed';
 
 test.describe('API-LEAD · Leads', () => {
+
+  test.beforeEach(async ({ request }) => {
+    await loginAndEnsureTenant(request);
+  });
   test('API-LEAD-001 · 公网提交一条线索 + 更新 page.stats', async ({ request }) => {
     const seeded = await seedProject(request);
     try {

@@ -26,7 +26,7 @@ test.describe('E2E-PUB-LOC · Publish locale drift', () => {
     page,
     request,
   }) => {
-    const seeded = await seedMultiLocaleProject(request);
+    const seeded = await seedMultiLocaleProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await expect(page.getByRole('button', { name: /发布|已发布/ })).toBeVisible();
@@ -40,7 +40,7 @@ test.describe('E2E-PUB-LOC · Publish locale drift', () => {
       // 用真实 API 先抓出 zh-CN 的 ProjectView 形状（projectViewFromV2 用
       // page.defaultLocale 锚 modules），mock /deploy 时直接复用这份 zh
       // 视图—— 这就是 prod 上服务端 deploy handler 实际返回的内容
-      const fakeProjectRes = await request.get(`/api/projects/${seeded.pageId}`);
+      const fakeProjectRes = await page.context().request.get(`/api/projects/${seeded.pageId}`);
       const fakeProject = (await fakeProjectRes.json()).project;
 
       // Mock /deploy 走成功分支，模拟 prod 触发 setProject(data.project)
@@ -83,7 +83,7 @@ test.describe('E2E-PUB-LOC · Publish locale drift', () => {
         page.locator('section').getByText(seeded.zhHeroHeadline),
       ).not.toBeVisible();
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
@@ -91,7 +91,7 @@ test.describe('E2E-PUB-LOC · Publish locale drift', () => {
     page,
     request,
   }) => {
-    const seeded = await seedMultiLocaleProject(request);
+    const seeded = await seedMultiLocaleProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await expect(page.getByRole('button', { name: /发布|已发布/ })).toBeVisible();
@@ -99,7 +99,7 @@ test.describe('E2E-PUB-LOC · Publish locale drift', () => {
       // 切到日文 tab
       await page.getByRole('button', { name: /日本語/ }).first().click();
 
-      const fakeProjectRes = await request.get(`/api/projects/${seeded.pageId}`);
+      const fakeProjectRes = await page.context().request.get(`/api/projects/${seeded.pageId}`);
       const fakeProject = (await fakeProjectRes.json()).project;
       await page.route(`**/api/projects/${seeded.pageId}/deploy`, async (route) => {
         await route.fulfill({
@@ -127,11 +127,11 @@ test.describe('E2E-PUB-LOC · Publish locale drift', () => {
       // 落到 KV
       await page.waitForTimeout(2000);
 
-      const after = await getPage(request, seeded.pageId);
+      const after = await getPage(page.context().request, seeded.pageId);
       const heroJa = after.variants.A.ja.find((m: any) => m.type === 'hero');
       expect(heroJa?.content?.headline).toBe(seeded.jaHeroHeadline);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });

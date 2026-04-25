@@ -15,7 +15,7 @@ async function openSettings(page: import('@playwright/test').Page) {
 
 test.describe('E2E-SET · Settings modal', () => {
   test('E2E-SET-001 · 改产品名 → 关闭弹窗后 Dashboard 卡片跟着变', async ({ page, request }) => {
-    const seeded = await seedProject(request, { name: `E2E-SET-001-orig-${Date.now()}` });
+    const seeded = await seedProject(page.context().request, { name: `E2E-SET-001-orig-${Date.now()}` });
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await openSettings(page);
@@ -34,12 +34,12 @@ test.describe('E2E-SET · Settings modal', () => {
       await page.goto('/zh-CN/dashboard');
       await expect(page.getByText(newName)).toBeVisible();
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
   test('E2E-SET-002 · 改 Tagline → API 验证新值', async ({ page, request }) => {
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await openSettings(page);
@@ -51,15 +51,15 @@ test.describe('E2E-SET · Settings modal', () => {
 
       await expect(page.locator('text=已保存 ✓')).toBeVisible({ timeout: 5_000 });
 
-      const product = await getProduct(request, seeded.productId);
+      const product = await getProduct(page.context().request, seeded.productId);
       expect(product.tagline).toBe(newTag);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
   test('E2E-SET-003 · 改产品 Value(核心价值)', async ({ page, request }) => {
-    const seeded = await seedProject(request, { value: 'seed value' });
+    const seeded = await seedProject(page.context().request, { value: 'seed value' });
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await openSettings(page);
@@ -77,7 +77,7 @@ test.describe('E2E-SET · Settings modal', () => {
       const reopened = page.locator('label:has-text("核心价值") + textarea').first();
       await expect(reopened).toHaveValue(newValue);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
@@ -85,9 +85,9 @@ test.describe('E2E-SET · Settings modal', () => {
     page,
     request,
   }) => {
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
-      const before = await getPage(request, seeded.pageId);
+      const before = await getPage(page.context().request, seeded.pageId);
       const currentStyleId = before.theme.styleId;
 
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
@@ -117,15 +117,15 @@ test.describe('E2E-SET · Settings modal', () => {
       // 关弹窗,服务端落库验证
       await page.keyboard.press('Escape');
       await page.waitForTimeout(500);
-      const after = await getPage(request, seeded.pageId);
+      const after = await getPage(page.context().request, seeded.pageId);
       expect(after.theme.styleId).not.toBe(currentStyleId);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
   test('E2E-SET-005 · 切换 Tone 走自动保存', async ({ page, request }) => {
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await openSettings(page);
@@ -151,15 +151,15 @@ test.describe('E2E-SET · Settings modal', () => {
       const toneAfter = page.getByRole('dialog').locator('select').first();
       await expect(toneAfter).toHaveValue(target);
 
-      const fresh = await getPage(request, seeded.pageId);
+      const fresh = await getPage(page.context().request, seeded.pageId);
       expect(fresh.tone).toBe(target);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
   test('E2E-SET-006 · 改主色 → Hex 输入框 + preview 响应', async ({ page, request }) => {
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await openSettings(page);
@@ -185,10 +185,10 @@ test.describe('E2E-SET · Settings modal', () => {
       const hexAfter = colorRowAfter.locator('input').nth(1);
       await expect(hexAfter).toHaveValue('#ff00aa');
 
-      const fresh = await getPage(request, seeded.pageId);
+      const fresh = await getPage(page.context().request, seeded.pageId);
       expect(fresh.theme.primary?.toLowerCase()).toBe('#ff00aa');
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });

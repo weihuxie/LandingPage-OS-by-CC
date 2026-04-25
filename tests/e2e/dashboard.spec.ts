@@ -9,7 +9,7 @@ test.describe('E2E-DASH · Dashboard', () => {
   test('E2E-DASH-001 · Dashboard 列出种子产品卡片', async ({ page, request }) => {
     const name = `E2E-DASH-001-${Date.now()}`;
     const tagline = `E2E-DASH-001 tagline ${Date.now()}`;
-    const seeded = await seedProject(request, { name, tagline });
+    const seeded = await seedProject(page.context().request, { name, tagline });
     try {
       await page.goto('/zh-CN/dashboard');
       await expect(page.getByRole('heading', { name: '我的产品' })).toBeVisible();
@@ -22,7 +22,7 @@ test.describe('E2E-DASH · Dashboard', () => {
       // (Dashboard ProductCard 直接渲染 published 计数而非 "草稿/已发布" 徽章)
       await expect(page.getByText(/1 页面 · 0 已发布/).first()).toBeVisible();
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });

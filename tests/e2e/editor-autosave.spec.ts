@@ -7,14 +7,14 @@ import { cleanupProject, seedProject, getPage } from '../helpers/seed';
 
 test.describe('E2E-EDT · Editor autosave', () => {
   test('E2E-EDT-001 · 编辑 Hero 标题后自动保存并持久化', async ({ page, request }) => {
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       // 等编辑器加载完成
       await expect(page.getByRole('button', { name: /发布|已发布/ })).toBeVisible();
 
       // 取初始 page 结构,找到第一个 hero 模块
-      const before = await getPage(request, seeded.pageId);
+      const before = await getPage(page.context().request, seeded.pageId);
       const heroIndex = before.variants.A['zh-CN'].findIndex((m: any) => m.type === 'hero');
       expect(heroIndex).toBeGreaterThanOrEqual(0);
 
@@ -43,17 +43,17 @@ test.describe('E2E-EDT · Editor autosave', () => {
       const headlineAfter = page.locator('label:has-text("Headline") textarea').first();
       await expect(headlineAfter).toHaveValue(newTitle);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
   test('E2E-EDT-002 · 编辑实时同步到右侧预览', async ({ page, request }) => {
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
       await page.goto(`/zh-CN/projects/${seeded.pageId}`);
       await expect(page.getByRole('button', { name: /发布|已发布/ })).toBeVisible();
 
-      const before = await getPage(request, seeded.pageId);
+      const before = await getPage(page.context().request, seeded.pageId);
       const heroIndex = before.variants.A['zh-CN'].findIndex((m: any) => m.type === 'hero');
 
       await page.locator('aside ul li').nth(heroIndex).getByRole('button').first().click();
@@ -68,7 +68,7 @@ test.describe('E2E-EDT · Editor autosave', () => {
       const preview = page.locator('section').getByText(realtime).first();
       await expect(preview).toBeVisible({ timeout: 1_000 });
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });

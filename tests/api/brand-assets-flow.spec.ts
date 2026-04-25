@@ -17,9 +17,14 @@
  * 本 spec 用 sentinel 字符串跑一遍最窄路径，让"断点"落到断言日志里。
  */
 import { test, expect } from '@playwright/test';
+import { loginAndEnsureTenant } from '../helpers/user-auth';
 import { seedProject, cleanupProject } from '../helpers/seed';
 
 test.describe('API-ASSET-FLOW · AssetLibrary → 页面生成', () => {
+
+  test.beforeEach(async ({ request }) => {
+    await loginAndEnsureTenant(request);
+  });
   test('API-ASSET-FLOW-001 · 全局 AssetLibrary 里的 testimonial / logo / case 是否进新页面', async ({
     request,
   }) => {

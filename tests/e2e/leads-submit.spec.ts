@@ -7,13 +7,13 @@ import { cleanupProject, seedProject, getPage, patchPageFixture } from '../helpe
 
 test.describe('E2E-LEAD · Lead submission', () => {
   test('E2E-LEAD-001 · 公网落地页提交线索 → 成功反馈 + 计数 +1', async ({ page, request }) => {
-    const seeded = await seedProject(request);
+    const seeded = await seedProject(page.context().request);
     try {
       // 种子默认 published=false,/p/[slug] 会显示 "not published yet"。
       // 无 key 环境下 deploy 走不通(见 E2E-PUB-001),所以直接改磁盘发布位。
       await patchPageFixture(seeded.pageId, { published: true });
 
-      const before = await getPage(request, seeded.pageId);
+      const before = await getPage(page.context().request, seeded.pageId);
       const n0 = before.stats?.leads ?? 0;
 
       await page.goto(`/p/${seeded.slug}`);
@@ -50,10 +50,10 @@ test.describe('E2E-LEAD · Lead submission', () => {
       ).toBeVisible({ timeout: 5_000 });
 
       // API 验证
-      const after = await getPage(request, seeded.pageId);
+      const after = await getPage(page.context().request, seeded.pageId);
       expect(after.stats.leads).toBe(n0 + 1);
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });

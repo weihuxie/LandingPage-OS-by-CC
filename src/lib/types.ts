@@ -363,6 +363,9 @@ export interface PageModule<T extends ModuleContent = ModuleContent> {
 
 export interface Project {
   id: string;
+  /** S2: tenant scope. Optional on the legacy compat view because old
+   * KV blobs predate it; new writes always populate it. */
+  tenantId?: string;
   slug: string;
   createdAt: number;
   updatedAt: number;

@@ -3,11 +3,16 @@
  * 对应用例文档:docs/testcases/api-testcases.md API-HYD 行。
  */
 import { test, expect } from '@playwright/test';
+import { loginAndEnsureTenant } from '../helpers/user-auth';
 import { cleanupProject, seedProject, patchPageFixture, getPage } from '../helpers/seed';
 import { getCapabilities } from '../helpers/capabilities';
 import { variantHintForModule } from '../../src/lib/llm-claude';
 
 test.describe('API-HYD · Hydrate', () => {
+
+  test.beforeEach(async ({ request }) => {
+    await loginAndEnsureTenant(request);
+  });
   test('API-HYD-001 · [需 KEY] 重跑 Claude hydrate 当前 locale', async ({ request }) => {
     const caps = await getCapabilities(request);
     test.skip(!caps.hasClaude, 'requires ANTHROPIC_API_KEY');

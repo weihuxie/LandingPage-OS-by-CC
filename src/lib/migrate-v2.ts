@@ -148,6 +148,10 @@ export function projectViewFromV2(
 
   return {
     id: page.id,
+    // S2: project view inherits tenantId from the page so the compat
+    // list endpoint (/api/projects GET) can tenant-filter without
+    // looking up the underlying LandingPage row a second time.
+    tenantId: (page as any).tenantId ?? (page as any).ownerId ?? 'default',
     slug: page.slug,
     createdAt: page.createdAt,
     updatedAt: page.updatedAt,

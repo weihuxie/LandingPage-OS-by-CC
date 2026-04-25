@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { locales } from '@/i18n';
 import Link from 'next/link';
 import LocaleHtml from '@/components/LocaleHtml';
+import HeaderAuthBadge from '@/components/HeaderAuthBadge';
 
 export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
@@ -53,6 +54,7 @@ export default async function LocaleLayout({
             <Link href={`/${locale}/new`} className="btn btn-primary">
               + 新建
             </Link>
+            <HeaderAuthBadge locale={locale} />
           </nav>
         </div>
       </header>

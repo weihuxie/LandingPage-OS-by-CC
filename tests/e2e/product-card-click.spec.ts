@@ -12,7 +12,7 @@ import { cleanupProject, seedProject } from '../helpers/seed';
 test.describe('E2E-DASH-CLICK · ProductCard 点击行为', () => {
   test('E2E-DASH-CLICK-001 · 点产品名文字应在新标签页打开产品详情', async ({ page, request, context }) => {
     const name = `CLICK-001-${Date.now()}`;
-    const seeded = await seedProject(request, { name });
+    const seeded = await seedProject(page.context().request, { name });
     try {
       await page.goto('/zh-CN/dashboard');
       await expect(page.getByText(name)).toBeVisible();
@@ -27,13 +27,13 @@ test.describe('E2E-DASH-CLICK · ProductCard 点击行为', () => {
       // 原 dashboard 仍然停在当前 tab
       expect(page.url()).toContain('/dashboard');
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
   test('E2E-DASH-CLICK-002 · 点"新标签页打开"应在新标签页打开产品详情', async ({ page, request, context }) => {
     const name = `CLICK-002-${Date.now()}`;
-    const seeded = await seedProject(request, { name });
+    const seeded = await seedProject(page.context().request, { name });
     try {
       await page.goto('/zh-CN/dashboard');
       await expect(page.getByText(name)).toBeVisible();
@@ -47,15 +47,15 @@ test.describe('E2E-DASH-CLICK · ProductCard 点击行为', () => {
       expect(newPage.url()).toContain(`/products/${seeded.productId}`);
       expect(page.url()).toContain('/dashboard');
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 
   test('E2E-DASH-CLICK-003 · 连续点两个产品应打开两个新标签页且 dashboard 不变', async ({ page, request, context }) => {
     const name1 = `CLICK-003a-${Date.now()}`;
     const name2 = `CLICK-003b-${Date.now()}`;
-    const seeded1 = await seedProject(request, { name: name1 });
-    const seeded2 = await seedProject(request, { name: name2 });
+    const seeded1 = await seedProject(page.context().request, { name: name1 });
+    const seeded2 = await seedProject(page.context().request, { name: name2 });
     try {
       await page.goto('/zh-CN/dashboard');
       await expect(page.getByText(name1)).toBeVisible();
@@ -76,14 +76,14 @@ test.describe('E2E-DASH-CLICK · ProductCard 点击行为', () => {
       expect(tab2.url()).toContain(`/products/${seeded2.productId}`);
       expect(page.url()).toContain('/dashboard');
     } finally {
-      await cleanupProject(request, seeded1.productId);
-      await cleanupProject(request, seeded2.productId);
+      await cleanupProject(page.context().request, seeded1.productId);
+      await cleanupProject(page.context().request, seeded2.productId);
     }
   });
 
   test('E2E-DASH-CLICK-004 · 点 kebab 菜单不应打开新标签页', async ({ page, request, context }) => {
     const name = `CLICK-004-${Date.now()}`;
-    const seeded = await seedProject(request, { name });
+    const seeded = await seedProject(page.context().request, { name });
     try {
       await page.goto('/zh-CN/dashboard');
       await expect(page.getByText(name)).toBeVisible();
@@ -102,7 +102,7 @@ test.describe('E2E-DASH-CLICK · ProductCard 点击行为', () => {
       // dashboard 没动
       expect(page.url()).toContain('/dashboard');
     } finally {
-      await cleanupProject(request, seeded.productId);
+      await cleanupProject(page.context().request, seeded.productId);
     }
   });
 });

@@ -16,11 +16,13 @@
 import type { APIRequestContext } from '@playwright/test';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { loginAndEnsureTenant } from './user-auth';
 
 export type SeededProject = {
   productId: string;
   pageId: string;
   slug: string;
+  tenantId: string;
 };
 
 type SeedOpts = {
@@ -43,6 +45,10 @@ export async function seedProject(
   const name = opts.name ?? uniqueName();
   const locale = opts.locale ?? 'zh-CN';
   const market = opts.market ?? 'CN';
+
+  // S2: every test gets its own user + tenant up-front. Idempotent
+  // within a single test run via the request context's cookie jar.
+  const session = await loginAndEnsureTenant(request);
 
   const res = await request.post('/api/projects', {
     data: {
@@ -81,6 +87,7 @@ export async function seedProject(
     pageId: body.id,
     productId: body.productId,
     slug: body.slug,
+    tenantId: session.tenantId,
   };
 }
 

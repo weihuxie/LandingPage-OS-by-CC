@@ -300,10 +300,22 @@ ADMIN_PASSWORD=<任意值> npx playwright test --grep ADMIN-LLM
 
 | Sprint | 内容 | 状态 |
 |---|---|---|
-| **S1 · 认证地基** | users / tenants / tenant_members / invites 四张表 + magic link + `/invite/[token]` 接受页 + `/app` 工作空间列表 | 2026-04-21 完成（本 commit） |
-| **S2 · 权限 enforce** | `/api/projects/*` `/api/pages/*` `/api/upload/*` 全量加 tenant 范围检查 | 未开始 |
+| **S1 · 认证地基** | users / tenants / tenant_members / invites 四张表 + magic link + `/invite/[token]` 接受页 + `/app` 工作空间列表 | 2026-04-21 完成 |
+| **S2 · 权限 enforce** | `/api/projects/*` `/api/pages/*` `/api/upload/*` 全量加 tenant 范围检查 | 2026-04-25 完成（5 commit） |
 | **S3 · OAuth** | Google + Microsoft 绑定（magic link 继续保留作 fallback） | 未开始 |
 | **S4 · 管理页** | tenant owner 成员管理（踢人 + 停用邀请 UI）、super admin 概览 | 未开始 |
+
+**S2 落地说明（2026-04-25）**:
+- types: `Product` / `Brand` `ownerId` 重命名为 `tenantId`；`LandingPage` / `Lead` 新增 `tenantId`
+- storage: `LEGACY_TENANT_ID = 'default'`，coerceTenant() 读时把老 KV blob 的 `ownerId` fallback 成 `tenantId`，老数据不需要迁移就能跑
+- storage 新增 scoped reader 选项：`readProducts({tenantId})` / `readLandingPages({tenantId, productId})` / `readLeads({tenantId, projectId})` / `readBrand({tenantId})`
+- server-auth.ts: `requireUserAndTenant()`（SSR redirect），`requireUserApi()`（API 401/409）。两者拿 `lp_user` cookie 解 user → 选 tenant（`lp_tenant` cookie 优先，否则取首个）
+- SSR 7 个业务页全部接 gate；业务 API 18 个 handler 全接（公开的 leads POST / events POST / `/p/[slug]` 不动）
+- 跨 tenant 资源访问统一 404（不 leak 资源是否存在）
+- 编辑器 / 创建落地页时 `tenantId` 从 session 推导，不接 body 输入（防止越权重写）
+- claim 模式（`claimLegacyData`）：第一位用户在 /app 创建首个 tenant 时自动把所有 `tenantId='default'` 的数据划归该 tenant；二位起见空 dashboard
+- header 加 `<HeaderAuthBadge>` 显示当前 tenant + 切换 / 退出
+- 测试 helper: `tests/helpers/user-auth.ts loginAndEnsureTenant(request)` 在 e2e/api 测试前完成 magic-link 登录 + 建 tenant，`seedProject` 自动调用
 
 **S1 决策**（2026-04-21 lock，改动前先翻回这条看为什么）：
 

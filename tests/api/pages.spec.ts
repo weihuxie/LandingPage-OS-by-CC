@@ -3,9 +3,14 @@
  * 对应用例文档:docs/testcases/api-testcases.md API-PAGE 行。
  */
 import { test, expect } from '@playwright/test';
+import { loginAndEnsureTenant } from '../helpers/user-auth';
 import { cleanupProject, seedProject, getPage } from '../helpers/seed';
 
 test.describe('API-PAGE · LandingPage CRUD', () => {
+
+  test.beforeEach(async ({ request }) => {
+    await loginAndEnsureTenant(request);
+  });
   test('API-PAGE-001 · 通过 compat 入口创建 Product+Page 种子', async ({ request }) => {
     // 这条用例本身就是验证 seed 路径。创建后直接断言返回结构。
     const res = await request.post('/api/projects', {

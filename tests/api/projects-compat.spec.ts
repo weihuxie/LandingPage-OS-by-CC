@@ -3,9 +3,14 @@
  * 对应用例文档:docs/testcases/api-testcases.md API-PROJ 行。
  */
 import { test, expect } from '@playwright/test';
+import { loginAndEnsureTenant } from '../helpers/user-auth';
 import { cleanupProject, seedProject, getPage } from '../helpers/seed';
 
 test.describe('API-PROJ · Projects compat', () => {
+
+  test.beforeEach(async ({ request }) => {
+    await loginAndEnsureTenant(request);
+  });
   test('API-PROJ-001 · 列出 compat 项目视图', async ({ request }) => {
     const seeded = await seedProject(request);
     try {
