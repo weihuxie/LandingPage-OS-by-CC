@@ -116,12 +116,46 @@ export async function POST(req: NextRequest) {
         );
       }
       if (e instanceof EmailSendError) {
-        console.error(`[magic-link] Resend send failed for ${email}:`, e);
+        console.error(
+          `[magic-link] Resend send failed for ${email}: category=${e.category} reason=${e.reason}`,
+          e.cause,
+        );
+        // Per-category copy. Body always carries a structured `code` and
+        // `category` so the client can render specific guidance — no more
+        // "请稍后重试" for cases retrying won't fix.
+        const copy: Record<typeof e.category, { message: string; hint?: string }> = {
+          auth: {
+            message: 'Resend API key 无效或已撤销。',
+            hint: '检查 Vercel 环境变量 RESEND_API_KEY 是否正确，必要时去 resend.com 重新生成。',
+          },
+          'unverified-domain': {
+            message: 'Resend 免费版未验证发件域名 —— 只能发件给注册账号自己的邮箱。',
+            hint: '去 resend.com → Domains 验证一个自有域名，然后把 MAGIC_LINK_FROM_EMAIL 设成 noreply@<你的域名>。或者先用 Resend 注册账号那个邮箱登录。',
+          },
+          'invalid-recipient': {
+            message: '该邮箱地址被 Resend 拒绝（格式或风险评分问题）。',
+            hint: '换一个邮箱试试。如果是公司邮箱，让 IT 把 onboarding@resend.dev 加入白名单。',
+          },
+          'rate-limit': {
+            message: '触发 Resend 速率限制，请等 1 分钟后重试。',
+          },
+          network: {
+            message: '网络错误，到达 Resend 之前请求就失败了。',
+            hint: '稍后重试。如果持续失败，检查 Vercel 函数日志看具体原因。',
+          },
+          other: {
+            message: '邮件发送失败。',
+            hint: '原因看 Vercel 函数日志（错误已 console.error 输出）。',
+          },
+        };
+        const c = copy[e.category];
         return NextResponse.json(
           {
             error: 'email-send-failed',
             code: 'EMAIL_SEND_FAILED',
-            message: '邮件发送失败，请稍后重试。',
+            category: e.category,
+            message: c.message,
+            hint: c.hint,
           },
           { status: 502 },
         );

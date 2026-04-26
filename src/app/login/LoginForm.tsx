@@ -2,10 +2,16 @@
 
 import { useState } from 'react';
 
+interface ErrorView {
+  message: string;
+  hint?: string;
+  category?: string;
+}
+
 export default function LoginForm({ returnTo }: { returnTo?: string }) {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ErrorView | null>(null);
   // In dev the server returns devLink; we show it as a one-click
   // shortcut. In prod this stays null — user checks email.
   const [devLink, setDevLink] = useState<string | null>(null);
@@ -24,16 +30,20 @@ export default function LoginForm({ returnTo }: { returnTo?: string }) {
         body: JSON.stringify({ email, returnTo }),
       });
       const body = (await resp.json().catch(() => null)) as
-        | { ok?: boolean; devLink?: string; message?: string }
+        | { ok?: boolean; devLink?: string; message?: string; hint?: string; category?: string }
         | null;
       if (!resp.ok) {
-        setError(body?.message ?? `发送失败（HTTP ${resp.status}）`);
+        setError({
+          message: body?.message ?? `发送失败（HTTP ${resp.status}）`,
+          hint: body?.hint,
+          category: body?.category,
+        });
         return;
       }
       setSent(true);
       if (body?.devLink) setDevLink(body.devLink);
     } catch (err: any) {
-      setError(err?.message ?? '网络错误，请重试');
+      setError({ message: err?.message ?? '网络错误，请重试' });
     } finally {
       setBusy(false);
     }
@@ -88,7 +98,17 @@ export default function LoginForm({ returnTo }: { returnTo?: string }) {
       </label>
       {error && (
         <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
-          {error}
+          <div className="font-medium">{error.message}</div>
+          {error.hint && (
+            <div className="mt-1 text-xs leading-relaxed text-red-700">
+              💡 {error.hint}
+            </div>
+          )}
+          {error.category && (
+            <div className="mt-2 text-[10px] uppercase tracking-wider text-red-500">
+              {error.category}
+            </div>
+          )}
         </div>
       )}
       <button

@@ -31,11 +31,68 @@ export class EmailNotConfiguredError extends Error {
   }
 }
 
+/**
+ * Buckets the `EmailSendError` into a category the route handler can
+ * map to a specific user-facing message. Default 'other' matches the
+ * legacy "稍后重试" copy; the named variants surface actionable hints
+ * ("发件域名未验证 → 去 Resend Dashboard…") without leaking the SDK's
+ * raw message into the UI.
+ */
+export type EmailSendErrorReason =
+  | 'auth'              // 401/403 → API key wrong / revoked
+  | 'unverified-domain' // free-tier sender restriction (only-account-owner-recipient)
+  | 'invalid-recipient' // 422 / "invalid email" from Resend
+  | 'rate-limit'        // 429
+  | 'network'           // SDK threw before getting an HTTP reply
+  | 'other';
+
 export class EmailSendError extends Error {
-  constructor(public reason: string, public cause?: unknown) {
+  constructor(
+    public readonly reason: string,
+    public readonly cause?: unknown,
+    public readonly category: EmailSendErrorReason = 'other',
+  ) {
     super(`Email send failed: ${reason}`);
     this.name = 'EmailSendError';
   }
+}
+
+/**
+ * Best-effort categorization of Resend's responses. Resend's `error`
+ * object carries a `name` field (e.g. 'validation_error',
+ * 'invalid_api_key', 'restricted_api_key', 'rate_limit_exceeded') plus
+ * a free-form `message`. We pattern-match both because the names have
+ * shifted between SDK versions and the messages are more stable for
+ * the specific cases users hit during initial setup.
+ */
+export function categorizeResendError(
+  err: { name?: string; message?: string; statusCode?: number } | null | undefined,
+): EmailSendErrorReason {
+  if (!err) return 'other';
+  const name = (err.name ?? '').toLowerCase();
+  const msg = (err.message ?? '').toLowerCase();
+  const status = err.statusCode ?? 0;
+
+  if (status === 401 || status === 403) return 'auth';
+  if (name.includes('api_key')) return 'auth';
+
+  // Resend free tier: "You can only send emails to your own email
+  // address" (until a domain is verified). The message wording shifts;
+  // catch the most common substrings.
+  if (
+    msg.includes('verify a domain') ||
+    msg.includes('verified domain') ||
+    msg.includes('only send testing emails') ||
+    msg.includes('your own email')
+  ) {
+    return 'unverified-domain';
+  }
+
+  if (status === 422 || msg.includes('invalid') && msg.includes('email')) {
+    return 'invalid-recipient';
+  }
+  if (status === 429 || name.includes('rate_limit')) return 'rate-limit';
+  return 'other';
 }
 
 function getApiKey(): string | null {
@@ -82,12 +139,16 @@ export async function sendMagicLinkEmail(to: string, loginUrl: string): Promise<
       text,
     });
     if (error) {
-      throw new EmailSendError(error.message ?? 'resend returned error', error);
+      throw new EmailSendError(
+        error.message ?? 'resend returned error',
+        error,
+        categorizeResendError(error as any),
+      );
     }
     if (!data?.id) {
       // Defensive: Resend's happy-path response always has `data.id`.
       // If it ever doesn't, that's a contract change we want to notice.
-      throw new EmailSendError('resend response missing data.id');
+      throw new EmailSendError('resend response missing data.id', undefined, 'other');
     }
   } catch (e) {
     if (e instanceof EmailSendError) throw e;
@@ -95,6 +156,7 @@ export async function sendMagicLinkEmail(to: string, loginUrl: string): Promise<
     throw new EmailSendError(
       e instanceof Error ? e.message : String(e),
       e,
+      'network',
     );
   }
 }
