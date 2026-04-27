@@ -24,6 +24,12 @@ import type {
 import { resolveSocialProofLogo } from '@/lib/types';
 import MediaField from './MediaField';
 import UploadButton from './UploadButton';
+import PageFontPicker from './PageFontPicker';
+
+type PageFontControl = {
+  value: string | null;
+  onChange: (presetId: string | null) => void;
+};
 
 type Props = {
   module: PageModule;
@@ -34,6 +40,12 @@ type Props = {
   // click and then see a 503 banner. Undefined = no gating info from
   // parent (treat as "allow" — backward compat).
   regenerateDisabledReason?: string | null;
+  /** Page-level font picker control. Plumbed into HeroEditor (renders
+   *  right under 标题字号) so the user can debug typography next to
+   *  the heading-size selector. Other module editors don't surface
+   *  this — Settings modal still has the same control as a fallback
+   *  entry point for any module. */
+  pageFont?: PageFontControl;
 };
 
 export default function ModuleEditor({
@@ -41,6 +53,7 @@ export default function ModuleEditor({
   onChange,
   onRegenerate,
   regenerateDisabledReason,
+  pageFont,
 }: Props) {
   const t = useTranslations();
 
@@ -67,7 +80,13 @@ export default function ModuleEditor({
       </button>
 
       <div className="space-y-3">
-        {module.type === 'hero' && <HeroEditor c={module.content as HeroContent} setC={setContent} />}
+        {module.type === 'hero' && (
+          <HeroEditor
+            c={module.content as HeroContent}
+            setC={setContent}
+            pageFont={pageFont}
+          />
+        )}
         {module.type === 'productShowcase' && (
           <ProductShowcaseEditor c={module.content as ProductShowcaseContent} setC={setContent} />
         )}
@@ -200,7 +219,15 @@ const BENEFITS_LAYOUTS: { id: import('@/lib/types').BenefitsLayout; name: string
   { id: 'compact', name: '紧凑列表', desc: '序号 + 标题 + 一行描述。信息密度高，适合 CN 市场。' },
 ];
 
-function HeroEditor({ c, setC }: { c: HeroContent; setC: (c: HeroContent) => void }) {
+function HeroEditor({
+  c,
+  setC,
+  pageFont,
+}: {
+  c: HeroContent;
+  setC: (c: HeroContent) => void;
+  pageFont?: PageFontControl;
+}) {
   return (
     <>
       <LayoutPicker
@@ -213,6 +240,15 @@ function HeroEditor({ c, setC }: { c: HeroContent; setC: (c: HeroContent) => voi
         value={c.fontScale ?? 'md'}
         onChange={(v) => setC({ ...c, fontScale: v })}
       />
+      {/* Per UX request: page-level font picker sits right under 标题字号
+          so the user can debug typography while editing the Hero. Page-
+          scoped not Hero-scoped — same control as Settings modal,
+          shared via page.fontPresetId. Only renders if parent provides
+          pageFont prop (i.e. when this Hero is inside a real LandingPage
+          context, not e.g. a fixture preview). */}
+      {pageFont && (
+        <PageFontPicker value={pageFont.value} onChange={pageFont.onChange} />
+      )}
       <Field label="Eyebrow" value={c.eyebrow} onChange={(v) => setC({ ...c, eyebrow: v })} />
       <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline />
       <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} multiline />
