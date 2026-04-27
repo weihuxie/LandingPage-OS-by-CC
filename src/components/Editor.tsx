@@ -1427,24 +1427,16 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               }}
             />
 
-            {/* Toolbar — 4 primary buttons + overflow menu.
-                  - 导出 HTML   (always, no state — pure export)
+            {/* Toolbar — 2 primary buttons + overflow menu (2026-04 第二轮缩编).
                   - 查看 ↗     (smart: Vercel URL if deployed else /p/slug)
                   - 已发布 / 发布 (atomic — one click = flag + deploy)
-                  - ⋮         (overflow: 设置 / 线索 / 复制链接 / 发布模式 / 重新部署)
-                Publish-mode (single vs A/B split) lives in ⋮ now — it's a
-                per-project setting users flip once, not a per-action toggle,
-                so parking it next to the publish button pushed everything
-                else into the flex-wrap zone and squished "已发布 ✓" into a
-                three-line vertical stack on 1400px screens. */}
-            <a
-              className="btn btn-secondary whitespace-nowrap flex-shrink-0 px-3 py-1.5 text-xs"
-              href={`/api/projects/${project.id}/export`}
-              download={`${project.slug}.html`}
-              title="下载当前页面的静态 HTML 文件"
-            >
-              导出 HTML
-            </a>
+                  - ⋮         (overflow: 设置 / 线索 / 复制链接 / 导出 HTML / 发布模式 / 重新部署)
+                之前 4 个按钮里"导出 HTML"占着最显眼的左位但实际几乎没人点，
+                视觉权重稀释了"已发布"作为蓝色 CTA 的存在感。改成 2 个按钮后：
+                查看（高频读取）在左，已发布（CTA）在右，导出 HTML 收进 ⋮ 跟
+                "复制 Vercel/预览链接" 同组（都是"拿一份页面"的低频读取动作）。
+                Publish-mode (single vs A/B split) 一直在 ⋮ —— 项目级设置用
+                户 flip 一次就不动，不该和 publish 按钮等权竞争视觉。 */}
             <a
               className="btn btn-secondary whitespace-nowrap flex-shrink-0 px-3 py-1.5 text-xs"
               href={viewUrl}
@@ -1532,6 +1524,19 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
                   >
                     {copied && copiedKind === 'preview' ? '已复制预览链接 ✓' : '复制预览链接'}
                   </button>
+                  {/* 导出 HTML — 从工具栏移到这里（2026-04），跟"复制链接"
+                      同组：都是"把这一页带走"的低频读取动作。<a download>
+                      触发浏览器原生下载（注意 next/link 不支持 download 属
+                      性，必须用原生 <a>）。 */}
+                  <a
+                    className="block w-full px-3 py-2 text-left text-xs text-ink-700 hover:bg-ink-50"
+                    href={`/api/projects/${project.id}/export`}
+                    download={`${project.slug}.html`}
+                    onClick={() => setMenuOpen(false)}
+                    title="下载当前页面的静态 HTML 文件"
+                  >
+                    ⬇ 导出为 HTML 文件
+                  </a>
                   <div className="my-1 border-t border-ink-100" />
                   {/* 发布模式 — was an inline <select> in the toolbar next
                       to the publish button; that put a decision users rarely
