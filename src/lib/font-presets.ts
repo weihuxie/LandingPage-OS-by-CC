@@ -40,17 +40,20 @@ export interface FontPreset {
   fontStack: string;
 }
 
-// Common Latin + CJK fallbacks composed into per-preset stacks. Kept as
-// constants so the presets don't repeat the same long fallback string
-// 24 times (and so changes propagate uniformly).
+// Common Latin + CJK fallbacks composed into per-preset stacks.
 const LATIN_TAIL = 'ui-sans-serif, system-ui, sans-serif';
 const SERIF_TAIL = 'Georgia, "Iowan Old Style", serif';
-const CJK_FALLBACK = 'var(--font-noto-sans-sc), var(--font-noto-sans-tc), var(--font-noto-sans-jp)';
-const CJK_SERIF_FALLBACK =
-  'var(--font-noto-serif-sc), var(--font-noto-serif-tc), var(--font-noto-serif-jp)';
+const CJK_FALLBACK =
+  'var(--font-noto-sans-sc), var(--font-noto-sans-tc), var(--font-noto-sans-jp)';
 
+// 4 locales × 5 presets = 20 picks total (plus a "默认" tile in the UI
+// = 6 visible per locale). Curated for B2B SaaS landing pages: each
+// locale gets one "modern default", one "friendly", one "lively /
+// playful", and a couple of locale-flavored alternatives. No "serious /
+// editorial" — those killed the energy of LP first impressions when we
+// shipped them, and we have zero use cases that needed them.
 export const FONT_PRESETS_BY_LOCALE: Record<LocaleCode, FontPreset[]> = {
-  // ---------- 简体中文 -----------------------------------------------
+  // ---------- 简体中文 (5 picks) -------------------------------------
   'zh-CN': [
     {
       id: 'modern-cn',
@@ -65,32 +68,26 @@ export const FONT_PRESETS_BY_LOCALE: Record<LocaleCode, FontPreset[]> = {
       fontStack: `var(--font-manrope), var(--font-noto-sans-sc), ${CJK_FALLBACK}, ${LATIN_TAIL}`,
     },
     {
-      id: 'editorial',
-      label: '编辑严肃',
-      hint: 'Lora + Noto Serif SC · 衬线，咨询 / 媒体',
-      fontStack: `var(--font-lora), var(--font-noto-serif-sc), ${CJK_SERIF_FALLBACK}, ${SERIF_TAIL}`,
+      id: 'cn-lively',
+      label: '活泼',
+      hint: 'ZCOOL QingKe HuangYou · 复古展示字，热情奔放',
+      fontStack: `var(--font-inter), var(--font-zcool-qingke-huangyou), var(--font-noto-sans-sc), ${CJK_FALLBACK}, ${LATIN_TAIL}`,
     },
     {
       id: 'cn-zcool-xiaowei',
-      label: '站酷小薇',
+      label: '文艺',
       hint: 'ZCOOL XiaoWei · 中文编辑展示字',
       fontStack: `var(--font-inter), var(--font-zcool-xiaowei), var(--font-noto-sans-sc), ${CJK_FALLBACK}, ${LATIN_TAIL}`,
     },
     {
-      id: 'cn-zcool-qingke',
-      label: '站酷黄油',
-      hint: 'ZCOOL QingKe HuangYou · 中文复古展示字',
-      fontStack: `var(--font-inter), var(--font-zcool-qingke-huangyou), var(--font-noto-sans-sc), ${CJK_FALLBACK}, ${LATIN_TAIL}`,
-    },
-    {
       id: 'cn-handwriting',
-      label: '长仁手写',
+      label: '手写',
       hint: 'Long Cang · 手写感，品牌更有人情味',
       fontStack: `var(--font-inter), var(--font-long-cang), var(--font-noto-sans-sc), ${CJK_FALLBACK}, ${LATIN_TAIL}`,
     },
   ],
 
-  // ---------- 繁體中文 -----------------------------------------------
+  // ---------- 繁體中文 (5 picks) -------------------------------------
   'zh-TW': [
     {
       id: 'modern-tw',
@@ -105,32 +102,26 @@ export const FONT_PRESETS_BY_LOCALE: Record<LocaleCode, FontPreset[]> = {
       fontStack: `var(--font-manrope), var(--font-noto-sans-tc), ${CJK_FALLBACK}, ${LATIN_TAIL}`,
     },
     {
-      id: 'tw-editorial',
-      label: '編輯嚴肅',
-      hint: 'Lora + Noto Serif TC · 襯線，諮詢 / 媒體',
-      fontStack: `var(--font-lora), var(--font-noto-serif-tc), ${CJK_SERIF_FALLBACK}, ${SERIF_TAIL}`,
+      id: 'tw-lively',
+      label: '活潑',
+      hint: 'Plus Jakarta Sans + Noto Sans TC · 跳動圓潤',
+      fontStack: `var(--font-plus-jakarta-sans), var(--font-noto-sans-tc), ${CJK_FALLBACK}, ${LATIN_TAIL}`,
     },
     {
       id: 'tw-tech',
-      label: '幾何科技',
+      label: '幾何',
       hint: 'Space Grotesk + Noto Sans TC · 科技感',
       fontStack: `var(--font-space-grotesk), var(--font-noto-sans-tc), ${CJK_FALLBACK}, ${LATIN_TAIL}`,
     },
     {
       id: 'tw-display-serif',
       label: '優雅展示',
-      hint: 'Playfair Display + Noto Serif TC · 高端展示衬线',
-      fontStack: `var(--font-playfair-display), var(--font-noto-serif-tc), ${CJK_SERIF_FALLBACK}, ${SERIF_TAIL}`,
-    },
-    {
-      id: 'tw-jakarta',
-      label: '雅加達',
-      hint: 'Plus Jakarta Sans + Noto Sans TC · 現代另選',
-      fontStack: `var(--font-plus-jakarta-sans), var(--font-noto-sans-tc), ${CJK_FALLBACK}, ${LATIN_TAIL}`,
+      hint: 'Playfair Display + Noto Serif TC · 雜誌時尚展示',
+      fontStack: `var(--font-playfair-display), var(--font-noto-serif-tc), ${SERIF_TAIL}`,
     },
   ],
 
-  // ---------- 日本語 -------------------------------------------------
+  // ---------- 日本語 (5 picks) ---------------------------------------
   ja: [
     {
       id: 'clean-jp',
@@ -151,16 +142,10 @@ export const FONT_PRESETS_BY_LOCALE: Record<LocaleCode, FontPreset[]> = {
       fontStack: `var(--font-manrope), var(--font-m-plus-1p), var(--font-noto-sans-jp), ${CJK_FALLBACK}, ${LATIN_TAIL}`,
     },
     {
-      id: 'jp-editorial',
-      label: '编辑严肃',
-      hint: 'Lora + Noto Serif JP · 杂志感',
-      fontStack: `var(--font-lora), var(--font-noto-serif-jp), ${CJK_SERIF_FALLBACK}, ${SERIF_TAIL}`,
-    },
-    {
-      id: 'jp-mincho',
-      label: '文学風',
-      hint: 'Lora + Shippori Mincho · 文学/出版感明朝体',
-      fontStack: `var(--font-lora), var(--font-shippori-mincho), ${CJK_SERIF_FALLBACK}, ${SERIF_TAIL}`,
+      id: 'jp-lively',
+      label: '活泼',
+      hint: 'Inter + RocknRoll One · 蹦跳手感，亲切活泼',
+      fontStack: `var(--font-inter), var(--font-rocknroll-one), var(--font-noto-sans-jp), ${CJK_FALLBACK}, ${LATIN_TAIL}`,
     },
     {
       id: 'jp-ud',
@@ -170,12 +155,12 @@ export const FONT_PRESETS_BY_LOCALE: Record<LocaleCode, FontPreset[]> = {
     },
   ],
 
-  // ---------- English -----------------------------------------------
+  // ---------- English (5 picks) -------------------------------------
   en: [
     {
       id: 'en-inter',
-      label: 'Modern Default',
-      hint: 'Inter · the workhorse modern sans',
+      label: 'Modern',
+      hint: 'Inter · workhorse modern sans',
       fontStack: `var(--font-inter), ${LATIN_TAIL}`,
     },
     {
@@ -185,28 +170,22 @@ export const FONT_PRESETS_BY_LOCALE: Record<LocaleCode, FontPreset[]> = {
       fontStack: `var(--font-manrope), ${LATIN_TAIL}`,
     },
     {
+      id: 'en-lively',
+      label: 'Lively',
+      hint: 'DM Sans · geometric & friendly, energetic',
+      fontStack: `var(--font-dm-sans), ${LATIN_TAIL}`,
+    },
+    {
       id: 'en-jakarta',
       label: 'Plus Jakarta',
       hint: 'Plus Jakarta Sans · modern alt',
       fontStack: `var(--font-plus-jakarta-sans), ${LATIN_TAIL}`,
     },
     {
-      id: 'en-dm',
-      label: 'DM Sans',
-      hint: 'DM Sans · geometric & friendly',
-      fontStack: `var(--font-dm-sans), ${LATIN_TAIL}`,
-    },
-    {
-      id: 'en-lora',
-      label: 'Editorial',
-      hint: 'Lora · serif editorial',
-      fontStack: `var(--font-lora), ${SERIF_TAIL}`,
-    },
-    {
-      id: 'en-space',
-      label: 'Space Grotesk',
-      hint: 'Space Grotesk · geometric / tech',
-      fontStack: `var(--font-space-grotesk), ${LATIN_TAIL}`,
+      id: 'en-display',
+      label: 'Display',
+      hint: 'Playfair Display · serif glamour & headlines',
+      fontStack: `var(--font-playfair-display), ${SERIF_TAIL}`,
     },
   ],
 };
@@ -246,7 +225,7 @@ export function defaultFontPresetForMarket(market: MarketCode): FontPresetId {
       return 'modern-tw';
     case 'US':
     case 'EU':
-      return 'en-inter';
+      return 'en-inter'; // Modern preset id in en locale
     case 'CN':
     case 'GLOBAL':
     default:
