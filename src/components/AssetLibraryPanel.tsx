@@ -355,13 +355,22 @@ function LogoEntryCard({
   onMoveUp: () => void;
   onMoveDown: () => void;
 }) {
-  const [expanded, setExpanded] = useState(!entry.media.url); // auto-expand new empty entries
+  // 2026-04 redesign: every row has IDENTICAL shape regardless of empty/
+  // filled state. Auto-expand-on-empty was breaking visual consistency
+  // (first row collapsed, new rows expanded — looked like different
+  // widgets). Now URL is ALWAYS the primary visible widget; name is
+  // secondary; kind / alt / locale-variants fold under "高级" for the
+  // 1% who need video / per-locale URLs.
+  const [advOpen, setAdvOpen] = useState(false);
   const showIn = entry.showIn ?? [];
   const allLocales = showIn.length === 0;
+  const localizedCount = entry.media.localizedUrls
+    ? Object.keys(entry.media.localizedUrls).length
+    : 0;
 
   const toggleLocale = (loc: PageLocale) => {
     if (allLocales) {
-      onChange({ showIn: [loc] }); // 从"全部"切换到只这一个
+      onChange({ showIn: [loc] });
       return;
     }
     if (showIn.includes(loc)) {
@@ -373,6 +382,35 @@ function LogoEntryCard({
   };
   const setAllLocales = () => onChange({ showIn: undefined });
 
+  // Auto-detect kind from URL extension on paste — saves a trip to "高级"
+  // for the common video / gif case. Doesn't override an explicit user
+  // kind choice (only fires while still in the default 'image' kind).
+  const setUrl = (url: string) => {
+    let nextKind = entry.media.kind;
+    if (entry.media.kind === 'image') {
+      const lower = url.toLowerCase();
+      if (/\.(mp4|webm|mov|m4v)(\?|$)/.test(lower)) nextKind = 'video';
+      else if (/\.gif(\?|$)/.test(lower)) nextKind = 'gif';
+    }
+    onChange({ media: { ...entry.media, url, kind: nextKind } });
+  };
+  const setKind = (kind: 'image' | 'video' | 'gif' | 'logo') =>
+    onChange({ media: { ...entry.media, kind } });
+  const setAlt = (alt: string) =>
+    onChange({ media: { ...entry.media, alt: alt || undefined } });
+  const setLocalizedUrl = (loc: PageLocale, url: string) => {
+    const cur = entry.media.localizedUrls ?? {};
+    const next = { ...cur };
+    if (url.trim()) next[loc] = url.trim();
+    else delete next[loc];
+    onChange({
+      media: {
+        ...entry.media,
+        localizedUrls: Object.keys(next).length ? next : undefined,
+      },
+    });
+  };
+
   return (
     <div className="rounded-xl border border-ink-100 p-3">
       <div className="flex items-start gap-3">
@@ -380,68 +418,128 @@ function LogoEntryCard({
         <Thumbnail media={entry.media} />
 
         <div className="min-w-0 flex-1 space-y-2">
-          {/* Label row */}
+          {/* PRIMARY · URL input — always visible, this is the main action. */}
           <input
             className="input w-full text-xs"
-            placeholder="名称（如：阿里巴巴）— 用作 alt 文案 + 列表识别"
-            value={entry.label ?? ''}
-            onChange={(e) => onChange({ label: e.target.value || undefined })}
+            placeholder="https://example.com/logo.png  (粘贴图片 / 视频 / GIF 链接)"
+            value={entry.media.url}
+            onChange={(e) => setUrl(e.target.value)}
           />
 
-          {/* showIn chips — 全部 + 4 locales, multi-toggle */}
-          <div className="flex flex-wrap items-center gap-1 text-[11px]">
-            <span className="text-ink-500">适用语言：</span>
-            <button
-              type="button"
-              onClick={setAllLocales}
-              className={`pill px-2 py-0.5 ${
-                allLocales
-                  ? 'border-brand-300 bg-brand-50 text-brand-700'
-                  : 'border-ink-200 text-ink-500'
-              }`}
-            >
-              全部
-            </button>
-            {PAGE_LOCALES.map((loc) => {
-              const active = !allLocales && showIn.includes(loc);
-              return (
-                <button
-                  key={loc}
-                  type="button"
-                  onClick={() => toggleLocale(loc)}
-                  className={`pill px-2 py-0.5 ${
-                    active
-                      ? 'border-brand-300 bg-brand-50 text-brand-700'
-                      : 'border-ink-200 text-ink-500'
-                  }`}
-                  title={nativeLabel(loc)}
-                >
-                  {loc}
-                </button>
-              );
-            })}
+          {/* SECONDARY · name + locale chips on a single compact row */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px]">
+            <input
+              className="input min-w-[140px] flex-1 px-2 py-1 text-[11px]"
+              placeholder="名称 (可选, 如 阿里巴巴)"
+              value={entry.label ?? ''}
+              onChange={(e) => onChange({ label: e.target.value || undefined })}
+            />
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="text-ink-500">适用：</span>
+              <button
+                type="button"
+                onClick={setAllLocales}
+                className={`pill px-2 py-0.5 ${
+                  allLocales
+                    ? 'border-brand-300 bg-brand-50 text-brand-700'
+                    : 'border-ink-200 text-ink-500'
+                }`}
+              >
+                全部
+              </button>
+              {PAGE_LOCALES.map((loc) => {
+                const active = !allLocales && showIn.includes(loc);
+                return (
+                  <button
+                    key={loc}
+                    type="button"
+                    onClick={() => toggleLocale(loc)}
+                    className={`pill px-2 py-0.5 ${
+                      active
+                        ? 'border-brand-300 bg-brand-50 text-brand-700'
+                        : 'border-ink-200 text-ink-500'
+                    }`}
+                    title={nativeLabel(loc)}
+                  >
+                    {loc}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* MediaField — collapsed by default to keep card compact;
-              expand reveals URL / kind / alt / per-locale URLs. */}
+          {/* ADVANCED · kind switch / alt / per-locale URLs.
+              Folded by default — most logo entries (image with one URL)
+              never need to open it. Badges next to the toggle hint that
+              the entry has a non-default kind / alt filled / locale
+              variants, so users don't have to expand to remember. */}
           <button
             type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="text-[11px] text-ink-500 hover:text-brand-600"
+            onClick={() => setAdvOpen((v) => !v)}
+            className="flex items-center gap-1.5 text-[11px] text-ink-500 hover:text-brand-600"
           >
-            {expanded ? '收起媒体设置 ▴' : '展开媒体设置 (URL / 类型 / 多语言变体) ▾'}
+            <span>{advOpen ? '收起 ▴' : '高级 ▾'}</span>
+            {!advOpen && entry.media.kind !== 'image' && (
+              <span className="rounded bg-ink-100 px-1 py-0 text-[10px] text-ink-600">
+                {entry.media.kind}
+              </span>
+            )}
+            {!advOpen && localizedCount > 0 && (
+              <span className="rounded bg-brand-50 px-1 py-0 text-[10px] text-brand-700">
+                {localizedCount} locale 变体
+              </span>
+            )}
+            {!advOpen && entry.media.alt && (
+              <span className="text-[10px] text-ink-400">· alt 已填</span>
+            )}
           </button>
-          {expanded && (
-            <div className="rounded-lg border border-ink-100 bg-ink-50/30 p-2">
-              <MediaField
-                value={entry.media}
-                onChange={(m) =>
-                  onChange({
-                    media: m ?? { id: entry.media.id, kind: 'image', url: '' },
-                  })
-                }
-                defaultKind="image"
+          {advOpen && (
+            <div className="space-y-2 rounded-lg border border-ink-100 bg-ink-50/30 p-2">
+              {/* Kind switcher */}
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="text-ink-500">类型：</span>
+                {(['image', 'video', 'gif', 'logo'] as const).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setKind(k)}
+                    className={`pill px-2 py-0.5 ${
+                      entry.media.kind === k
+                        ? 'border-brand-300 bg-brand-50 text-brand-700'
+                        : 'border-ink-200 text-ink-500'
+                    }`}
+                  >
+                    {k}
+                  </button>
+                ))}
+                <span className="text-[10px] text-ink-400">
+                  （粘贴 .mp4 / .gif 链接会自动识别）
+                </span>
+              </div>
+              {/* Alt text */}
+              <input
+                className="input w-full px-2 py-1 text-[11px]"
+                placeholder='Alt 文案（无障碍 / SEO，留空时回退到上方"名称"）'
+                value={entry.media.alt ?? ''}
+                onChange={(e) => setAlt(e.target.value)}
               />
+              {/* localizedUrls — 同一 logo 多语言版本 */}
+              <div>
+                <div className="mb-1 text-[11px] text-ink-500">
+                  按语言不同 URL（同一 logo 有多语言版才填，如 腾讯/Tencent）
+                </div>
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  {PAGE_LOCALES.map((loc) => (
+                    <input
+                      key={loc}
+                      className="input px-2 py-1 text-[11px]"
+                      placeholder={`${loc} URL（留空 = 用上方默认 URL）`}
+                      value={entry.media.localizedUrls?.[loc] ?? ''}
+                      onChange={(e) => setLocalizedUrl(loc, e.target.value)}
+                    />
+                  ))}
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -492,8 +590,30 @@ function Thumbnail({ media }: { media: MediaRef }) {
   const url = media.url;
   if (!url) {
     return (
-      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-dashed border-ink-200 text-[10px] text-ink-400">
-        空
+      <div
+        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-dashed border-ink-200 text-ink-300"
+        title="粘贴图片 URL 后会自动显示缩略图"
+        aria-hidden
+      >
+        <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+          <rect
+            x="3"
+            y="3"
+            width="18"
+            height="18"
+            rx="2"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          />
+          <circle cx="9" cy="10" r="1.5" fill="currentColor" />
+          <path
+            d="M3 17l5-5 4 4 3-3 6 6"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </div>
     );
   }
