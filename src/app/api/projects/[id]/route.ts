@@ -75,6 +75,11 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
   }
 }
 
+// Per-PATCH LLM trace state. Strategy regen + module regen share the
+// same handler, but at most one fires per call — so a single trace slot
+// is enough.
+type TraceCapture = { primary: string; used: string; hops: any[]; scenario: 'strategy' | 'copy' };
+
 async function patchImpl(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireUserApi();
   if ('response' in auth) return auth.response;
@@ -136,6 +141,17 @@ async function patchImpl(req: NextRequest, { params }: { params: { id: string } 
     uploadedFileNames: [],
   };
 
+  // captured needs to live OUTSIDE the try block because the response
+  // builder (after the catch) reads it. Inside-try declaration would be
+  // out-of-scope for that read.
+  let captured: TraceCapture | null = null;
+  const captureStrategy = (t: { primary: string; used: string; hops: any[] }) => {
+    captured = { ...t, scenario: 'strategy' };
+  };
+  const captureCopy = (t: { primary: string; used: string; hops: any[] }) => {
+    captured = { ...t, scenario: 'copy' };
+  };
+
   // All LLM-touching branches share this try/catch: any of them can throw
   // LLMRequiredError (missing key) or LLMCallError (API / parse / schema).
   // Before this was added, a regenerate on the 日本語 tab with no API key
@@ -144,14 +160,14 @@ async function patchImpl(req: NextRequest, { params }: { params: { id: string } 
   // with a structured body and the editor shows a visible error banner.
   try {
     if (body.editStrategy) page.strategy = body.editStrategy;
-    if (body.regenerateStrategyAll) page.strategy = await generateStrategy(inputs);
+    if (body.regenerateStrategyAll) page.strategy = await generateStrategy(inputs, undefined, captureStrategy);
     else if (body.regenerateStrategyBlock) {
-      const fresh = await generateStrategy(inputs);
+      const fresh = await generateStrategy(inputs, undefined, captureStrategy);
       const key = body.regenerateStrategyBlock as StrategyBlock;
       page.strategy = { ...page.strategy, [key]: fresh[key] };
     } else if (body.regenerateStrategyLine) {
       const { block, index } = body.regenerateStrategyLine as { block: StrategyBlock; index: number };
-      const fresh = await generateStrategy(inputs);
+      const fresh = await generateStrategy(inputs, undefined, captureStrategy);
       const next = [...page.strategy[block]];
       if (fresh[block][index] !== undefined) next[index] = fresh[block][index];
       page.strategy = { ...page.strategy, [block]: next };
@@ -193,6 +209,7 @@ async function patchImpl(req: NextRequest, { params }: { params: { id: string } 
           page.strategy,
           targetLocale,
           v,
+          captureCopy,
         );
         page.variants[v][targetLocale] = mods;
         if (body.newTone) page.tone = tone;
@@ -241,6 +258,20 @@ async function patchImpl(req: NextRequest, { params }: { params: { id: string } 
   return NextResponse.json({
     project: projectViewFromV2(page, product),
     page,
+    // Trace surfacing — frontend reads this to flash the floating
+    // "which provider answered" toast. Only present when an LLM call
+    // actually happened in this PATCH (strategy / copy regen).
+    ...(captured
+      ? {
+          llm: {
+            scenario: (captured as TraceCapture).scenario,
+            primary: (captured as TraceCapture).primary,
+            used: (captured as TraceCapture).used,
+            fellBack: (captured as TraceCapture).primary !== (captured as TraceCapture).used,
+            hops: (captured as TraceCapture).hops?.length ? (captured as TraceCapture).hops : undefined,
+          },
+        }
+      : {}),
   });
 }
 

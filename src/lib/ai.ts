@@ -332,11 +332,12 @@ const marketStrategyText = (market: MarketCode, locale: LocaleCode): string[] =>
 export async function generateStrategy(
   inputs: ProductInputs,
   context?: ExtractedContext,
+  onTrace?: (t: { primary: string; used: string; hops: any[] }) => void,
 ): Promise<StrategySummary> {
   // Provider routing lives in llm-provider.ts. JP defaults to Claude for
   // quality, everything else defaults to DeepSeek for cost; see
   // CLAUDE.md §2.1 for the cost/quality tradeoff rationale.
-  return generateStrategyViaProvider(inputs, context);
+  return generateStrategyViaProvider(inputs, context, onTrace as any);
 }
 
 /**
@@ -1087,6 +1088,7 @@ export async function regenerateModule(
   strategy?: StrategySummary,
   locale?: LocaleCode,
   variant?: NarrativeVariant,
+  onTrace?: (t: { primary: string; used: string; hops: any[] }) => void,
 ): Promise<PageModule> {
   if (strategy && locale) {
     const live = await regenerateModuleViaProvider(
@@ -1096,6 +1098,7 @@ export async function regenerateModule(
       tone,
       locale,
       variant,
+      onTrace as any,
     );
     // live === null ONLY when the module type is outside Claude's handled
     // set (form / testimonial / etc.). Actual failures throw and propagate

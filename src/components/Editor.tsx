@@ -594,6 +594,11 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     // live value, not the stale closure from when this function was called.
     if (editingLocaleRef.current !== requestLocale) return;
 
+    // Surface LLM trace toast (which provider answered, fellBack flag).
+    // /api/projects/[id] PATCH attaches `llm` whenever the call hit a
+    // strategy or copy regen branch.
+    dispatchLLMTrace(data?.llm);
+
     if (data.page) {
       const v = project.activeVariant ?? 'A';
       const localeMods = data.page.variants?.[v]?.[requestLocale] ?? [];

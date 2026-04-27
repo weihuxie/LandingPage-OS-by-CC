@@ -190,9 +190,15 @@ export async function describeRouting(): Promise<{
 export async function generateStrategyViaProvider(
   inputs: ProductInputs,
   context?: ExtractedContext,
+  // Optional trace callback — receives the `{primary, used, hops}` outcome
+  // so the API route can attach it to the response body without
+  // refactoring the existing call signature. Caller passes `(t) =>
+  // tracesOut.push(t)` and reads tracesOut after; the helper stays
+  // back-compat for paths that don't care.
+  onTrace?: (t: { primary: LLMProvider; used: LLMProvider; hops: any[] }) => void,
 ): Promise<StrategySummary> {
   const primary = await providerFor(inputs.locale, 'strategy');
-  const { result } = await executeWithFallback(
+  const outcome = await executeWithFallback(
     'strategy',
     primary,
     async (provider) => {
@@ -209,7 +215,8 @@ export async function generateStrategyViaProvider(
       );
     },
   );
-  return result;
+  if (onTrace) onTrace({ primary, used: outcome.usedProvider, hops: outcome.hops });
+  return outcome.result;
 }
 
 /**
@@ -240,9 +247,10 @@ export async function regenerateModuleViaProvider(
   tone: ToneKey,
   locale: PageLocale,
   variant?: NarrativeVariant,
+  onTrace?: (t: { primary: LLMProvider; used: LLMProvider; hops: any[] }) => void,
 ): Promise<Partial<ClaudeModuleContent> | null> {
   const primary = await providerFor(locale, 'copy');
-  const { result } = await executeWithFallback(
+  const outcome = await executeWithFallback(
     'copy',
     primary,
     async (provider) => {
@@ -266,5 +274,6 @@ export async function regenerateModuleViaProvider(
       );
     },
   );
-  return result;
+  if (onTrace) onTrace({ primary, used: outcome.usedProvider, hops: outcome.hops });
+  return outcome.result;
 }
