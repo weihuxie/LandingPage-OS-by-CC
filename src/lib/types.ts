@@ -424,11 +424,60 @@ export interface Lead {
 
 // --- Trust Asset Library (PRD §4.2) -----------------------------------
 
+/**
+ * A single logo / media entry in the brand library — one row in the
+ * "企业品牌 → LOGO" list (or its press / cert siblings).
+ *
+ * Why this exists (vs the old `string[]` shape):
+ *  - **Multi-format**: `media` is a MediaRef so the entry can be a
+ *    static image, animated GIF, or a video — all from one type. UI
+ *    re-uses the existing <MediaField /> component.
+ *  - **Per-locale targeting**: `showIn` is a locale allowlist, empty/
+ *    undefined = "all locales". Solves "阿里 logo 只用在 zh-CN 页面，
+ *    LINE 只在 ja，Microsoft 哪都用" without forcing users to maintain
+ *    parallel asset libraries per locale.
+ *  - **Future-proof**: same shape can host press / cert entries — single
+ *    UI component, single migration path.
+ *
+ * Locale variants vs locale targeting (don't confuse):
+ *  - `showIn` = "this entry appears in pages of these locales" (audience)
+ *  - `media.localizedUrls` = "the same entry has different image URLs
+ *    per locale" (e.g. 腾讯 logo 中文版 vs Tencent 英文版)
+ *  - Both can compose: a logo entry can be ja-only AND have a JP-specific
+ *    URL, though typically one or the other is enough.
+ */
+export interface LogoEntry {
+  id: string;
+  media: MediaRef;
+  /** Optional human-readable label — shown as row title in the editor and
+   *  used as alt-text fallback in renderers when the asset is an image. */
+  label?: string;
+  /** Locale allowlist. Empty / undefined = applies to all locales. */
+  showIn?: PageLocale[];
+}
+
 export interface BrandAsset {
   id: string;
-  logos: string[]; // data URLs or remote URLs
+  /**
+   * 2026-04: migrated from `string[]` to `LogoEntry[]`. Storage layer
+   * coerces legacy URL-only entries on read so old KV blobs keep working.
+   */
+  logos: LogoEntry[];
   primaryColor: string;
+  /**
+   * 2026-04: deprecated from the UI but kept in the schema for back-compat
+   * reads. Most style presets compute their own secondary tone from
+   * primary; explicit override was confusing 99% of users. Renderers still
+   * honor it when present.
+   */
   secondaryColor?: string;
+  /**
+   * 2026-04: deprecated from the UI for the same reason — users were
+   * being asked to type CSS font-family strings, which is dev-tier UX.
+   * Page-level fontPresetId via `<PageFontPicker />` is the preferred
+   * mechanism. Field kept for back-compat reads (font-presets.ts fallback
+   * chain still references it as layer 2 of 4).
+   */
   fontStack?: string;
   guidelineUrl?: string;
   notes?: string;
@@ -486,6 +535,13 @@ export interface PressAsset {
   quote?: string;
   url: string;
   publishedAt?: string;
+  /**
+   * Optional media — supports image (outlet logo / article screenshot),
+   * GIF, or video (CCTV / Bloomberg / 财经 video clip). When omitted,
+   * renderers fall back to text-only (outlet + headline + quote).
+   * Added 2026-04 alongside the LogoEntry brand-library refactor.
+   */
+  media?: MediaRef;
 }
 
 export interface AssetLibrary {

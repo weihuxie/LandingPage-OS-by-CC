@@ -21,6 +21,7 @@ import type {
   PageLocale,
 } from './types';
 import { migrateProjectToV2, projectViewFromV2 } from './migrate-v2';
+import { coerceAssetsShape } from './asset-shape';
 import { StorageRequiredError } from './errors';
 
 /**
@@ -417,12 +418,17 @@ export async function appendLead(lead: Lead): Promise<void> {
 // --- Assets ------------------------------------------------------------
 
 export async function readAssets(): Promise<AssetLibrary> {
-  return (await readRaw<AssetLibrary>(KEY_ASSETS, DEFAULT_ASSETS)) ?? DEFAULT_ASSETS;
+  const raw = (await readRaw<AssetLibrary>(KEY_ASSETS, DEFAULT_ASSETS)) ?? DEFAULT_ASSETS;
+  return coerceAssetsShape(raw);
 }
 
 export async function writeAssets(lib: AssetLibrary): Promise<void> {
   await writeRaw(KEY_ASSETS, lib);
 }
+
+// `coerceAssetsShape` lives in src/lib/asset-shape.ts so its pure
+// coercion logic is testable without spinning up KV / fs storage. See
+// that file for migration rules.
 
 // --- Events (analytics) ------------------------------------------------
 

@@ -20,6 +20,7 @@ import type {
   VideoEmbedContent,
   MediaRef,
   AssetLibrary,
+  PageLocale,
 } from '@/lib/types';
 import { resolveSocialProofLogo } from '@/lib/types';
 import MediaField from './MediaField';
@@ -799,7 +800,16 @@ function BrandAssetLogoPicker({
     setTimeout(() => setFlashId((cur) => (cur === flashKey ? null : cur)), 800);
   };
 
-  const brandLogos = (lib?.brand?.logos ?? []).filter(Boolean);
+  // 2026-04: brand.logos migrated from string[] to LogoEntry[].
+  // Filter by showIn — entry without showIn applies to all locales;
+  // entry with non-empty showIn only appears for those locales.
+  // Also resolve MediaRef.localizedUrls for "same logo, locale-specific
+  // URL" cases (e.g. 腾讯 logo 中文版 vs Tencent 英文版).
+  const brandLogos = (lib?.brand?.logos ?? []).filter((entry) => {
+    if (!entry?.media?.url) return false;
+    if (!entry.showIn || entry.showIn.length === 0) return true;
+    return entry.showIn.includes(locale as any);
+  });
   const certLogos = (lib?.certifications ?? []).filter((c) => c.logoUrl);
 
   return (
@@ -838,27 +848,41 @@ function BrandAssetLogoPicker({
                   </div>
                 ) : (
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                    {brandLogos.map((src, i) => {
-                      const key = `brand:${i}`;
+                    {brandLogos.map((entry, i) => {
+                      const key = `brand:${entry.id ?? i}`;
                       const flashed = flashId === key;
+                      // Resolve URL: prefer locale-specific override on the
+                      // MediaRef, fall back to base url.
+                      const localized =
+                        entry.media.localizedUrls?.[locale as PageLocale];
+                      const src = localized ?? entry.media.url;
+                      const alt = entry.label ?? entry.media.alt ?? '';
+                      const isVideo = entry.media.kind === 'video';
                       return (
                         <button
                           key={key}
                           type="button"
-                          onClick={() => handlePick({ src }, key)}
+                          onClick={() =>
+                            handlePick({ src, alt: alt || undefined }, key)
+                          }
                           className={`relative flex h-16 items-center justify-center rounded-lg border bg-white p-2 transition ${
                             flashed
                               ? 'border-brand-400 bg-brand-50'
                               : 'border-ink-100 hover:border-brand-400'
                           }`}
-                          title="点击加入 logo 列表"
+                          title={`点击加入 logo 列表${alt ? `：${alt}` : ''}`}
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={src}
-                            alt=""
+                            src={isVideo ? entry.media.poster ?? src : src}
+                            alt={alt}
                             className="max-h-full max-w-full object-contain"
                           />
+                          {isVideo && (
+                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-[8px] text-white">
+                              ▶
+                            </span>
+                          )}
                           {flashed && (
                             <span className="absolute right-1 top-1 rounded bg-brand-600 px-1 text-[10px] text-white">
                               ✓
