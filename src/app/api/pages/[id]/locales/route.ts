@@ -175,25 +175,38 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
     // localize adapter exists; without OpenAI we'd ship source-locale text
     // under the new sibling's tab). If OPENAI_API_KEY is missing,
     // localizeModulesViaGpt throws LLMRequiredError → 503.
-    const llmCfg = await readLLMConfig();
-    const localizePrimary = llmCfg.scenarios.localize.chain[0]?.provider ?? 'openai';
-    const localizeModel = llmCfg.scenarios.localize.chain[0]?.model;
-    if (localizePrimary !== 'openai') {
-      console.warn(
-        `[locales] parallel inherit ignoring admin scenarios.localize.chain[0]=${localizePrimary}; ` +
-          `inheritance requires OpenAI (no Claude/DeepSeek localize adapter). Forcing openai.`,
-      );
-    }
-
     let translatedA: PageModule[] = sourceA.map((m) => structuredClone(m));
     let translatedB: PageModule[] = sourceB.map((m) => structuredClone(m));
+    let parallelOutcome: FallbackOutcome<{ A: PageModule[]; B: PageModule[] }> | null = null;
     try {
-      const [a, b] = await Promise.all([
-        localizeModulesViaGpt(translatedA, locale, targetMarket, sourceSibling.tone),
-        localizeModulesViaGpt(translatedB, locale, targetMarket, sourceSibling.tone),
-      ]);
-      translatedA = a;
-      translatedB = b;
+      parallelOutcome = await executeWithFallback(
+        'localize',
+        locale,
+        async (step) => {
+          if (step.mode === 'skip-polish') {
+            throw new LLMCallError(
+              'gpt',
+              'localize-gpt',
+              new Error('skip-polish requires hydrate output; not available on parallel-inheritance path'),
+            );
+          }
+          if (step.provider === 'openai' || step.provider === 'deepseek') {
+            const endpoint = step.provider as 'openai' | 'deepseek';
+            const [a, b] = await Promise.all([
+              localizeModulesViaGpt(translatedA, locale, targetMarket, sourceSibling.tone, step.model, endpoint),
+              localizeModulesViaGpt(translatedB, locale, targetMarket, sourceSibling.tone, step.model, endpoint),
+            ]);
+            return { A: a, B: b };
+          }
+          throw new LLMCallError(
+            'gpt',
+            'localize-gpt',
+            new Error(`provider ${step.provider} has no localize adapter (parallel-inheritance path)`),
+          );
+        },
+      );
+      translatedA = parallelOutcome.result.A;
+      translatedB = parallelOutcome.result.B;
     } catch (e) {
       if (e instanceof LLMRequiredError || e instanceof LLMCallError) {
         console.error('[locales] parallel inherit+localize failed; sibling NOT created:', e);
@@ -240,22 +253,22 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
 
     await saveLandingPage(newSibling, { skipSlugMap: true });
 
+    const usedStep = parallelOutcome?.usedStep;
+    const usedProvider = (usedStep?.provider ?? 'openai') as 'openai' | 'deepseek' | 'claude' | 'gemini';
+    const cfgRead = await readLLMConfig();
+    const parallelPrimary = (cfgRead.scenarios.localize.chain[0]?.provider ?? 'openai') as 'openai' | 'deepseek' | 'claude' | 'gemini';
     return NextResponse.json({
       page: newSibling,
       siblingCreated: true,
       inheritedFrom: sourceLocaleUsed,
       localeGroupId: sourceSibling.localeGroupId,
-      localizeProviderUsed: 'openai' as const,
-      ...(localizePrimary !== 'openai'
-        ? {
-            localizeAdminOverrideWarning: {
-              configured: localizePrimary,
-              actual: 'openai',
-              reason:
-                'parallel inheritance has no Claude/DeepSeek localize adapter; forced openai',
-            },
-          }
-        : {}),
+      llm: makeTrace(
+        'localize',
+        parallelPrimary,
+        usedProvider,
+        parallelOutcome?.hops,
+        undefined,
+      ),
     });
   }
 
@@ -278,46 +291,48 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
       );
     }
 
-    // Inheritance path CANNOT honor admin's `scenarios.localize` setting
-    // the way the from-scratch path below can. The from-scratch path runs
-    // `hydrateModulesViaClaude` FIRST — Claude produces locale-native
-    // target-locale text — and then OpenAI polishes on top. If OpenAI's
-    // slot is non-openai there, the executor's else-branch returns the
-    // Claude output unchanged ("skip polish"): the copy is still in the
-    // target locale, just missing cross-cultural polish. Safe degradation.
-    //
-    // Inheritance has no such safety net. We literally clone zh-CN modules
-    // and hand them off; if the executor's else-branch returns the clone
-    // unchanged we ship CHINESE text under the English tab and the user
-    // never sees a banner because the HTTP response was 200. That was the
-    // 2026-04 bug (admin set localize=deepseek — which has no localize
-    // adapter — and inheriting from zh-CN produced zh-CN text in English).
-    //
-    // Fix: inheritance path FORCES OpenAI. We still read the admin config
-    // to log the divergence and to keep a consistent response shape, but
-    // the executor never branches on the admin-selected provider.
-    // If OPENAI_API_KEY is missing, `localizeModulesViaGpt` throws
-    // LLMRequiredError → 503 with a clear code, which is the correct
-    // behavior (inheritance genuinely can't complete without GPT today).
-    const llmCfg = await readLLMConfig();
-    const localizePrimary = llmCfg.scenarios.localize.chain[0]?.provider ?? 'openai';
-    if (localizePrimary !== 'openai') {
-      console.warn(
-        `[locales] inherit path ignoring admin config scenarios.localize.chain[0]=${localizePrimary}; ` +
-          `inheritance requires OpenAI (no Claude/DeepSeek localize adapter exists). ` +
-          `Forcing openai. Consider setting scenarios.localize chain[0]=openai in /admin/llm.`,
-      );
-    }
-
+    // Inheritance path runs the admin's localize chain just like the
+    // from-scratch path. Differences from from-scratch:
+    //   · Source is the cloned source-locale modules (not Claude hydrate
+    //     output), so 'skip-polish' mode would ship source-locale text
+    //     under the new tab — meaningless. We refuse skip-polish steps
+    //     here by treating them as "no localize adapter" (chain promotes).
+    //   · Both openai and deepseek work via OpenAI Chat Completions
+    //     protocol (DeepSeek = endpoint swap). Other providers throw.
     let inheritedA: PageModule[] = cloneModulesForInheritance(sourceA);
     let inheritedB: PageModule[] = cloneModulesForInheritance(sourceB);
+    let inheritOutcome: FallbackOutcome<{ A: PageModule[]; B: PageModule[] }> | null = null;
     try {
-      const [a, b] = await Promise.all([
-        localizeModulesViaGpt(inheritedA, locale, targetMarket, page.tone),
-        localizeModulesViaGpt(inheritedB, locale, targetMarket, page.tone),
-      ]);
-      inheritedA = a;
-      inheritedB = b;
+      inheritOutcome = await executeWithFallback(
+        'localize',
+        locale,
+        async (step) => {
+          // Inheritance can't use skip-polish — there's no Claude
+          // hydrate output for this locale yet. Throw so chain skips.
+          if (step.mode === 'skip-polish') {
+            throw new LLMCallError(
+              'gpt',
+              'localize-gpt',
+              new Error(`skip-polish mode requires hydrate output; not available on inheritance path`),
+            );
+          }
+          if (step.provider === 'openai' || step.provider === 'deepseek') {
+            const endpoint = step.provider as 'openai' | 'deepseek';
+            const [a, b] = await Promise.all([
+              localizeModulesViaGpt(inheritedA, locale, targetMarket, page.tone, step.model, endpoint),
+              localizeModulesViaGpt(inheritedB, locale, targetMarket, page.tone, step.model, endpoint),
+            ]);
+            return { A: a, B: b };
+          }
+          throw new LLMCallError(
+            'gpt',
+            'localize-gpt',
+            new Error(`provider ${step.provider} has no localize adapter (inheritance path)`),
+          );
+        },
+      );
+      inheritedA = inheritOutcome.result.A;
+      inheritedB = inheritOutcome.result.B;
     } catch (e) {
       if (e instanceof LLMRequiredError || e instanceof LLMCallError) {
         console.error('[locales] inherit+localize failed; locale NOT added:', e);
@@ -344,25 +359,20 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
 
     await saveLandingPage(page);
 
-    // Inheritance path uses a hard-coded OpenAI call (see rationale above),
-    // so there's no fallback chain to report. `localizePrimary` is surfaced
-    // on the response purely so the client can detect "admin set a non-
-    // openai primary" and prompt the user to update the config — the text
-    // itself is always GPT-localized, so this is an advisory field only.
+    const usedStep = inheritOutcome?.usedStep;
+    const usedProvider = (usedStep?.provider ?? 'openai') as 'openai' | 'deepseek' | 'claude' | 'gemini';
+    const llmCfgRead = await readLLMConfig();
+    const inheritPrimary = (llmCfgRead.scenarios.localize.chain[0]?.provider ?? 'openai') as 'openai' | 'deepseek' | 'claude' | 'gemini';
     return NextResponse.json({
       page,
       inheritedFrom: sourceLocale,
-      localizeProviderUsed: 'openai' as const,
-      ...(localizePrimary !== 'openai'
-        ? {
-            localizeAdminOverrideWarning: {
-              configured: localizePrimary,
-              actual: 'openai',
-              reason:
-                'inheritance path has no Claude/DeepSeek localize adapter; forced openai to avoid shipping source-locale text as target-locale',
-            },
-          }
-        : {}),
+      llm: makeTrace(
+        'localize',
+        inheritPrimary,
+        usedProvider,
+        inheritOutcome?.hops,
+        undefined,
+      ),
     });
   }
 
@@ -510,19 +520,24 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
         if (step.mode === 'skip-polish') {
           return { A: claudeOut.A, B: claudeOut.B };
         }
-        if (step.provider === 'openai') {
+        // OpenAI and DeepSeek both use the OpenAI Chat Completions
+        // protocol — DeepSeek is just a different base_url + key. We
+        // route both through localizeModulesViaGpt with the endpoint
+        // param so users can fall back from KSP-gated GPT to DeepSeek
+        // without an extra adapter.
+        if (step.provider === 'openai' || step.provider === 'deepseek') {
+          const endpoint = step.provider as 'openai' | 'deepseek';
           const [a, b] = await Promise.all([
-            localizeModulesViaGpt(claudeOut.A, locale, targetMarket, page.tone, step.model),
-            localizeModulesViaGpt(claudeOut.B, locale, targetMarket, page.tone, step.model),
+            localizeModulesViaGpt(claudeOut.A, locale, targetMarket, page.tone, step.model, endpoint),
+            localizeModulesViaGpt(claudeOut.B, locale, targetMarket, page.tone, step.model, endpoint),
           ]);
           return { A: a, B: b };
         }
-        // Non-openai step without skip-polish — no localize adapter exists
-        // for this provider today. Throw so the chain promotes past it.
+        // Claude / Gemini have no localize adapter — chain skips to next.
         throw new LLMCallError(
           'gpt',
           'localize-gpt',
-          new Error(`provider ${step.provider} has no localize adapter`),
+          new Error(`provider ${step.provider} has no localize adapter (use skip-polish mode if you want to fall back to Claude hydrate output)`),
         );
       },
     );

@@ -74,6 +74,29 @@ function buildOpenAIClient(): OpenAI {
 }
 
 /**
+ * DeepSeek's API speaks OpenAI's Chat Completions protocol verbatim.
+ * The localize prompt + JSON-mode response shape transfer 1:1 — only
+ * the endpoint and API key differ. So we reuse the OpenAI SDK with the
+ * DeepSeek base URL when a localize step's provider is 'deepseek'.
+ *
+ * Why not put this in llm-deepseek.ts: keeping it co-located with
+ * localizeModuleViaGpt avoids duplicating the (long) prompt template
+ * and module-shape-aware parsing. DeepSeek is, for this purpose,
+ * "OpenAI with a different URL".
+ */
+function buildDeepseekClient(): OpenAI {
+  // eslint-disable-next-line dot-notation
+  const apiKey = process.env['DEEPSEEK_API_KEY'];
+  if (!apiKey) {
+    throw new Error('DEEPSEEK_API_KEY not configured (localize via deepseek)');
+  }
+  return new OpenAI({
+    apiKey,
+    baseURL: 'https://api.deepseek.com/v1',
+  });
+}
+
+/**
  * List models the configured OpenAI endpoint reports as available.
  * Used by the admin diagnostic to show "what model IDs is the gateway
  * actually willing to serve" — important for KSP / Azure / other proxy
@@ -220,14 +243,19 @@ export async function localizeModuleViaGpt(
   market: MarketCode,
   tone: ToneKey,
   modelOverride?: string,
+  /** When 'deepseek', route through api.deepseek.com using
+   *  DEEPSEEK_API_KEY. Same prompt, same JSON-mode parsing — DeepSeek
+   *  is OpenAI-protocol-compatible so the only difference is the
+   *  base URL. */
+  endpoint: 'openai' | 'deepseek' = 'openai',
 ): Promise<PageModule | null> {
-  if (!hasOpenAIKey()) {
+  if (endpoint === 'openai' && !hasOpenAIKey()) {
     throw new LLMRequiredError('localize-gpt', 'OPENAI_API_KEY');
   }
   // "Not my job" — caller keeps the source module unchanged.
   if (!OPENAI_MODULE_TYPES.has(module.type)) return null;
 
-  const client = buildOpenAIClient();
+  const client = endpoint === 'deepseek' ? buildDeepseekClient() : buildOpenAIClient();
 
   const userPrompt = [
     `Target locale: ${toLocale}`,
@@ -308,13 +336,14 @@ export async function localizeModulesViaGpt(
   market: MarketCode,
   tone: ToneKey,
   modelOverride?: string,
+  endpoint: 'openai' | 'deepseek' = 'openai',
 ): Promise<PageModule[]> {
-  if (!hasOpenAIKey()) {
+  if (endpoint === 'openai' && !hasOpenAIKey()) {
     throw new LLMRequiredError('localize-gpt', 'OPENAI_API_KEY');
   }
   return Promise.all(
     modules.map(async (m) => {
-      const localized = await localizeModuleViaGpt(m, toLocale, market, tone, modelOverride);
+      const localized = await localizeModuleViaGpt(m, toLocale, market, tone, modelOverride, endpoint);
       // null = module type not routed through GPT (form / testimonial /
       // etc.); keep source unchanged. Not a degradation — those modules
       // are user-authored from the asset library.
