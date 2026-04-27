@@ -164,6 +164,7 @@ export default async function PublicLocalePage({
         locale={locale}
         variant={variant}
         nav={page.nav}
+        fontPresetId={page.fontPresetId as any}
       />
       <LanguageSwitcherPublic
         slug={params.slug}

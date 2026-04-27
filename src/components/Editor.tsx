@@ -13,6 +13,7 @@ import type {
   PageLocale,
 } from '@/lib/types';
 import { STYLE_PRESETS } from '@/lib/styles';
+import { FONT_PRESETS, FONT_PRESET_IDS } from '@/lib/font-presets';
 import { auditProject } from '@/lib/linter';
 import { nativeLabel, PAGE_LOCALES } from '@/lib/i18n-detect';
 import PageRenderer from './PageRenderer';
@@ -1547,6 +1548,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               onSelectModule={(id) => setSelectedModuleId(id)}
               selectedId={selectedModuleId}
               nav={page?.nav}
+              fontPresetId={page?.fontPresetId as any}
             />
           </div>
         </div>
@@ -1591,6 +1593,29 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         project={project}
         productId={page?.productId}
         pageId={page?.id}
+        fontPresetId={page?.fontPresetId}
+        onChangeFontPreset={async (presetId) => {
+          if (!page) return;
+          // Optimistic local update + persist via PATCH. On the next render
+          // PageRenderer reads page.fontPresetId; the new font kicks in.
+          setPage((prev) => {
+            if (!prev) return prev;
+            const next = { ...prev };
+            if (presetId) next.fontPresetId = presetId;
+            else delete next.fontPresetId;
+            return next;
+          });
+          try {
+            await fetch(`/api/pages/${page.id}`, {
+              method: 'PATCH',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ fontPresetId: presetId }),
+            });
+          } catch {
+            // Same approach as nav: keep optimistic flip on failure; next
+            // autosave round-trips it cleanly.
+          }
+        }}
         navEnabled={page?.nav?.enabled ?? false}
         onToggleNav={async (enabled) => {
           if (!page) return;
@@ -1660,6 +1685,8 @@ function SettingsModal({
   project,
   productId,
   pageId,
+  fontPresetId,
+  onChangeFontPreset,
   navEnabled,
   onToggleNav,
   tones,
@@ -1673,6 +1700,8 @@ function SettingsModal({
   project: Project;
   productId?: string;
   pageId?: string;
+  fontPresetId?: string;
+  onChangeFontPreset: (presetId: string | null) => void;
   navEnabled: boolean;
   onToggleNav: (enabled: boolean) => void;
   tones: ToneKey[];
@@ -1831,6 +1860,25 @@ function SettingsModal({
                 </button>
               ))}
             </div>
+          </div>
+          <div>
+            <div className="label mb-1.5">字体</div>
+            <select
+              className="input"
+              value={fontPresetId ?? ''}
+              onChange={(e) => onChangeFontPreset(e.target.value || null)}
+            >
+              <option value="">默认（按风格预设自动选）</option>
+              {FONT_PRESET_IDS.map((id) => (
+                <option key={id} value={id}>
+                  {FONT_PRESETS[id].label} — {FONT_PRESETS[id].hint}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] leading-relaxed text-ink-500">
+              所选字体只作用在这张落地页的渲染。空着 = 跟着上面"风格"
+              的市场默认字体。
+            </p>
           </div>
           <div>
             <div className="label mb-1.5">{tLabels.tone}</div>

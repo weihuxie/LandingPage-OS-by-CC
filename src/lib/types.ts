@@ -380,6 +380,10 @@ export interface Project {
     primary: string;
     secondary?: string;
     styleId: StyleId;
+    /** Optional product-level font-family override (free-text custom).
+     *  Carried through projectViewFromV2 so PageRenderer can layer it
+     *  into resolveFontStack() between page-picker and market default. */
+    fontStack?: string;
   };
   referenceUrl?: string;
   published: boolean;
@@ -666,6 +670,16 @@ export interface LandingPage {
     primary?: string;          // 可覆盖 Product.theme.primary
     styleId?: StyleId;
   };
+
+  /**
+   * Optional font preset (see src/lib/font-presets.ts). If unset the
+   * renderer falls back to product / brand / market-default in that
+   * order. Stored as a string id (not the full font stack) so future
+   * preset registry additions auto-apply to existing pages — and so
+   * the picker UI can select the user's choice by id without a string-
+   * compare against potentially drift-prone fontStack values.
+   */
+  fontPresetId?: string;
 
   /**
    * Top-of-page navigation (Feishu #10 "页面无导航"). When `enabled` is

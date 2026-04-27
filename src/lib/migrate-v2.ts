@@ -180,6 +180,9 @@ export function projectViewFromV2(
     theme: {
       primary: page.theme.primary ?? product.theme.primary,
       styleId: page.theme.styleId ?? product.theme.styleId,
+      // S2/font: pull product-level fontStack into the compat view so
+      // PageRenderer's resolveFontStack chain has it as a fallback layer.
+      fontStack: product.theme.fontStack,
     } as any,
     referenceUrl: product.website,
     published: page.published,

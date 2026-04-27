@@ -23,6 +23,7 @@ import type {
 } from '@/lib/types';
 import { resolveSocialProofLogo } from '@/lib/types';
 import { STYLE_PRESETS, cssVarsForStyle } from '@/lib/styles';
+import { resolveFontStack, type FontPresetId } from '@/lib/font-presets';
 import {
   resolveMedia,
   detectVideoHost,
@@ -46,6 +47,14 @@ type Props = {
   locale?: string;
   variant?: 'A' | 'B';
   nav?: NavConfig; // Feishu #10 — sticky anchor nav when nav.enabled
+  /** Font selection from the editor's settings modal. When set this
+   *  takes precedence over Brand / Product / market-default font
+   *  stacks. See src/lib/font-presets.ts for the precedence chain. */
+  fontPresetId?: FontPresetId | null;
+  /** Brand-level fontStack override (free-text custom). Falls between
+   *  fontPresetId and Product/market in priority. Caller passes from
+   *  the loaded Brand record. */
+  brandFontStack?: string | null;
 };
 
 export default function PageRenderer({
@@ -57,12 +66,22 @@ export default function PageRenderer({
   locale,
   variant,
   nav,
+  fontPresetId,
+  brandFontStack,
 }: Props) {
   const primary = project.theme.primary || '#4861ff';
   const styleId = project.theme.styleId ?? 'saas-modern';
   const preset = STYLE_PRESETS[styleId] ?? STYLE_PRESETS['saas-modern'];
   const styleVars = cssVarsForStyle(preset, primary);
   const pageLocale = (locale ?? project.inputs.locale) as PageLocale;
+  // Font precedence: page picker → brand custom → product theme → style preset.
+  // null result means "no override; let the style-preset stack apply via the
+  // existing fontFamily on the wrapper div".
+  const overrideFontStack = resolveFontStack({
+    pageFontPresetId: fontPresetId,
+    brandFontStack,
+    productFontStack: project.theme.fontStack,
+  });
 
   const activeModules = project.modules.filter((m) => m.enabled !== false);
   const navItems = nav?.enabled ? resolveNavItems(activeModules, nav.items, pageLocale) : [];
@@ -70,7 +89,10 @@ export default function PageRenderer({
   return (
     <div
       className="bg-white"
-      style={{ ...(styleVars as React.CSSProperties), fontFamily: preset.fontStack }}
+      style={{
+        ...(styleVars as React.CSSProperties),
+        fontFamily: overrideFontStack ?? preset.fontStack,
+      }}
       data-style={styleId}
     >
       {nav?.enabled && navItems.length > 0 && (
