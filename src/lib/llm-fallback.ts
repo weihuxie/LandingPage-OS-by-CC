@@ -1,56 +1,47 @@
 /**
- * Fallback orchestrator (2026-04 新增) — admin-configurable provider
- * swap on transient failure.
+ * Fallback orchestrator · v2.
  *
- * Origin: a user hit `gpt failed during localize-gpt: 429 You exceeded your
- * current quota` mid-workflow and asked "能不能失败时自动切到别家 LLM". The
- * admin UI's `fallback.{enabled,triggers,chain}` captures the policy; this
- * module executes it.
+ * v1 had a single global `fallback.{enabled,triggers,chain}` plus a
+ * separate `scenarios.{X}.primary` indirection. v2 collapses them: each
+ * scenario carries its own ScenarioPolicy (chain[0]=primary, rest=
+ * fallback ladder, plus enabled / triggers). This module just walks
+ * that chain.
  *
- * Scope of THIS iteration:
- *   - Generic wrapper `executeWithFallback(scenario, primary, executor)`
- *     so any scenario can opt in.
- *   - Real wiring lives in the `localize` code path today (see
- *     /api/pages/[id]/locales POST). Other scenarios are either
- *     single-adapter (extract → gemini only) or already handled by
- *     `providerFor()`'s "skip primary when its key is missing" logic, so
- *     they don't need chain walking yet.
- *
- * Invariants:
- *   - LLMRequiredError bubbles unchanged. Missing key = configuration
- *     problem. If we silently swapped to cover "ANTHROPIC_API_KEY missing"
- *     the admin would never know to fix it — same fig-leaf trap the
- *     errors.ts refactor removed.
- *   - Non-retryable errors (4xx-auth, 4xx-other) short-circuit the chain.
- *     If Anthropic says "400 invalid prompt", DeepSeek will say the same.
- *     Burning three provider quotas to confirm a bad input is not a feature.
- *   - When fallback is OFF or the error class isn't in the trigger list,
- *     the original error is rethrown immediately — no silent swap.
- *   - Every hop is logged. Callers pass `hops` back to the client so the
- *     UI can surface "fell back from GPT → Claude (429-quota)" instead of
- *     shipping a degraded result without explanation.
+ * Invariants preserved:
+ *   - LLMRequiredError bubbles unchanged (missing API key is a config
+ *     problem, not a transient one to swap-around).
+ *   - Non-retryable errors (4xx-auth, 4xx-other) short-circuit the
+ *     chain. A bad-prompt 400 will recur on every provider; burning
+ *     four quotas to confirm doesn't help.
+ *   - Every hop is logged via console.warn — the admin can read why
+ *     fallback ran or short-circuited from Vercel function logs.
  */
-
-import type { LLMProvider, LLMScenario } from './llm-config';
-import { readLLMConfig, classifyProviderError } from './llm-config';
+import type {
+  LLMProvider,
+  LLMScenario,
+  ScenarioPolicy,
+  ScenarioStep,
+  TriggerClass,
+} from './llm-config';
+import { classifyProviderError, policyFor, readLLMConfig } from './llm-config';
 import { hasClaudeKey } from './llm-claude';
 import { hasDeepseekKey } from './llm-deepseek';
 import { hasOpenAIKey } from './llm-openai';
 import { hasGeminiKey } from './llm-gemini';
 import { LLMRequiredError } from './errors';
 
-/** A single attempted provider in the chain that failed. */
 export interface FallbackHop {
   provider: LLMProvider;
+  model: string;
   errorClass: '429-quota' | '429-rate' | '5xx' | '4xx-auth' | '4xx-other' | 'network';
   message: string;
 }
 
 export interface FallbackOutcome<T> {
   result: T;
-  /** Provider that produced `result`. Same as `primary` on the happy path. */
-  usedProvider: LLMProvider;
-  /** Providers attempted before the one that succeeded. Empty on happy path. */
+  /** The step (provider + model + mode) that produced `result`. */
+  usedStep: ScenarioStep;
+  /** Steps tried before the one that succeeded. Empty on happy path. */
   hops: FallbackHop[];
 }
 
@@ -63,127 +54,111 @@ function hasKey(p: LLMProvider): boolean {
   }
 }
 
-/**
- * Whether a classified error is in the admin-configured trigger list.
- *
- * 4xx-auth / 4xx-other are NEVER retried regardless of triggers — they
- * indicate a bad key or a bad prompt; swapping providers wastes the next
- * provider's quota too.
- *
- * 'network' (no HTTP status — SDK threw before the response) is rolled
- * under the '5xx' trigger: both are infra failures the user hasn't
- * misconfigured.
- */
 function isTriggered(
   cls: ReturnType<typeof classifyProviderError>,
-  triggers: Array<'429-quota' | '429-rate' | '5xx'>,
+  triggers: TriggerClass[],
 ): boolean {
-  if (cls === null || cls === '4xx-auth' || cls === '4xx-other') return false;
-  if (cls === 'network') return triggers.includes('5xx');
+  if (!cls) return false;
+  if (cls === '4xx-auth' || cls === '4xx-other') return false;
+  if (cls === 'network') return triggers.includes('5xx'); // Treat network like 5xx
   return triggers.includes(cls);
 }
 
 /**
- * Execute `executor` with fallback.
- *
- * Flow:
- *   1. Call `executor(primary)`. If it succeeds, return immediately (no
- *      hops). This is the hot path — fallback adds zero overhead when
- *      the primary provider is healthy.
- *   2. On failure, classify the error. If fallback is disabled or the
- *      error class isn't a configured trigger, rethrow. Same goes for
- *      LLMRequiredError (config problem, not transient).
- *   3. Walk `cfg.fallback.chain`, skipping the primary (already tried)
- *      and any provider without a configured API key. First success wins.
- *   4. If every chain entry fails, rethrow the ORIGINAL primary error —
- *      keeping the error class the caller expected (e.g. the route handler
- *      still maps to 502 via errorResponse). Hops are logged but not
- *      attached to the rethrown error; the admin can read them in the
- *      server logs.
- *
- * The executor is responsible for per-provider dispatch. It receives the
- * provider name and returns the scenario's result. Scenario-specific logic
- * (e.g. "for localize, non-openai providers = use claude hydrate output
- * unpolished") lives in the caller, not here.
+ * Run a scenario per its policy. Walk chain[0]→chain[N], promoting on
+ * trigger-matching failures. Caller's `executor` receives the full step
+ * (provider + model + mode) and returns the scenario's result type.
  */
-export async function executeWithFallback<T>(
+export async function executeScenario<T>(
   scenario: LLMScenario,
-  primary: LLMProvider,
-  executor: (provider: LLMProvider) => Promise<T>,
+  locale: string,
+  executor: (step: ScenarioStep) => Promise<T>,
 ): Promise<FallbackOutcome<T>> {
   const cfg = await readLLMConfig();
-  const hops: FallbackHop[] = [];
-
-  // Primary attempt.
-  let primaryError: unknown;
-  try {
-    const result = await executor(primary);
-    return { result, usedProvider: primary, hops };
-  } catch (err) {
-    if (err instanceof LLMRequiredError) throw err;
-    primaryError = err;
-
-    const cls = classifyProviderError(err);
-    const msg = err instanceof Error ? err.message : String(err);
-
-    // Diagnostic — surfaced in Vercel logs so admins can see why fallback
-    // either ran or short-circuited. Useful when the user reports
-    // "fallback's enabled but I still get a 502" (usually the classifier
-    // bucketed the error in 4xx-auth/-other and the trigger list doesn't
-    // contain that bucket; intentionally — but the log makes it visible).
-    console.warn(
-      `[llm-fallback] ${scenario} primary=${primary} threw → ` +
-        `classified=${cls ?? 'null'} ` +
-        `enabled=${cfg.fallback.enabled} ` +
-        `triggers=${cfg.fallback.triggers.join('|')} ` +
-        `triggerHit=${isTriggered(cls, cfg.fallback.triggers)} ` +
-        `errorType=${err?.constructor?.name ?? typeof err} ` +
-        `causeStatus=${(err as any)?.cause?.status ?? 'n/a'} ` +
-        `causeMsgHead=${String((err as any)?.cause?.message ?? '').slice(0, 100)}`,
+  const policy: ScenarioPolicy = policyFor(cfg, scenario, locale);
+  if (!policy.enabled) {
+    throw new LLMRequiredError(
+      scenario === 'extract' ? 'extract' : scenario === 'localize' ? 'localize-gpt' : 'strategy',
+      'any-llm',
+      `scenario "${scenario}" is disabled in admin/llm config`,
     );
-
-    if (!cfg.fallback.enabled) throw err;
-    if (!isTriggered(cls, cfg.fallback.triggers)) throw err;
-
-    hops.push({
-      provider: primary,
-      errorClass: cls ?? 'network',
-      message: msg,
-    });
+  }
+  if (policy.chain.length === 0) {
+    throw new LLMRequiredError(
+      scenario === 'extract' ? 'extract' : scenario === 'localize' ? 'localize-gpt' : 'strategy',
+      'any-llm',
+      `scenario "${scenario}" chain is empty in admin/llm config`,
+    );
   }
 
-  // Walk the chain. Primary already tried; skip providers without keys
-  // so a partial environment (only Claude + DeepSeek configured) still
-  // makes progress rather than hitting "gemini: LLM_REQUIRED" as a hop.
-  const remaining = cfg.fallback.chain.filter((p) => p !== primary && hasKey(p));
-  for (const next of remaining) {
-    try {
-      const result = await executor(next);
+  const hops: FallbackHop[] = [];
+  let firstError: unknown = null;
+  for (let i = 0; i < policy.chain.length; i++) {
+    const step = policy.chain[i];
+    // Skip providers without key (except skip-polish mode which doesn't
+    // call the API at all — it's a synthetic step).
+    if (step.mode !== 'skip-polish' && !hasKey(step.provider)) {
       console.warn(
-        `[llm-fallback] ${scenario} fell back ${primary} → ${next} after ${hops.length} failed hop(s)`,
+        `[llm-fallback] ${scenario}/${locale} skipping step ${i} (${step.provider}/${step.model}) — no API key`,
       );
-      return { result, usedProvider: next, hops };
-    } catch (err2) {
-      if (err2 instanceof LLMRequiredError) throw err2;
-      const cls2 = classifyProviderError(err2);
+      continue;
+    }
+    try {
+      const result = await executor(step);
+      if (i > 0) {
+        console.warn(
+          `[llm-fallback] ${scenario}/${locale} succeeded at step ${i} (${step.provider}/${step.model}) after ${hops.length} failed hop(s)`,
+        );
+      }
+      return { result, usedStep: step, hops };
+    } catch (err) {
+      if (err instanceof LLMRequiredError) throw err;
+      if (firstError === null) firstError = err;
+      const cls = classifyProviderError(err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[llm-fallback] ${scenario}/${locale} step ${i} (${step.provider}/${step.model}) failed → ` +
+          `classified=${cls ?? 'null'} ` +
+          `enabled=${policy.enabled} ` +
+          `triggers=${policy.triggers.join('|')} ` +
+          `triggerHit=${isTriggered(cls, policy.triggers)} ` +
+          `errorType=${(err as any)?.constructor?.name ?? typeof err} ` +
+          `causeStatus=${(err as any)?.cause?.status ?? 'n/a'} ` +
+          `causeMsgHead=${String((err as any)?.cause?.message ?? '').slice(0, 100)}`,
+      );
       hops.push({
-        provider: next,
-        errorClass: cls2 ?? 'network',
-        message: err2 instanceof Error ? err2.message : String(err2),
+        provider: step.provider,
+        model: step.model,
+        errorClass: cls ?? 'network',
+        message: msg,
       });
-      // Non-retryable: stop. A bad-prompt 400 will recur across providers.
-      if (cls2 === '4xx-auth' || cls2 === '4xx-other') break;
+      // Bail on non-retryable failures — same input across providers
+      // would just re-hit the same wall.
+      if (cls === '4xx-auth' || cls === '4xx-other') break;
+      // Non-trigger-matching failures still propagate (e.g. 429-rate
+      // without 'rate' in triggers): bail rather than burn the chain.
+      if (!isTriggered(cls, policy.triggers)) break;
+      // Else keep walking.
     }
   }
 
-  // Exhausted the chain. Rethrow the original primary error so the route
-  // handler maps it to the same HTTP status the user would have seen
-  // without fallback. Hops survive in the server log above; they're not
-  // exposed on the rethrown error because the existing error types are
-  // intentionally narrow.
   console.error(
-    `[llm-fallback] ${scenario} chain exhausted; hops:`,
-    hops.map((h) => `${h.provider}=${h.errorClass}`).join(' → '),
+    `[llm-fallback] ${scenario}/${locale} chain exhausted; hops:`,
+    hops.map((h) => `${h.provider}/${h.model}=${h.errorClass}`).join(' → '),
   );
-  throw primaryError;
+  throw firstError ?? new Error(`${scenario} chain exhausted with no error captured`);
+}
+
+/**
+ * Back-compat alias — used to be `executeWithFallback(scenario, primary,
+ * executor)` in v1. v2 prefers `executeScenario(scenario, locale, executor)`
+ * because primary is no longer separate from the chain. Kept as a thin
+ * shim for any in-flight refactors that haven't moved over.
+ */
+export async function executeWithFallback<T>(
+  scenario: LLMScenario,
+  locale: string,
+  executor: (step: ScenarioStep) => Promise<T>,
+): Promise<FallbackOutcome<T>> {
+  return executeScenario(scenario, locale, executor);
 }

@@ -26,7 +26,7 @@
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import type { ExtractedContext } from './extract';
 import { LLMRequiredError, LLMCallError } from './errors';
-import { readLLMConfig, DEFAULT_LLM_CONFIG } from './llm-config';
+// llm-config import removed in v2 — model now flows via parameters.
 
 export function hasGeminiKey(): boolean {
   // eslint-disable-next-line dot-notation
@@ -39,13 +39,11 @@ export function hasGeminiKey(): boolean {
 // Gemini API yet, the call returns a clear error and the admin can
 // switch to gemini-2.5-pro / gemini-1.5-pro-latest from /admin/llm in
 // one click.
-async function resolveModel(): Promise<string> {
-  try {
-    const cfg = await readLLMConfig();
-    return cfg.providers.gemini.model || DEFAULT_LLM_CONFIG.providers.gemini.model;
-  } catch {
-    return DEFAULT_LLM_CONFIG.providers.gemini.model;
-  }
+const HARDCODED_GEMINI_DEFAULT = 'gemini-3.0-pro';
+
+async function resolveModel(modelOverride?: string): Promise<string> {
+  if (modelOverride && modelOverride.trim()) return modelOverride.trim();
+  return HARDCODED_GEMINI_DEFAULT;
 }
 // Keep the request well under the 2M-token context window even for oddly
 // large paste payloads. 200K chars ≈ ~50K tokens, more than enough for
@@ -111,6 +109,7 @@ export const GEMINI_MIN_CHARS = 1500;
 export async function extractViaGemini(
   text: string,
   source: 'paste' | 'url' | 'file',
+  modelOverride?: string,
 ): Promise<ExtractedContext | null> {
   if (!hasGeminiKey()) {
     throw new LLMRequiredError('extract', 'GEMINI_API_KEY');
@@ -121,7 +120,7 @@ export async function extractViaGemini(
 
   // eslint-disable-next-line dot-notation
   const genAI = new GoogleGenerativeAI(process.env['GOOGLE_API_KEY']!);
-  const modelName = await resolveModel();
+  const modelName = await resolveModel(modelOverride);
   const model = genAI.getGenerativeModel({
     model: modelName,
     systemInstruction: EXTRACT_SYSTEM,

@@ -61,7 +61,7 @@ import {
   variantHintForModule,
   type ClaudeModuleContent,
 } from './llm-claude';
-import { readLLMConfig, DEFAULT_LLM_CONFIG } from './llm-config';
+// llm-config import removed in v2 — model now flows via parameters.
 
 export function hasDeepseekKey(): boolean {
   // eslint-disable-next-line dot-notation
@@ -120,7 +120,7 @@ export function isReasonerFamily(model: string): boolean {
  */
 function safeModelOrDefault(model: string, callsite: string): string {
   if (isReasonerFamily(model)) {
-    const safe = DEFAULT_LLM_CONFIG.providers.deepseek.model;
+    const safe = HARDCODED_DEEPSEEK_DEFAULT;
     console.warn(
       `[deepseek] safeModelOrDefault: ${callsite} attempted to send "${model}" — coerced to "${safe}". ` +
         `This is the last defense; resolveModel() should have caught this. Update /admin/llm to silence.`,
@@ -129,6 +129,8 @@ function safeModelOrDefault(model: string, callsite: string): string {
   }
   return model;
 }
+
+const HARDCODED_DEEPSEEK_DEFAULT = 'deepseek-chat';
 
 /**
  * Hardcoded universal-fallback model for the runtime catch path. Used when
@@ -144,21 +146,17 @@ function safeModelOrDefault(model: string, callsite: string): string {
  */
 const RUNTIME_FALLBACK_MODEL = 'deepseek-chat';
 
-async function resolveModel(): Promise<string> {
-  let configured: string;
-  try {
-    const cfg = await readLLMConfig();
-    configured = cfg.providers.deepseek.model || DEFAULT_LLM_CONFIG.providers.deepseek.model;
-  } catch {
-    configured = DEFAULT_LLM_CONFIG.providers.deepseek.model;
-  }
+async function resolveModel(modelOverride?: string): Promise<string> {
+  const configured = modelOverride && modelOverride.trim()
+    ? modelOverride.trim()
+    : HARDCODED_DEEPSEEK_DEFAULT;
   if (isReasonerFamily(configured)) {
     console.warn(
       `[deepseek] configured model "${configured}" doesn't support tool_choice — ` +
-      `falling back to ${DEFAULT_LLM_CONFIG.providers.deepseek.model}. ` +
+      `falling back to ${HARDCODED_DEEPSEEK_DEFAULT}. ` +
       `Update /admin/llm to silence this warning.`,
     );
-    return DEFAULT_LLM_CONFIG.providers.deepseek.model;
+    return HARDCODED_DEEPSEEK_DEFAULT;
   }
   return configured;
 }
@@ -228,6 +226,7 @@ const STRATEGY_SCHEMA = {
 export async function generateStrategyViaDeepseek(
   inputs: ProductInputs,
   context?: ExtractedContext,
+  modelOverride?: string,
 ): Promise<StrategySummary> {
   if (!hasDeepseekKey()) {
     throw new LLMRequiredError('strategy', 'DEEPSEEK_API_KEY');
@@ -288,7 +287,7 @@ Verbatim rules:
 - If the tagline "${inputs.tagline || '(none)'}" contains a concrete promise, echo its key nouns/verbs.
 - Any named customer, metric, or pain phrase from the extracted materials must appear verbatim — do not round, paraphrase, or soften.`;
 
-  let model = await resolveModel();
+  let model = await resolveModel(modelOverride);
   const callApi = (m: string) =>
     client.chat.completions.create({
       model: safeModelOrDefault(m, 'strategy'),
@@ -443,6 +442,7 @@ export async function regenerateModuleViaDeepseek(
   tone: ToneKey,
   locale: PageLocale,
   variant?: NarrativeVariant,
+  modelOverride?: string,
 ): Promise<Partial<ClaudeModuleContent> | null> {
   if (!hasDeepseekKey()) {
     throw new LLMRequiredError('module-regen', 'DEEPSEEK_API_KEY');
@@ -488,7 +488,7 @@ export async function regenerateModuleViaDeepseek(
     `Rewrite the ${type.toUpperCase()} module. Call the ${toolName} tool with the content in ${locale}. Tone: ${tone}.`,
   ].join('\n');
 
-  let model = await resolveModel();
+  let model = await resolveModel(modelOverride);
   async function attempt(): Promise<Partial<ClaudeModuleContent> | null> {
     let response;
     try {

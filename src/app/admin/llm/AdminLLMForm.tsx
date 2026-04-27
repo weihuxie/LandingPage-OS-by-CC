@@ -1,7 +1,30 @@
 'use client';
 
+/**
+ * Admin LLM config form · v2 schema.
+ *
+ * One card per scenario. Each card contains its own:
+ *   - 启用开关
+ *   - 触发条件 checkboxes
+ *   - 调用链 (chain[0]=primary, chain[1+]=fallback ladder)
+ *     · provider + model dropdown
+ *     · move up/down/remove
+ *     · add new step
+ *   - For localize: per-step `mode` (normal / skip-polish)
+ *
+ * Reading one card tells you exactly what happens for that scenario,
+ * end to end. No more triangulating across "which model" + "which
+ * provider per scenario" + "global fallback chain".
+ */
+
 import { useMemo, useState } from 'react';
-import type { LLMConfig, LLMProvider } from '@/lib/llm-config';
+import type {
+  LLMConfig,
+  LLMProvider,
+  ScenarioPolicy,
+  ScenarioStep,
+  TriggerClass,
+} from '@/lib/llm-config';
 
 type ModelOption = { id: string; label: string };
 type ProviderStatus = Record<LLMProvider, boolean>;
@@ -13,8 +36,6 @@ interface Props {
   providerStatus: ProviderStatus;
 }
 
-// Provider metadata — display name, env var, primary use case. Used in
-// dropdowns, section headers, and the fallback chain reorder UI.
 const PROVIDER_META: Record<
   LLMProvider,
   { name: string; envVar: string; hint: string }
@@ -22,56 +43,33 @@ const PROVIDER_META: Record<
   claude: {
     name: 'Claude (Anthropic)',
     envVar: 'ANTHROPIC_API_KEY',
-    hint: '高质量结构化文案 · JP locale 首选 · 有 prompt cache',
+    hint: '高质量结构化文案 · JP locale 首选',
   },
   deepseek: {
     name: 'DeepSeek',
     envVar: 'DEEPSEEK_API_KEY',
-    hint: '成本最低（~1/30 Claude）· 非 JP 默认 · OpenAI 兼容',
+    hint: '成本最低（~1/30 Claude）',
   },
   openai: {
     name: 'GPT-4o (OpenAI)',
     envVar: 'OPENAI_API_KEY',
-    hint: '多语言 localize · 文化自检 · JSON mode',
+    hint: '本地化 / 多语言 polish',
   },
   gemini: {
     name: 'Gemini (Google)',
     envVar: 'GOOGLE_API_KEY',
-    hint: '长文档抽取（2M 窗口）· 白皮书/手册 extract',
+    hint: '长文档抽取',
   },
 };
 
 const ALL_PROVIDERS: LLMProvider[] = ['claude', 'deepseek', 'openai', 'gemini'];
-
-/**
- * Per-provider "this model ID is known not to work with our adapter"
- * flags. Mirrors the runtime coerce in llm-deepseek.ts. Kept tiny and
- * hand-maintained — the universe of adapter-incompatible models is small
- * and we want admins to see WHY a pick is flagged, not a generic "bad
- * value" message.
- */
-const INCOMPATIBLE_MODELS: Partial<
-  Record<LLMProvider, Array<{ id: string; reason: string }>>
-> = {
-  deepseek: [
-    {
-      id: 'deepseek-reasoner',
-      reason:
-        'R1 系列不支持 tool_choice，当前 adapter 依赖 tool_choice 做结构化输出。' +
-        '选它后调用会被自动回退到 deepseek-v4-pro（server 日志会 warn）。' +
-        '官方 2026-07-24 弃用。',
-    },
-  ],
+const ALL_TRIGGERS: TriggerClass[] = ['429-quota', '429-rate', '5xx'];
+const TRIGGER_LABEL: Record<TriggerClass, string> = {
+  '429-quota': '429 · 配额/账单用完（sticky，换家才有意义）',
+  '429-rate': '429 · 短时 rate limit（一会儿恢复）',
+  '5xx': '5xx · 服务端抖动 / 网关超时',
 };
 
-/**
- * Sentinel value used in the model <select> to mean "switch this row to a
- * free-form text input". Picked deliberately ugly so it can't collide with
- * a real provider model ID (OpenAI/Anthropic/etc never use double
- * underscores). The value never lands in LLMConfig — it's translated to
- * an empty-string model in onChange, which puts the row into custom mode
- * with the input focused.
- */
 const CUSTOM_MODEL_SENTINEL = '__custom__';
 
 export default function AdminLLMForm({
@@ -81,12 +79,6 @@ export default function AdminLLMForm({
   providerStatus,
 }: Props) {
   const [config, setConfig] = useState<LLMConfig>(initialConfig);
-  // Baseline = "what's currently on the server". Starts equal to
-  // initialConfig (the SSR snapshot), then advances to the just-saved
-  // value on a successful PUT. Dirty comparison MUST use this, not
-  // initialConfig — otherwise `config !== initialConfig` stays true
-  // forever after the first save and "有未保存的改动" sticks (the bug a
-  // user reported in 2026-04).
   const [baseline, setBaseline] = useState<LLMConfig>(initialConfig);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,350 +89,177 @@ export default function AdminLLMForm({
     [config, baseline],
   );
 
-  // --- Mutators ---------------------------------------------------------
-
-  function setModel(p: LLMProvider, model: string) {
-    setConfig((c) => ({
-      ...c,
-      providers: { ...c.providers, [p]: { model } },
-    }));
-  }
-
-  function setScenarioStrategy(key: 'ja' | 'default', v: LLMProvider) {
-    setConfig((c) => ({
-      ...c,
-      scenarios: {
-        ...c.scenarios,
-        strategy: { ...c.scenarios.strategy, [key]: v },
-      },
-    }));
-  }
-  function setScenarioCopy(key: 'ja' | 'default', v: LLMProvider) {
-    setConfig((c) => ({
-      ...c,
-      scenarios: {
-        ...c.scenarios,
-        copy: { ...c.scenarios.copy, [key]: v },
-      },
-    }));
-  }
-  function setScenarioSimple(s: 'localize' | 'extract', v: LLMProvider) {
-    setConfig((c) => ({
-      ...c,
-      scenarios: { ...c.scenarios, [s]: v },
-    }));
-  }
-
-  function toggleFallback(v: boolean) {
-    setConfig((c) => ({ ...c, fallback: { ...c.fallback, enabled: v } }));
-  }
-  function toggleTrigger(t: '429-quota' | '429-rate' | '5xx', on: boolean) {
-    setConfig((c) => ({
-      ...c,
-      fallback: {
-        ...c.fallback,
-        triggers: on
-          ? Array.from(new Set([...c.fallback.triggers, t]))
-          : c.fallback.triggers.filter((x) => x !== t),
-      },
-    }));
-  }
-  function moveChain(from: number, to: number) {
-    setConfig((c) => {
-      const chain = [...c.fallback.chain];
-      if (to < 0 || to >= chain.length) return c;
-      const [item] = chain.splice(from, 1);
-      chain.splice(to, 0, item);
-      return { ...c, fallback: { ...c.fallback, chain } };
+  function updatePolicy(
+    path: ['strategy', 'ja' | 'default'] | ['copy', 'ja' | 'default'] | ['localize'] | ['extract'],
+    next: ScenarioPolicy,
+  ): void {
+    setConfig((prev) => {
+      const cp: LLMConfig = JSON.parse(JSON.stringify(prev));
+      if (path[0] === 'strategy' || path[0] === 'copy') {
+        // Locale-keyed
+        (cp.scenarios[path[0]] as any)[path[1]] = next;
+      } else {
+        (cp.scenarios as any)[path[0]] = next;
+      }
+      return cp;
     });
   }
 
-  function resetToDefaults() {
-    if (!confirm('重置为代码默认值？未保存的改动会丢。')) return;
-    setConfig(defaults);
-  }
-
-  // --- Save -------------------------------------------------------------
-
-  async function save() {
+  async function save(): Promise<void> {
     setBusy(true);
     setError(null);
     try {
-      const resp = await fetch('/api/admin/llm-config', {
+      const r = await fetch('/api/admin/llm-config', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ config }),
       });
-      const body = await resp.json().catch(() => null);
-      if (!resp.ok) {
-        setError(
-          (body && body.message) ||
-            `保存失败（HTTP ${resp.status}）`,
-        );
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        setError(body?.message ?? `HTTP ${r.status}`);
         return;
       }
-      // Advance the baseline to the just-persisted shape so the dirty
-      // indicator clears. Prefer the server-echoed config (authoritative
-      // — validateLLMConfig ran on it) when present; fall back to the
-      // local snapshot if the response body is missing it.
-      const persisted: LLMConfig =
-        body && body.config ? (body.config as LLMConfig) : config;
-      setBaseline(persisted);
-      setConfig(persisted);
+      setBaseline(JSON.parse(JSON.stringify(config)));
       setSavedAt(Date.now());
-
-      // Post-save verify: re-GET the config and sanity-check that what
-      // the server has stored matches what we just sent. Catches the
-      // "PUT returned 200 but KV silently no-op'd" scenarios — e.g.
-      // `writeLLMConfig` short-circuits when KV isn't configured, or
-      // an upstream proxy swallows PATCHes, or the middleware rewrote
-      // the body. Prior to this check, those all looked like success
-      // in the UI while the stored value was actually stale. The
-      // 2026-04 "我点了保存但没保存上" report is what motivated it.
-      try {
-        const verifyResp = await fetch('/api/admin/llm-config', {
-          cache: 'no-store',
-        });
-        if (verifyResp.ok) {
-          const verifyBody = await verifyResp.json();
-          const serverConfig = verifyBody?.config;
-          if (
-            serverConfig &&
-            JSON.stringify(serverConfig) !== JSON.stringify(persisted)
-          ) {
-            setError(
-              'PUT 返回 200 但 KV 里存的值和刚提交的不一致 —— 可能是后端没配 KV 或写入被吞。检查 /api/health 的 storage 字段。',
-            );
-          }
-        }
-      } catch {
-        // Verify failures are advisory only — primary save already
-        // succeeded per the PUT response. Don't flip it to an error.
-      }
     } catch (e: any) {
-      setError(e?.message ?? '网络错误');
+      setError(e?.message ?? '保存失败');
     } finally {
       setBusy(false);
     }
   }
 
-  // --- Render -----------------------------------------------------------
+  function reset(): void {
+    setConfig(JSON.parse(JSON.stringify(defaults)));
+  }
 
   return (
-    <div className="mt-6 space-y-6">
-      {/* Section 1: Model versions */}
+    <div className="mx-auto max-w-4xl">
+      {/* Provider key status strip — same across all scenarios so kept up top */}
       <section className="card p-5">
-        <h2 className="text-base font-semibold">① 各提供商用的具体模型</h2>
-        <p className="mt-1 text-xs text-ink-500">
-          下拉里是已知列表，不在列表里的型号也能直接手填（provider 新发了型号时）。
-        </p>
-        <div className="mt-4 space-y-4">
-          {ALL_PROVIDERS.map((p) => (
-            <ModelRow
-              key={p}
-              provider={p}
-              model={config.providers[p].model}
-              options={modelOptions[p]}
-              keyConfigured={providerStatus[p]}
-              onChange={(m) => setModel(p, m)}
-            />
-          ))}
-        </div>
-      </section>
-
-      {/* Section 2: Scenario routing */}
-      <section className="card p-5">
-        <h2 className="text-base font-semibold">② 不同场景用哪家</h2>
-        <p className="mt-1 text-xs text-ink-500">
-          JP（日文）locale 可以和其他语言走不同家 —— 历史上 Claude 的日文最稳。
-        </p>
-        <div className="mt-4 space-y-4">
-          <ScenarioRow
-            label="策略生成"
-            hint="4 段式 strategy summary（audience / goal / narrative / local）"
-            locales={[
-              {
-                key: 'ja',
-                label: 'JP',
-                value: config.scenarios.strategy.ja,
-                onChange: (v) => setScenarioStrategy('ja', v),
-              },
-              {
-                key: 'default',
-                label: '其他',
-                value: config.scenarios.strategy.default,
-                onChange: (v) => setScenarioStrategy('default', v),
-              },
-            ]}
-          />
-          <ScenarioRow
-            label="模块文案"
-            hint="hero / pain / benefits / solution / cta 的重写"
-            locales={[
-              {
-                key: 'ja',
-                label: 'JP',
-                value: config.scenarios.copy.ja,
-                onChange: (v) => setScenarioCopy('ja', v),
-              },
-              {
-                key: 'default',
-                label: '其他',
-                value: config.scenarios.copy.default,
-                onChange: (v) => setScenarioCopy('default', v),
-              },
-            ]}
-          />
-          <ScenarioRow
-            label="本地化 pass"
-            hint="加新语言时把现有内容按目标 locale 重写（不是机翻）"
-            locales={[
-              {
-                key: 'single',
-                label: '所有 locale',
-                value: config.scenarios.localize,
-                onChange: (v) => setScenarioSimple('localize', v),
-              },
-            ]}
-          />
-          <ScenarioRow
-            label="长文档抽取"
-            hint="白皮书 / 手册 extract → ExtractedContext"
-            locales={[
-              {
-                key: 'single',
-                label: '所有输入',
-                value: config.scenarios.extract,
-                onChange: (v) => setScenarioSimple('extract', v),
-              },
-            ]}
-          />
-        </div>
-      </section>
-
-      {/* Section 3: Fallback */}
-      <section className="card p-5">
-        <h2 className="text-base font-semibold">③ 失败自动切换</h2>
-        <p className="mt-1 text-xs text-ink-500">
-          开启后：命中触发条件时，按下面的优先级顺序换下一家重试。API key 无效（401/403）永远不会自动切 —— 换家也是白搭，而且会浪费下一家的额度。
-        </p>
-        <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={config.fallback.enabled}
-            onChange={(e) => toggleFallback(e.target.checked)}
-          />
-          <span className="font-medium">开启 fallback</span>
-        </label>
-
-        <div className={config.fallback.enabled ? 'mt-4' : 'mt-4 opacity-50 pointer-events-none'}>
-          <div className="text-sm font-medium">触发条件</div>
-          <div className="mt-2 space-y-1.5 text-sm">
-            {(
-              [
-                ['429-quota', '429 · 配额/账单用完（sticky，换家才有意义）'],
-                ['429-rate', '429 · 短时 rate limit（等一下也会恢复，通常换家反而浪费）'],
-                ['5xx', '5xx · 服务端抖动'],
-              ] as const
-            ).map(([t, desc]) => (
-              <label key={t} className="flex cursor-pointer items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={config.fallback.triggers.includes(t)}
-                  onChange={(e) => toggleTrigger(t, e.target.checked)}
-                />
-                <span className="text-xs text-ink-700">{desc}</span>
-              </label>
-            ))}
-          </div>
-
-          <div className="mt-5 text-sm font-medium">优先级顺序</div>
-          <p className="text-xs text-ink-500">
-            按顺序尝试。未配 key 的 provider 自动跳过。
-          </p>
-          <ul className="mt-2 space-y-1">
-            {config.fallback.chain.map((p, i) => (
-              <li
+        <h2 className="text-base font-semibold">当前 API Key 状态</h2>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {ALL_PROVIDERS.map((p) => {
+            const ok = providerStatus[p];
+            return (
+              <span
                 key={p}
-                className="flex items-center justify-between rounded-lg border border-ink-100 bg-white px-3 py-2 text-sm"
+                className={`rounded-full border px-3 py-1 text-xs ${
+                  ok
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                    : 'border-red-300 bg-red-50 text-red-800'
+                }`}
+                title={ok ? PROVIDER_META[p].envVar + ' 已配置' : '未配 ' + PROVIDER_META[p].envVar}
               >
-                <span>
-                  {i + 1}. {PROVIDER_META[p].name}
-                  {!providerStatus[p] && (
-                    <span className="ml-2 text-xs text-red-600">（未配 key）</span>
-                  )}
-                </span>
-                <span className="flex gap-1">
-                  <button
-                    type="button"
-                    onClick={() => moveChain(i, i - 1)}
-                    disabled={i === 0}
-                    className="btn btn-secondary px-2 py-1 text-xs disabled:opacity-30"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moveChain(i, i + 1)}
-                    disabled={i === config.fallback.chain.length - 1}
-                    className="btn btn-secondary px-2 py-1 text-xs disabled:opacity-30"
-                  >
-                    ↓
-                  </button>
-                </span>
-              </li>
-            ))}
-          </ul>
+                {ok ? '🟢' : '🔴'} {PROVIDER_META[p].name}
+              </span>
+            );
+          })}
         </div>
+        <p className="mt-2 text-[11px] text-ink-500">
+          未配 key 的 provider 在调用链里会被自动跳过；不会拖累其他场景。
+        </p>
       </section>
 
-      {/* Action bar. Pill-shaped status indicators (vs the prior thin
-          gray text) so a successful save is visually obvious — the 2026-04
-          "我点了保存但没保存上" user report turned out to be partly a
-          visibility issue: the small text feedback got missed and the
-          sticky bar looked identical before/after the PUT.
+      {/* Strategy — locale-aware */}
+      <ScenarioCard
+        title="策略生成"
+        hint="生成 4 段式 strategy summary。JP locale 走一条链，其他走另一条。"
+        modelOptions={modelOptions}
+        providerStatus={providerStatus}
+        showModeToggle={false}
+      >
+        <LocalePolicyPair
+          ja={config.scenarios.strategy.ja}
+          def={config.scenarios.strategy.default}
+          onJa={(p) => updatePolicy(['strategy', 'ja'], p)}
+          onDef={(p) => updatePolicy(['strategy', 'default'], p)}
+          modelOptions={modelOptions}
+          providerStatus={providerStatus}
+          showModeToggle={false}
+        />
+      </ScenarioCard>
 
-          Four states, exactly one pill always visible:
-            error         → red "✗ …"           (save failed / verify mismatch)
-            dirty         → amber "● 有未保存的改动"
-            savedAt       → emerald "✓ 已保存 · <time>" (this session's save)
-            (none above)  → slate "· 无改动（与服务器一致）"
+      {/* Copy — locale-aware */}
+      <ScenarioCard
+        title="模块文案"
+        hint="重写 hero / pain / benefits / solution / cta 模块。JP/其他 分开配置。"
+        modelOptions={modelOptions}
+        providerStatus={providerStatus}
+        showModeToggle={false}
+      >
+        <LocalePolicyPair
+          ja={config.scenarios.copy.ja}
+          def={config.scenarios.copy.default}
+          onJa={(p) => updatePolicy(['copy', 'ja'], p)}
+          onDef={(p) => updatePolicy(['copy', 'default'], p)}
+          modelOptions={modelOptions}
+          providerStatus={providerStatus}
+          showModeToggle={false}
+        />
+      </ScenarioCard>
 
-          The neutral state was added after a 2026-04 report: user saw a
-          custom model value pre-filled on page load, hit the save button,
-          got nothing (button was disabled). Turned out the value was
-          already in KV from a prior save — button-disabled was correct,
-          but empty pill area made "everything's fine" look identical to
-          "nothing to save" and "save silently broken". The neutral pill
-          distinguishes the first from the others.
-       */}
-      <div className="sticky bottom-4 flex items-center justify-between gap-3 rounded-xl border border-ink-200 bg-white p-3 shadow-lg">
-        <div className="flex items-center gap-2">
+      {/* Localize — single chain with mode (skip-polish) */}
+      <ScenarioCard
+        title="本地化 pass"
+        hint="加新语言时把现有内容按目标 locale 重写。OpenAI 是唯一有真正 polish adapter 的；其他 provider 选 skip-polish 模式后跳过 polish 用 Claude hydrate 母语版。"
+        modelOptions={modelOptions}
+        providerStatus={providerStatus}
+        showModeToggle={true}
+      >
+        <PolicyEditor
+          policy={config.scenarios.localize}
+          onChange={(p) => updatePolicy(['localize'], p)}
+          modelOptions={modelOptions}
+          providerStatus={providerStatus}
+          showModeToggle={true}
+        />
+      </ScenarioCard>
+
+      {/* Extract — single chain, single adapter, no real fallback */}
+      <ScenarioCard
+        title="长文档抽取"
+        hint="白皮书 / 手册 → ExtractedContext。当前只有 Gemini 有 adapter，链里加其他 provider 会被跳过。"
+        modelOptions={modelOptions}
+        providerStatus={providerStatus}
+        showModeToggle={false}
+      >
+        <PolicyEditor
+          policy={config.scenarios.extract}
+          onChange={(p) => updatePolicy(['extract'], p)}
+          modelOptions={modelOptions}
+          providerStatus={providerStatus}
+          showModeToggle={false}
+        />
+      </ScenarioCard>
+
+      {/* Action bar — sticks to bottom while form is dirty */}
+      <div className="sticky bottom-4 z-10 mt-6 flex items-center justify-between rounded-xl border bg-white px-4 py-3 shadow-soft">
+        <div className="text-xs">
           {error ? (
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-red-50 px-2.5 py-1 text-xs font-medium text-red-800 ring-1 ring-inset ring-red-200">
+            <span className="rounded-md bg-red-50 px-2 py-1 text-red-800">
               ✗ {error}
             </span>
           ) : dirty ? (
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-200">
-              ● 有未保存的改动
+            <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-800">
+              ● 未保存
             </span>
           ) : savedAt ? (
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 ring-1 ring-inset ring-emerald-200">
-              ✓ 已保存 · {new Date(savedAt).toLocaleTimeString()}
+            <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">
+              ✓ 已保存 ·{' '}
+              {new Date(savedAt).toLocaleTimeString('zh-CN', { hour12: false })}
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200">
+            <span className="rounded-md bg-ink-100/60 px-2 py-1 text-ink-600">
               · 无改动（与服务器一致）
             </span>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={resetToDefaults}
-            disabled={busy}
-            className="btn btn-secondary px-3 py-1.5 text-xs disabled:opacity-50"
+            onClick={reset}
+            className="btn btn-secondary text-xs"
+            title="加载内置默认值（覆盖当前表单 — 不会自动保存）"
           >
             重置为默认
           </button>
@@ -448,7 +267,7 @@ export default function AdminLLMForm({
             type="button"
             onClick={save}
             disabled={busy || !dirty}
-            className="btn btn-primary px-4 py-1.5 text-xs disabled:opacity-50"
+            className="btn btn-primary text-xs disabled:opacity-50"
           >
             {busy ? '保存中…' : '保存'}
           </button>
@@ -458,264 +277,354 @@ export default function AdminLLMForm({
   );
 }
 
-// -----------------------------------------------------------------------
-// Sub-components
-// -----------------------------------------------------------------------
+// ---------- ScenarioCard wrapper -------------------------------------
 
-function ModelRow({
-  provider,
-  model,
-  options,
-  keyConfigured,
-  onChange,
+function ScenarioCard({
+  title,
+  hint,
+  children,
 }: {
-  provider: LLMProvider;
-  model: string;
-  options: ModelOption[];
-  keyConfigured: boolean;
-  onChange: (m: string) => void;
-}) {
-  const meta = PROVIDER_META[provider];
-  // A row is in "custom mode" when its stored value isn't in the preset
-  // catalog. We DERIVE this from the value instead of tracking it as
-  // separate state — that way a KV round-trip (load config → form →
-  // save → re-load) always lands in the same UI shape, and there's no
-  // second source of truth to keep in sync. Older split-mode version
-  // had a `customMode` useState that got out of sync with the model
-  // value after save and caused the "clicked 自定义, typed value, hit
-  // save, clicked 返回下拉, value still stuck" dance.
-  const isPreset = options.some((o) => o.id === model);
-  // Surface known-incompatible picks so the admin doesn't have to hit a
-  // 400 to discover "reasoner breaks regen". The adapter coerces at
-  // runtime, but the warning lets them fix the config proactively.
-  const incompatible = INCOMPATIBLE_MODELS[provider]?.find((m) => m.id === model);
+  title: string;
+  hint: string;
+  modelOptions: Record<LLMProvider, ModelOption[]>;
+  providerStatus: ProviderStatus;
+  showModeToggle: boolean;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <section className="card mt-4 p-5">
+      <h2 className="text-base font-semibold">{title}</h2>
+      <p className="mt-1 text-xs text-ink-500">{hint}</p>
+      <div className="mt-4">{children}</div>
+    </section>
+  );
+}
+
+// ---------- Locale-pair editor (strategy / copy) ---------------------
+
+function LocalePolicyPair({
+  ja,
+  def,
+  onJa,
+  onDef,
+  modelOptions,
+  providerStatus,
+  showModeToggle,
+}: {
+  ja: ScenarioPolicy;
+  def: ScenarioPolicy;
+  onJa: (p: ScenarioPolicy) => void;
+  onDef: (p: ScenarioPolicy) => void;
+  modelOptions: Record<LLMProvider, ModelOption[]>;
+  providerStatus: ProviderStatus;
+  showModeToggle: boolean;
+}): JSX.Element {
+  const [tab, setTab] = useState<'ja' | 'default'>('default');
+  const policy = tab === 'ja' ? ja : def;
+  const onChange = tab === 'ja' ? onJa : onDef;
+  return (
+    <div>
+      <div className="flex gap-1 rounded-lg border border-ink-100 p-0.5 text-xs">
+        <button
+          type="button"
+          onClick={() => setTab('default')}
+          className={`flex-1 rounded-md px-2 py-1 transition ${
+            tab === 'default'
+              ? 'bg-brand-600 text-white'
+              : 'text-ink-500 hover:text-ink-900'
+          }`}
+        >
+          其他 locale
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('ja')}
+          className={`flex-1 rounded-md px-2 py-1 transition ${
+            tab === 'ja' ? 'bg-brand-600 text-white' : 'text-ink-500 hover:text-ink-900'
+          }`}
+        >
+          JP（日文）
+        </button>
+      </div>
+      <div className="mt-3">
+        <PolicyEditor
+          policy={policy}
+          onChange={onChange}
+          modelOptions={modelOptions}
+          providerStatus={providerStatus}
+          showModeToggle={showModeToggle}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---------- ScenarioPolicy editor ------------------------------------
+
+function PolicyEditor({
+  policy,
+  onChange,
+  modelOptions,
+  providerStatus,
+  showModeToggle,
+}: {
+  policy: ScenarioPolicy;
+  onChange: (next: ScenarioPolicy) => void;
+  modelOptions: Record<LLMProvider, ModelOption[]>;
+  providerStatus: ProviderStatus;
+  showModeToggle: boolean;
+}): JSX.Element {
+  function toggleEnabled(): void {
+    onChange({ ...policy, enabled: !policy.enabled });
+  }
+
+  function setTrigger(t: TriggerClass, on: boolean): void {
+    const ts = on
+      ? Array.from(new Set([...policy.triggers, t]))
+      : policy.triggers.filter((x) => x !== t);
+    onChange({ ...policy, triggers: ts });
+  }
+
+  function updateStep(idx: number, step: ScenarioStep): void {
+    const chain = policy.chain.map((s, i) => (i === idx ? step : s));
+    onChange({ ...policy, chain });
+  }
+
+  function moveStep(idx: number, dir: -1 | 1): void {
+    const j = idx + dir;
+    if (j < 0 || j >= policy.chain.length) return;
+    const chain = policy.chain.slice();
+    [chain[idx], chain[j]] = [chain[j], chain[idx]];
+    onChange({ ...policy, chain });
+  }
+
+  function removeStep(idx: number): void {
+    if (policy.chain.length <= 1) return; // primary required
+    const chain = policy.chain.filter((_, i) => i !== idx);
+    onChange({ ...policy, chain });
+  }
+
+  function addStep(): void {
+    // Default new step: first provider not already in chain, with its
+    // first model option. Fall back to claude/default model if all 4
+    // providers already on chain.
+    const used = new Set(policy.chain.map((s) => s.provider));
+    const next = (ALL_PROVIDERS.find((p) => !used.has(p)) ?? 'claude') as LLMProvider;
+    const model = modelOptions[next]?.[0]?.id ?? 'claude-opus-4-20250514';
+    onChange({ ...policy, chain: [...policy.chain, { provider: next, model }] });
+  }
 
   return (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[180px_1fr]">
+    <div className="space-y-3">
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={policy.enabled}
+          onChange={toggleEnabled}
+        />
+        <span>启用此场景</span>
+        {!policy.enabled && (
+          <span className="rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] text-red-700">
+            已停用 — 调用会返回 503
+          </span>
+        )}
+      </label>
+
       <div>
-        <div className="text-sm font-medium">{meta.name}</div>
-        <div className="text-[11px] text-ink-500">{meta.hint}</div>
-        {!keyConfigured && (
-          <div className="mt-0.5 text-[11px] text-red-600">
-            未配 {meta.envVar}
-          </div>
+        <div className="text-xs font-medium">触发条件（命中才换链下一步）</div>
+        <div className="mt-1 space-y-1">
+          {ALL_TRIGGERS.map((t) => (
+            <label key={t} className="flex items-start gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={policy.triggers.includes(t)}
+                onChange={(e) => setTrigger(t, e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>{TRIGGER_LABEL[t]}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs font-medium">调用链（首项 = 主选；后续按顺序回退）</div>
+        <div className="mt-1 space-y-1">
+          {policy.chain.map((step, i) => (
+            <StepRow
+              key={i}
+              idx={i}
+              total={policy.chain.length}
+              step={step}
+              modelOptions={modelOptions}
+              providerStatus={providerStatus}
+              showModeToggle={showModeToggle}
+              onChange={(s) => updateStep(i, s)}
+              onMove={(d) => moveStep(i, d)}
+              onRemove={() => removeStep(i)}
+            />
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={addStep}
+          className="mt-2 rounded-md border border-dashed border-ink-300 bg-white px-3 py-1.5 text-xs text-ink-600 hover:border-brand-400 hover:text-brand-700"
+        >
+          + 加一步回退
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- One step in the chain ------------------------------------
+
+function StepRow({
+  idx,
+  total,
+  step,
+  modelOptions,
+  providerStatus,
+  showModeToggle,
+  onChange,
+  onMove,
+  onRemove,
+}: {
+  idx: number;
+  total: number;
+  step: ScenarioStep;
+  modelOptions: Record<LLMProvider, ModelOption[]>;
+  providerStatus: ProviderStatus;
+  showModeToggle: boolean;
+  onChange: (s: ScenarioStep) => void;
+  onMove: (d: -1 | 1) => void;
+  onRemove: () => void;
+}): JSX.Element {
+  const opts = modelOptions[step.provider] ?? [];
+  const isPreset = opts.some((o) => o.id === step.model);
+  const isPrimary = idx === 0;
+  const keyMissing = !providerStatus[step.provider] && step.mode !== 'skip-polish';
+
+  return (
+    <div
+      className={`rounded-lg border p-2 ${
+        isPrimary ? 'border-brand-300 bg-brand-50/30' : 'border-ink-100'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-medium ${
+            isPrimary ? 'bg-brand-600 text-white' : 'bg-ink-100 text-ink-700'
+          }`}
+        >
+          {idx + 1}
+        </span>
+        <span className="text-[11px] font-medium">
+          {isPrimary ? '主选' : `回退 ${idx}`}
+        </span>
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => onMove(-1)}
+          disabled={idx === 0}
+          className="rounded p-1 text-ink-400 hover:bg-ink-100 disabled:opacity-30"
+          aria-label="上移"
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          onClick={() => onMove(1)}
+          disabled={idx === total - 1}
+          className="rounded p-1 text-ink-400 hover:bg-ink-100 disabled:opacity-30"
+          aria-label="下移"
+        >
+          ↓
+        </button>
+        {total > 1 && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded p-1 text-red-500 hover:bg-red-50"
+            aria-label="删除该步"
+            title={isPrimary ? '删除会让 chain[0] 提升为新主选' : undefined}
+          >
+            ✕
+          </button>
         )}
       </div>
-      <div>
+      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[140px_1fr]">
         <select
-          value={isPreset ? model : CUSTOM_MODEL_SENTINEL}
+          value={step.provider}
+          onChange={(e) =>
+            onChange({
+              ...step,
+              provider: e.target.value as LLMProvider,
+              // Reset model to the first preset for the new provider
+              model:
+                modelOptions[e.target.value as LLMProvider]?.[0]?.id ?? step.model,
+            })
+          }
+          className="rounded-lg border border-ink-200 px-2 py-1 text-xs"
+        >
+          {ALL_PROVIDERS.map((p) => (
+            <option key={p} value={p}>
+              {PROVIDER_META[p].name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={isPreset ? step.model : CUSTOM_MODEL_SENTINEL}
           onChange={(e) => {
             const v = e.target.value;
             if (v === CUSTOM_MODEL_SENTINEL) {
-              // Switching from a preset to custom: blank the value so the
-              // input below focuses and starts empty. If we're already in
-              // custom mode the select still shows the sentinel, so this
-              // branch only fires on preset → custom transitions.
-              if (isPreset) onChange('');
+              if (isPreset) onChange({ ...step, model: '' });
             } else {
-              onChange(v);
+              onChange({ ...step, model: v });
             }
           }}
-          className="w-full rounded-lg border border-ink-200 px-3 py-1.5 text-xs outline-none focus:border-brand-500"
+          className="rounded-lg border border-ink-200 px-2 py-1 text-xs"
         >
-          {options.map((o) => (
+          {opts.map((o) => (
             <option key={o.id} value={o.id}>
               {o.label} · {o.id}
             </option>
           ))}
-          <option value={CUSTOM_MODEL_SENTINEL}>
-            ✏️ 自定义…（手填模型 ID）
-          </option>
+          <option value={CUSTOM_MODEL_SENTINEL}>✏️ 自定义…</option>
         </select>
-        {!isPreset && (
-          <div className="mt-2 rounded-lg border border-brand-200 bg-brand-50/40 p-2">
-            <input
-              type="text"
-              value={model}
-              onChange={(e) => onChange(e.target.value)}
-              placeholder="输入模型 ID，如 gpt-4o-mini、claude-sonnet-4"
-              autoFocus={model === ''}
-              className="w-full rounded-md border border-ink-200 bg-white px-3 py-1.5 text-xs outline-none focus:border-brand-500"
-            />
-            <div className="mt-1.5 text-[11px] text-ink-600">
-              自定义 ID 不走平台校验。改完滚到页面最底部的工具栏点
-              <b className="text-brand-700">保存</b>。
-            </div>
-          </div>
-        )}
-        {incompatible && (
-          <div className="mt-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-            ⚠️ <code className="font-mono">{incompatible.id}</code> 与当前 adapter 不兼容：
-            {incompatible.reason}
-          </div>
-        )}
-        {provider === 'openai' && keyConfigured && (
-          <OpenAIModelProbe currentModel={model} onPick={onChange} />
-        )}
       </div>
-    </div>
-  );
-}
-
-/**
- * Diagnostic widget on the OpenAI row · click "查看可用模型" to hit
- * GET /api/admin/probe-openai-models which calls the configured
- * OPENAI_BASE_URL's /v1/models endpoint. Shows the catalog so the admin
- * can pick an ID that's actually activated on the gateway (KSP / Azure
- * frequently activate a SUBSET of openai.com's full list, and the
- * runtime 403 "model not activated" is the kind of error the admin
- * needs the gateway to tell them about, not a guess).
- *
- * Click a result row to copy the id straight back into the model field
- * — saves the operator from typing.
- */
-function OpenAIModelProbe({
-  currentModel,
-  onPick,
-}: {
-  currentModel: string;
-  onPick: (id: string) => void;
-}) {
-  const [state, setState] = useState<
-    | { kind: 'idle' }
-    | { kind: 'loading' }
-    | {
-        kind: 'ok';
-        baseURL: string;
-        models: Array<{ id: string; ownedBy?: string; created?: number }>;
-      }
-    | { kind: 'err'; message: string; status?: number }
-  >({ kind: 'idle' });
-
-  const probe = async () => {
-    setState({ kind: 'loading' });
-    try {
-      const r = await fetch('/api/admin/probe-openai-models');
-      const body = await r.json();
-      if (!body.ok) {
-        setState({
-          kind: 'err',
-          message: body.error ?? `HTTP ${r.status}`,
-          status: body.status,
-        });
-        return;
-      }
-      setState({
-        kind: 'ok',
-        baseURL: body.baseURL,
-        models: body.models,
-      });
-    } catch (e: any) {
-      setState({ kind: 'err', message: e?.message ?? '网络错误' });
-    }
-  };
-
-  return (
-    <div className="mt-2 rounded-md border border-ink-100 bg-ink-50/40 p-2">
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] text-ink-600">
-          看 OpenAI 网关给你开通了哪些模型 ID（KSP / Azure 等代理常用）
-        </span>
-        <button
-          type="button"
-          onClick={probe}
-          disabled={state.kind === 'loading'}
-          className="rounded-md border border-ink-200 bg-white px-2 py-1 text-[11px] hover:border-brand-300 disabled:opacity-50"
-        >
-          {state.kind === 'loading' ? '探测中…' : '🔍 查看可用模型'}
-        </button>
-      </div>
-      {state.kind === 'err' && (
-        <div className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-[11px] text-red-800">
-          <div className="font-medium">探测失败</div>
-          <div className="mt-0.5 break-all font-mono text-[10px]">
-            {state.status ? `[${state.status}] ` : ''}
-            {state.message}
-          </div>
-          <div className="mt-1 text-[10px] text-red-700">
-            常见原因：API key 错 / OPENAI_BASE_URL 拼错 / 网关没开通 /v1/models
-            端点。检查 Vercel 函数日志看完整错误。
-          </div>
+      {!isPreset && (
+        <input
+          type="text"
+          value={step.model}
+          onChange={(e) => onChange({ ...step, model: e.target.value })}
+          placeholder="输入模型 ID"
+          autoFocus={step.model === ''}
+          className="mt-2 w-full rounded-md border border-brand-200 bg-white px-2 py-1 text-xs"
+        />
+      )}
+      {showModeToggle && (
+        <label className="mt-2 flex items-center gap-2 text-[11px] text-ink-700">
+          <input
+            type="checkbox"
+            checked={step.mode === 'skip-polish'}
+            onChange={(e) =>
+              onChange({ ...step, mode: e.target.checked ? 'skip-polish' : 'normal' })
+            }
+          />
+          <span>
+            skip-polish 模式
+            <span className="ml-1 text-[10px] text-ink-500">
+              （不调 LLM，直接用上游 hydrate 母语版）
+            </span>
+          </span>
+        </label>
+      )}
+      {keyMissing && (
+        <div className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-[10px] text-amber-700">
+          ⚠️ 未配 {PROVIDER_META[step.provider].envVar} — 该步会被运行时跳过
         </div>
       )}
-      {state.kind === 'ok' && (
-        <div className="mt-2">
-          <div className="text-[10px] text-ink-500">
-            <code className="font-mono">{state.baseURL}</code> · 共
-            {state.models.length} 个 model（最新在前）
-          </div>
-          <div className="mt-1 max-h-48 overflow-y-auto rounded-md border border-ink-100 bg-white">
-            {state.models.length === 0 && (
-              <div className="px-2 py-1.5 text-[11px] text-ink-500">
-                网关没返回任何模型。
-              </div>
-            )}
-            {state.models.map((m) => {
-              const isCurrent = m.id === currentModel;
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => onPick(m.id)}
-                  className={`flex w-full items-center justify-between border-b border-ink-100 px-2 py-1.5 text-left text-[11px] last:border-b-0 ${
-                    isCurrent
-                      ? 'bg-brand-50/60'
-                      : 'hover:bg-ink-50'
-                  }`}
-                  title={m.ownedBy ? `owned by ${m.ownedBy}` : undefined}
-                >
-                  <code className="font-mono text-[11px] text-ink-700">{m.id}</code>
-                  <span className="text-[10px] text-ink-400">
-                    {isCurrent ? '✓ 当前' : '点击选用 →'}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ScenarioRow({
-  label,
-  hint,
-  locales,
-}: {
-  label: string;
-  hint: string;
-  locales: Array<{
-    key: string;
-    label: string;
-    value: LLMProvider;
-    onChange: (v: LLMProvider) => void;
-  }>;
-}) {
-  return (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[180px_1fr]">
-      <div>
-        <div className="text-sm font-medium">{label}</div>
-        <div className="text-[11px] text-ink-500">{hint}</div>
-      </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {locales.map((l) => (
-          <div key={l.key} className="flex items-center gap-2">
-            <span className="w-14 text-xs text-ink-500">{l.label}</span>
-            <select
-              value={l.value}
-              onChange={(e) => l.onChange(e.target.value as LLMProvider)}
-              className="flex-1 rounded-lg border border-ink-200 px-3 py-1.5 text-xs outline-none focus:border-brand-500"
-            >
-              {ALL_PROVIDERS.map((p) => (
-                <option key={p} value={p}>
-                  {PROVIDER_META[p].name}
-                </option>
-              ))}
-            </select>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

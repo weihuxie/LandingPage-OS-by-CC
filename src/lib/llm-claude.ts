@@ -45,7 +45,7 @@ import type {
 } from './types';
 import type { ExtractedContext } from './extract';
 import { LLMRequiredError, LLMCallError } from './errors';
-import { readLLMConfig, DEFAULT_LLM_CONFIG } from './llm-config';
+// llm-config import removed in v2 — model now flows via parameters.
 
 /** Module types we wire through Claude; anything else falls back to template. */
 const CLAUDE_MODULE_TYPES: ReadonlySet<ModuleType> = new Set([
@@ -139,13 +139,14 @@ const MAX_TOKENS = 4096;
  * becomes a bottleneck (it hasn't in practice) we can cache per-request
  * via React's `cache()` helper.
  */
-async function resolveModel(): Promise<string> {
-  try {
-    const cfg = await readLLMConfig();
-    return cfg.providers.claude.model || DEFAULT_LLM_CONFIG.providers.claude.model;
-  } catch {
-    return DEFAULT_LLM_CONFIG.providers.claude.model;
-  }
+// v2: model is per-scenario-step, passed in by the caller. The fallback
+// here is hardcoded for the rare paths that call adapters directly
+// without going through llm-provider (tests, ad-hoc one-shots).
+const HARDCODED_CLAUDE_DEFAULT = 'claude-opus-4-20250514';
+
+async function resolveModel(modelOverride?: string): Promise<string> {
+  if (modelOverride && modelOverride.trim()) return modelOverride.trim();
+  return HARDCODED_CLAUDE_DEFAULT;
 }
 
 /**
@@ -340,6 +341,7 @@ const STRATEGY_TOOL = {
 export async function generateStrategyViaClaude(
   inputs: ProductInputs,
   context?: ExtractedContext,
+  modelOverride?: string,
 ): Promise<StrategySummary> {
   if (!hasClaudeKey()) {
     throw new LLMRequiredError('strategy', 'ANTHROPIC_API_KEY');
@@ -408,7 +410,7 @@ Verbatim rules:
 - If the tagline "${inputs.tagline || '(none)'}" contains a concrete promise, echo its key nouns/verbs.
 - Any named customer, metric, or pain phrase from the extracted materials must appear verbatim — do not round, paraphrase, or soften.`;
 
-  const model = await resolveModel();
+  const model = await resolveModel(modelOverride);
   try {
     const response = await client.messages.create({
       model,
@@ -708,6 +710,7 @@ export async function regenerateModuleViaClaude(
   tone: ToneKey,
   locale: PageLocale,
   variant?: NarrativeVariant,
+  modelOverride?: string,
 ): Promise<Partial<ClaudeModuleContent> | null> {
   if (!hasClaudeKey()) {
     throw new LLMRequiredError('module-regen', 'ANTHROPIC_API_KEY');
@@ -762,7 +765,7 @@ export async function regenerateModuleViaClaude(
     input_schema: MODULE_SCHEMAS[type] as any,
   };
 
-  const model = await resolveModel();
+  const model = await resolveModel(modelOverride);
   // Single attempt — one HTTP call + parse. Kept as a local function so
   // the retry loop below can invoke it multiple times without rebuilding
   // the (moderately expensive) system prompt / user prompt / tool spec.

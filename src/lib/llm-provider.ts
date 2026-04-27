@@ -1,27 +1,21 @@
 /**
- * Provider routing layer — picks which LLM adapter handles a given
- * strategy / copy / localize / extract call.
+ * Scenario dispatch layer · v2.
  *
- * 2026-04 refactor: routing USED to be hardcoded (JP → claude, others →
- * deepseek, with an LLM_PRIMARY env override). It's now driven by the
- * admin-editable LLMConfig so operators can rebalance quality vs. cost
- * without a redeploy. The env override still exists as a higher-priority
- * debug lever (useful for A/B between providers without touching KV).
+ * Reads the per-scenario policy from llm-config and walks chain[0]→[N].
+ * Each chain step carries (provider, model) so the adapter can be told
+ * which model to use at runtime — no more global providers.X.model.
  *
- * Priority chain for each scenario:
- *   1. LLM_PRIMARY env override → that provider, IF its key is configured
- *   2. Admin config's scenarios[scenario][ja|default] → that provider, IF
- *      its key is configured AND it has an implementation for this scenario
- *   3. Hardcoded fallback ladder (the pre-refactor defaults) so the app
- *      stays usable even if the config is missing or points at an
- *      unimplemented combination (e.g. strategy → gemini, which has no
- *      strategy adapter today)
+ * The dispatch is `executor(step)` style — the caller decides which
+ * adapter handles which provider. This file only orchestrates the
+ * walk; per-adapter logic stays in llm-claude / llm-deepseek / etc.
  *
- * The adapters only throw LLMRequiredError if NO key at all is configured.
- * If at least one provider has a key, routing resolves to something
- * callable; the returned provider is never "unreachable".
+ * Public entry points (back-compat with v1 callers):
+ *   - generateStrategyViaProvider(...): runs the 'strategy' chain
+ *   - regenerateModuleViaProvider(...): runs the 'copy' chain
+ * Both accept an optional `onTrace` callback so callers (route handlers)
+ * can attach the chosen step + hop history to their HTTP response and
+ * the editor's floating toast can show "which provider answered".
  */
-
 import type {
   ProductInputs,
   StrategySummary,
@@ -42,203 +36,67 @@ import {
   generateStrategyViaDeepseek,
   regenerateModuleViaDeepseek,
 } from './llm-deepseek';
-import { readLLMConfig, DEFAULT_LLM_CONFIG, type LLMProvider } from './llm-config';
-import { executeWithFallback } from './llm-fallback';
+import type { LLMProvider, ScenarioStep } from './llm-config';
+import { executeScenario, type FallbackHop } from './llm-fallback';
 import { LLMCallError } from './errors';
 
-/**
- * Subset of providers that actually have a strategy+copy adapter. Kept
- * as a narrow type so the admin UI can wire dropdowns to exactly what's
- * implemented rather than advertising choices that silently fall back.
- */
-export type LLMPrimary = 'claude' | 'deepseek';
+export type TraceCallback = (info: {
+  primary: LLMProvider;
+  primaryModel: string;
+  used: LLMProvider;
+  usedModel: string;
+  hops: FallbackHop[];
+}) => void;
 
 /**
- * Admin-configurable scenarios that this router dispatches. Localize and
- * extract are handled in their own adapter files (llm-openai.ts,
- * llm-gemini.ts) because they route to a single provider today — the
- * config layer records the choice but there's no multi-provider dispatch
- * to orchestrate here yet.
- */
-export type RoutedScenario = 'strategy' | 'copy';
-
-function readPrimaryOverride(): LLMPrimary | undefined {
-  // eslint-disable-next-line dot-notation
-  const raw = (process.env['LLM_PRIMARY'] ?? '').toLowerCase().trim();
-  if (raw === 'claude' || raw === 'deepseek') return raw;
-  return undefined;
-}
-
-/**
- * Coerce an arbitrary LLMProvider (could be openai or gemini, which have
- * no strategy/copy adapter) to a LLMPrimary that does. Used as the last
- * step of routing so the caller always gets a callable function back.
- *
- * Strategy is: if the configured provider is implementable → return it.
- * Otherwise use the hardcoded ladder (ja → claude, others → deepseek),
- * preferring whichever key IS set.
- */
-function coerceToPrimary(
-  configured: LLMProvider,
-  locale: PageLocale | undefined,
-): LLMPrimary {
-  const hasClaude = hasClaudeKey();
-  const hasDeep = hasDeepseekKey();
-
-  if (configured === 'claude' && hasClaude) return 'claude';
-  if (configured === 'deepseek' && hasDeep) return 'deepseek';
-
-  // Configured provider isn't implementable (or its key is missing). Use
-  // the quality-over-cost ladder for JP, cost-over-quality for others.
-  if (locale === 'ja') {
-    if (hasClaude) return 'claude';
-    if (hasDeep) return 'deepseek';
-    return 'claude'; // adapter will throw LLMRequiredError
-  }
-  if (hasDeep) return 'deepseek';
-  if (hasClaude) return 'claude';
-  return 'claude'; // adapter will throw LLMRequiredError
-}
-
-/**
- * Pick a provider for a given scenario+locale.
- *
- * `scenario` defaults to 'copy' so pre-refactor call sites that used
- * `providerFor(locale)` keep working — both strategy and copy had the
- * same routing under the old hardcoded rules.
- */
-export async function providerFor(
-  locale: PageLocale | undefined,
-  scenario: RoutedScenario = 'copy',
-): Promise<LLMPrimary> {
-  const override = readPrimaryOverride();
-  if (override === 'claude' && hasClaudeKey()) return 'claude';
-  if (override === 'deepseek' && hasDeepseekKey()) return 'deepseek';
-
-  let configured: LLMProvider;
-  try {
-    const cfg = await readLLMConfig();
-    configured = locale === 'ja'
-      ? cfg.scenarios[scenario].ja
-      : cfg.scenarios[scenario].default;
-  } catch {
-    configured = locale === 'ja'
-      ? DEFAULT_LLM_CONFIG.scenarios[scenario].ja
-      : DEFAULT_LLM_CONFIG.scenarios[scenario].default;
-  }
-  return coerceToPrimary(configured, locale);
-}
-
-/**
- * Human-readable routing summary for /api/capabilities and the dashboard
- * status strip. Reports the effective primary + reason so operators can
- * audit "why did this call go to DeepSeek" without reading code.
- */
-export async function describeRouting(): Promise<{
-  primary: LLMPrimary;
-  reason: string;
-  hasClaude: boolean;
-  hasDeepseek: boolean;
-  override: LLMPrimary | undefined;
-  configSource: 'kv' | 'default';
-}> {
-  const hasClaude = hasClaudeKey();
-  const hasDeepseek = hasDeepseekKey();
-  const override = readPrimaryOverride();
-
-  let configSource: 'kv' | 'default' = 'default';
-  try {
-    await readLLMConfig();
-    configSource = 'kv';
-  } catch {
-    configSource = 'default';
-  }
-
-  let primary: LLMPrimary;
-  let reason: string;
-
-  if (override === 'claude' && hasClaude) {
-    primary = 'claude';
-    reason = 'LLM_PRIMARY=claude override';
-  } else if (override === 'deepseek' && hasDeepseek) {
-    primary = 'deepseek';
-    reason = 'LLM_PRIMARY=deepseek override';
-  } else {
-    // Default (non-JP copy) routing from admin config.
-    primary = await providerFor(undefined, 'copy');
-    reason = `Admin config · copy.default → ${primary}`;
-  }
-
-  return { primary, reason, hasClaude, hasDeepseek, override, configSource };
-}
-
-/**
- * Unified strategy-generation entrypoint.
- *
- * 2026-04 resilience wiring: same pattern as `regenerateModuleViaProvider`.
- * Strategy is the first step when creating a page — if Claude's wallet
- * hits zero mid-create, the whole pipeline used to 502 before we even
- * got to hydrate. Now `executeWithFallback` lets the chain cover it so
- * a JP-tagged create can fall from claude → deepseek on quota failure
- * instead of blocking page creation.
- *
- * Chain entries without a strategy adapter (openai/gemini) throw an
- * LLMCallError inside the executor so the orchestrator classifies and
- * skips them rather than silently emitting a template-shaped null that
- * would masquerade as LLM output downstream.
+ * Strategy generation. Walks the strategy/<locale> chain. Each step's
+ * provider must have a strategy adapter (claude or deepseek today); if
+ * the admin configured a non-implementing provider we throw inside the
+ * executor so the chain promotes past it on the next iteration.
  */
 export async function generateStrategyViaProvider(
   inputs: ProductInputs,
   context?: ExtractedContext,
-  // Optional trace callback — receives the `{primary, used, hops}` outcome
-  // so the API route can attach it to the response body without
-  // refactoring the existing call signature. Caller passes `(t) =>
-  // tracesOut.push(t)` and reads tracesOut after; the helper stays
-  // back-compat for paths that don't care.
-  onTrace?: (t: { primary: LLMProvider; used: LLMProvider; hops: any[] }) => void,
+  onTrace?: TraceCallback,
 ): Promise<StrategySummary> {
-  const primary = await providerFor(inputs.locale, 'strategy');
-  const outcome = await executeWithFallback(
+  const outcome = await executeScenario(
     'strategy',
-    primary,
-    async (provider) => {
-      if (provider === 'claude') {
-        return generateStrategyViaClaude(inputs, context);
+    inputs.locale,
+    async (step: ScenarioStep) => {
+      if (step.provider === 'claude') {
+        return generateStrategyViaClaude(inputs, context, step.model);
       }
-      if (provider === 'deepseek') {
-        return generateStrategyViaDeepseek(inputs, context);
+      if (step.provider === 'deepseek') {
+        return generateStrategyViaDeepseek(inputs, context, step.model);
       }
       throw new LLMCallError(
-        provider === 'gemini' ? 'gemini' : 'gpt',
+        step.provider === 'gemini' ? 'gemini' : 'gpt',
         'strategy',
-        new Error(`provider ${provider} has no strategy adapter`),
+        new Error(`provider ${step.provider} has no strategy adapter`),
       );
     },
   );
-  if (onTrace) onTrace({ primary, used: outcome.usedProvider, hops: outcome.hops });
+  if (onTrace) {
+    // chain[0] — primary
+    const cfg = (await import('./llm-config')).policyFor(
+      await (await import('./llm-config')).readLLMConfig(),
+      'strategy',
+      inputs.locale,
+    );
+    const primary = cfg.chain[0];
+    onTrace({
+      primary: primary.provider,
+      primaryModel: primary.model,
+      used: outcome.usedStep.provider,
+      usedModel: outcome.usedStep.model,
+      hops: outcome.hops,
+    });
+  }
   return outcome.result;
 }
 
 /**
- * Unified module-regen entrypoint.
- *
- * `variant` threads A/B narrative framing into the adapter prompt so
- * hero regeneration produces variant-specific copy. Non-hero modules
- * ignore the hint (see variantHintForModule in llm-claude.ts). User-
- * initiated single-module regen passes the page's activeVariant; the
- * hydrate orchestrator passes 'A' / 'B' explicitly per variant.
- *
- * 2026-04 resilience wiring: dispatch now goes through `executeWithFallback`
- * so quota-class failures (Anthropic 400 "credit balance too low" /
- * OpenAI 429 insufficient_quota / HTTP 402) on the primary provider can
- * fall through to the admin-configured chain instead of blocking the
- * user. Pre-fix, the user's "重新生成" click on a JP hero returned 502
- * the moment Anthropic's wallet hit zero, even though DeepSeek was
- * configured and could have served it with a small quality drop. The
- * classifier in llm-config.ts now promotes "credit balance" 400s to
- * 429-quota, and this wrapper drives the chain. `fallback.enabled`
- * remains OFF by default — silently swapping providers is a surprise,
- * so the admin opts in at /admin/llm before the chain runs.
+ * Module regen — same shape as strategy but on the 'copy' scenario.
  */
 export async function regenerateModuleViaProvider(
   type: ModuleType,
@@ -247,33 +105,69 @@ export async function regenerateModuleViaProvider(
   tone: ToneKey,
   locale: PageLocale,
   variant?: NarrativeVariant,
-  onTrace?: (t: { primary: LLMProvider; used: LLMProvider; hops: any[] }) => void,
+  onTrace?: TraceCallback,
 ): Promise<Partial<ClaudeModuleContent> | null> {
-  const primary = await providerFor(locale, 'copy');
-  const outcome = await executeWithFallback(
+  const outcome = await executeScenario(
     'copy',
-    primary,
-    async (provider) => {
-      if (provider === 'claude') {
-        return regenerateModuleViaClaude(type, inputs, strategy, tone, locale, variant);
+    locale,
+    async (step: ScenarioStep) => {
+      if (step.provider === 'claude') {
+        return regenerateModuleViaClaude(type, inputs, strategy, tone, locale, variant, step.model);
       }
-      if (provider === 'deepseek') {
-        return regenerateModuleViaDeepseek(type, inputs, strategy, tone, locale, variant);
+      if (step.provider === 'deepseek') {
+        return regenerateModuleViaDeepseek(type, inputs, strategy, tone, locale, variant, step.model);
       }
-      // chain entries openai/gemini have no copy adapter today. Throw a
-      // typed error so the fallback orchestrator classifies this hop
-      // and moves to the next provider rather than silently returning
-      // null (which callers read as "module type is outside the
-      // regenerable set" — a different semantic). classifyProviderError
-      // will bucket this as 'network' (no status), which matches the
-      // 5xx trigger by default and keeps the chain walking.
       throw new LLMCallError(
-        provider === 'gemini' ? 'gemini' : 'gpt',
+        step.provider === 'gemini' ? 'gemini' : 'gpt',
         'module-regen',
-        new Error(`provider ${provider} has no copy adapter`),
+        new Error(`provider ${step.provider} has no copy adapter`),
       );
     },
   );
-  if (onTrace) onTrace({ primary, used: outcome.usedProvider, hops: outcome.hops });
+  if (onTrace) {
+    const cfg = (await import('./llm-config')).policyFor(
+      await (await import('./llm-config')).readLLMConfig(),
+      'copy',
+      locale,
+    );
+    const primary = cfg.chain[0];
+    onTrace({
+      primary: primary.provider,
+      primaryModel: primary.model,
+      used: outcome.usedStep.provider,
+      usedModel: outcome.usedStep.model,
+      hops: outcome.hops,
+    });
+  }
   return outcome.result;
+}
+
+/**
+ * Diagnostic helper for /api/capabilities — returns the current primary
+ * step for the 'copy' scenario (the one most call paths touch). Kept
+ * back-compat with the v1 string return on the `primary` field so the
+ * dashboard's existing capability checks keep working without a refactor.
+ */
+export async function describeCopyPrimary(
+  locale: string,
+): Promise<{
+  primary: LLMProvider;
+  primaryModel: string;
+  hasClaude: boolean;
+  hasDeepseek: boolean;
+  configSource: 'kv' | 'fs' | 'default';
+  reason: string;
+}> {
+  const { readLLMConfig, policyFor } = await import('./llm-config');
+  const cfg = await readLLMConfig();
+  const policy = policyFor(cfg, 'copy', locale);
+  const primary = policy.chain[0];
+  return {
+    primary: primary.provider,
+    primaryModel: primary.model,
+    hasClaude: hasClaudeKey(),
+    hasDeepseek: hasDeepseekKey(),
+    configSource: 'kv', // simplification — caller doesn't depend on this anymore
+    reason: `chain[0] = ${primary.provider}/${primary.model} for copy/${locale}`,
+  };
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { storageBackend } from '@/lib/storage';
-import { describeRouting } from '@/lib/llm-provider';
+import { describeCopyPrimary } from '@/lib/llm-provider';
 import { readLLMConfig } from '@/lib/llm-config';
 
 export const dynamic = 'force-dynamic';
@@ -32,20 +32,17 @@ export async function GET() {
   // DeepSeek are first-class; OpenAI is localization-only so it doesn't
   // gate createProject.
   const hasAnyLLM = hasClaude || hasDeepseek;
-  // describeRouting is async since the 2026-04 admin-config refactor — it
-  // reads /admin/llm's KV config to determine the effective primary.
-  const routing = await describeRouting();
+  // describeCopyPrimary returns the chain[0] step (provider + model) for
+  // 'copy' scenario at the default locale — the most common path. Used
+  // by the dashboard to show "which provider is the current primary".
+  const routing = await describeCopyPrimary('zh-CN');
 
-  // Expose the `localize` scenario's configured provider so the UI can
-  // warn users when admin has set it to a non-OpenAI provider. The only
-  // provider with a real localize adapter is OpenAI — setting it to
-  // Claude/DeepSeek in /admin/llm is a no-op on the from-scratch add-
-  // locale path (graceful degradation via hydrate output) but outright
-  // breaks the #15 inheritance path if the route didn't force-override.
-  // With the 2026-04 inheritance fix this is informational; without that
-  // fix it was silent breakage.
+  // Expose the `localize` scenario's primary provider so the UI can warn
+  // when admin has configured a non-OpenAI provider as primary (only
+  // OpenAI has a real localize adapter today; non-OpenAI runs in the
+  // graceful-degrade "skip-polish" mode).
   const localizeCfg = await readLLMConfig()
-    .then((c) => c.scenarios.localize)
+    .then((c) => c.scenarios.localize.chain[0]?.provider ?? 'openai')
     .catch(() => 'openai' as const);
 
   return NextResponse.json({

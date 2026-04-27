@@ -33,7 +33,7 @@ import type {
   ModuleType,
 } from './types';
 import { LLMRequiredError, LLMCallError } from './errors';
-import { readLLMConfig, DEFAULT_LLM_CONFIG } from './llm-config';
+// llm-config import removed in v2 — model now flows via parameters.
 
 export function hasOpenAIKey(): boolean {
   // eslint-disable-next-line dot-notation
@@ -102,13 +102,11 @@ export async function listOpenAIModels(): Promise<{
 
 // Model comes from the admin-configurable llm-config at runtime; default
 // (gpt-4o-2024-08-06) is defined in DEFAULT_LLM_CONFIG.
-async function resolveModel(): Promise<string> {
-  try {
-    const cfg = await readLLMConfig();
-    return cfg.providers.openai.model || DEFAULT_LLM_CONFIG.providers.openai.model;
-  } catch {
-    return DEFAULT_LLM_CONFIG.providers.openai.model;
-  }
+const HARDCODED_OPENAI_DEFAULT = 'gpt-4o';
+
+async function resolveModel(modelOverride?: string): Promise<string> {
+  if (modelOverride && modelOverride.trim()) return modelOverride.trim();
+  return HARDCODED_OPENAI_DEFAULT;
 }
 
 /**
@@ -221,6 +219,7 @@ export async function localizeModuleViaGpt(
   toLocale: PageLocale,
   market: MarketCode,
   tone: ToneKey,
+  modelOverride?: string,
 ): Promise<PageModule | null> {
   if (!hasOpenAIKey()) {
     throw new LLMRequiredError('localize-gpt', 'OPENAI_API_KEY');
@@ -242,7 +241,7 @@ export async function localizeModuleViaGpt(
     `Produce the ${toLocale} version. Return ONLY the new content JSON with the same schema.`,
   ].join('\n');
 
-  const model = await resolveModel();
+  const model = await resolveModel(modelOverride);
   try {
     const resp = await client.chat.completions.create({
       model,
@@ -308,13 +307,14 @@ export async function localizeModulesViaGpt(
   toLocale: PageLocale,
   market: MarketCode,
   tone: ToneKey,
+  modelOverride?: string,
 ): Promise<PageModule[]> {
   if (!hasOpenAIKey()) {
     throw new LLMRequiredError('localize-gpt', 'OPENAI_API_KEY');
   }
   return Promise.all(
     modules.map(async (m) => {
-      const localized = await localizeModuleViaGpt(m, toLocale, market, tone);
+      const localized = await localizeModuleViaGpt(m, toLocale, market, tone, modelOverride);
       // null = module type not routed through GPT (form / testimonial /
       // etc.); keep source unchanged. Not a degradation — those modules
       // are user-authored from the asset library.

@@ -176,10 +176,11 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
     // under the new sibling's tab). If OPENAI_API_KEY is missing,
     // localizeModulesViaGpt throws LLMRequiredError → 503.
     const llmCfg = await readLLMConfig();
-    const localizePrimary = llmCfg.scenarios.localize;
+    const localizePrimary = llmCfg.scenarios.localize.chain[0]?.provider ?? 'openai';
+    const localizeModel = llmCfg.scenarios.localize.chain[0]?.model;
     if (localizePrimary !== 'openai') {
       console.warn(
-        `[locales] parallel inherit ignoring admin scenarios.localize=${localizePrimary}; ` +
+        `[locales] parallel inherit ignoring admin scenarios.localize.chain[0]=${localizePrimary}; ` +
           `inheritance requires OpenAI (no Claude/DeepSeek localize adapter). Forcing openai.`,
       );
     }
@@ -299,12 +300,12 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
     // LLMRequiredError → 503 with a clear code, which is the correct
     // behavior (inheritance genuinely can't complete without GPT today).
     const llmCfg = await readLLMConfig();
-    const localizePrimary = llmCfg.scenarios.localize;
+    const localizePrimary = llmCfg.scenarios.localize.chain[0]?.provider ?? 'openai';
     if (localizePrimary !== 'openai') {
       console.warn(
-        `[locales] inherit path ignoring admin config scenarios.localize=${localizePrimary}; ` +
+        `[locales] inherit path ignoring admin config scenarios.localize.chain[0]=${localizePrimary}; ` +
           `inheritance requires OpenAI (no Claude/DeepSeek localize adapter exists). ` +
-          `Forcing openai. Consider setting scenarios.localize=openai in /admin/llm.`,
+          `Forcing openai. Consider setting scenarios.localize chain[0]=openai in /admin/llm.`,
       );
     }
 
@@ -473,7 +474,7 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
   // genuinely routes: pick OpenAI → real GPT polish; pick anything else
   // → skip polish and use hydrate output (see executor below).
   const llmCfg = await readLLMConfig();
-  const localizePrimary = llmCfg.scenarios.localize;
+  const localizePrimary = llmCfg.scenarios.localize.chain[0]?.provider ?? 'openai';
 
   let localizedA: PageModule[];
   let localizedB: PageModule[];
@@ -501,22 +502,28 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
     // adapters later.
     fallbackOutcome = await executeWithFallback(
       'localize',
-      localizePrimary,
-      async (provider) => {
-        if (provider === 'openai') {
+      locale,
+      async (step) => {
+        // step.mode === 'skip-polish' means "graceful degrade — no LLM
+        // call, return the Claude hydrate output as-is". Recorded in the
+        // outcome's usedStep so the client toast can show the degrade.
+        if (step.mode === 'skip-polish') {
+          return { A: claudeOut.A, B: claudeOut.B };
+        }
+        if (step.provider === 'openai') {
           const [a, b] = await Promise.all([
-            localizeModulesViaGpt(claudeOut.A, locale, targetMarket, page.tone),
-            localizeModulesViaGpt(claudeOut.B, locale, targetMarket, page.tone),
+            localizeModulesViaGpt(claudeOut.A, locale, targetMarket, page.tone, step.model),
+            localizeModulesViaGpt(claudeOut.B, locale, targetMarket, page.tone, step.model),
           ]);
           return { A: a, B: b };
         }
-        // No second-provider localize adapter exists yet. Returning the
-        // hydrate-time Claude output is the "skip polish" path — no new
-        // LLM call here, since hydrate already ran. `provider` still
-        // ends up in outcome.usedProvider so the client sees which
-        // provider was nominally used (the admin-selected primary, or
-        // whoever covered the hop during fallback).
-        return { A: claudeOut.A, B: claudeOut.B };
+        // Non-openai step without skip-polish — no localize adapter exists
+        // for this provider today. Throw so the chain promotes past it.
+        throw new LLMCallError(
+          'gpt',
+          'localize-gpt',
+          new Error(`provider ${step.provider} has no localize adapter`),
+        );
       },
     );
     localizedA = fallbackOutcome.result.A;
@@ -558,13 +565,15 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
   // older clients but the new shape `llm` is the canonical one.
   const usedFallback =
     fallbackOutcome !== null && fallbackOutcome.hops.length > 0;
-  const usedProvider = fallbackOutcome?.usedProvider ?? localizePrimary;
+  const usedStep = fallbackOutcome?.usedStep;
+  const usedProvider = (usedStep?.provider ?? localizePrimary) as 'openai' | 'claude' | 'deepseek' | 'gemini';
+  const skipPolish = usedStep?.mode === 'skip-polish';
   const llmTrace = makeTrace(
     'localize',
-    localizePrimary,
+    localizePrimary as 'openai' | 'claude' | 'deepseek' | 'gemini',
     usedProvider,
     fallbackOutcome?.hops,
-    usedFallback && usedProvider !== 'openai'
+    skipPolish
       ? 'GPT polish 跳过，使用 Claude hydrate 阶段产出的母语版'
       : undefined,
   );
