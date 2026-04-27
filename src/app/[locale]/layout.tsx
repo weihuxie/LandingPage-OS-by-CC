@@ -5,6 +5,7 @@ import { locales } from '@/i18n';
 import Link from 'next/link';
 import LocaleHtml from '@/components/LocaleHtml';
 import HeaderAuthBadge from '@/components/HeaderAuthBadge';
+import LLMStatusFlash from '@/components/LLMStatusFlash';
 
 export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
@@ -59,6 +60,9 @@ export default async function LocaleLayout({
         </div>
       </header>
       <main>{children}</main>
+      {/* Floating "which LLM answered" toast — fed by dispatchLLMTrace()
+          calls in the editor / wizard fetch handlers. */}
+      <LLMStatusFlash />
     </NextIntlClientProvider>
   );
 }

@@ -14,6 +14,7 @@ import type {
 } from '@/lib/types';
 import { STYLE_PRESETS } from '@/lib/styles';
 import { presetsForLocale, FONT_PRESET_INDEX } from '@/lib/font-presets';
+import { dispatchLLMTrace } from './LLMStatusFlash';
 import { auditProject } from '@/lib/linter';
 import { nativeLabel, PAGE_LOCALES } from '@/lib/i18n-detect';
 import PageRenderer from './PageRenderer';
@@ -789,6 +790,9 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         return;
       }
       const data = await res.json();
+      // Surface the LLM trace toast — tells user which provider actually
+      // produced the localized content (and whether it fell back).
+      dispatchLLMTrace(data?.llm);
       if (data?.page) {
         setPage(data.page);
         switchLocaleTabInternal(data.page, newLocale);

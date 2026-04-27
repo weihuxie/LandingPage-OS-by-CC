@@ -13,6 +13,7 @@ import { generateVariants, hydrateModulesViaClaude } from '@/lib/ai';
 import { pickTopTestimonials, testimonialsToModuleItems } from '@/lib/testimonial-match';
 import { localizeModulesViaGpt } from '@/lib/llm-openai';
 import { executeWithFallback, type FallbackOutcome } from '@/lib/llm-fallback';
+import { makeTrace } from '@/lib/llm-trace';
 import { readLLMConfig } from '@/lib/llm-config';
 import { reportHeroTemplate } from '@/lib/template-detection';
 import { planPageMigration, applyPageMigration } from '@/lib/migrate-parallel-locales';
@@ -552,18 +553,30 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
   await saveLandingPage(page);
   // Surface fallback hops on the response when they happened, so the UI
   // can render a yellow "GPT localize fell back to Claude (429-quota)"
-  // banner instead of silently shipping the degraded output. Happy path
-  // omits the field entirely to keep the response clean.
+  // Always emit `llm` trace so client can show "which provider answered"
+  // regardless of fallback. Keep `fallback` field for back-compat with
+  // older clients but the new shape `llm` is the canonical one.
   const usedFallback =
     fallbackOutcome !== null && fallbackOutcome.hops.length > 0;
+  const usedProvider = fallbackOutcome?.usedProvider ?? localizePrimary;
+  const llmTrace = makeTrace(
+    'localize',
+    localizePrimary,
+    usedProvider,
+    fallbackOutcome?.hops,
+    usedFallback && usedProvider !== 'openai'
+      ? 'GPT polish 跳过，使用 Claude hydrate 阶段产出的母语版'
+      : undefined,
+  );
   return NextResponse.json({
     page,
+    llm: llmTrace,
     ...(usedFallback
       ? {
           fallback: {
             scenario: 'localize',
             primary: localizePrimary,
-            used: fallbackOutcome!.usedProvider,
+            used: usedProvider,
             hops: fallbackOutcome!.hops,
           },
         }
