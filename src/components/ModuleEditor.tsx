@@ -795,6 +795,14 @@ function BrandAssetLogoPicker({
   }, []);
 
   const handlePick = (logo: SocialProofLogo, flashKey: string) => {
+    // Defensive guard: dropping an empty {src:''} into the parent's
+    // socialProof.logos creates a totally blank row. User feedback —
+    // "只是点一次就生成一行空白". Reject anything without a usable string.
+    const valid =
+      typeof logo === 'string'
+        ? logo.trim().length > 0
+        : !!logo?.src && logo.src.trim().length > 0;
+    if (!valid) return;
     onPick(logo);
     setFlashId(flashKey);
     setTimeout(() => setFlashId((cur) => (cur === flashKey ? null : cur)), 800);
@@ -805,8 +813,13 @@ function BrandAssetLogoPicker({
   // entry with non-empty showIn only appears for those locales.
   // Also resolve MediaRef.localizedUrls for "same logo, locale-specific
   // URL" cases (e.g. 腾讯 logo 中文版 vs Tencent 英文版).
+  // Tighter URL guard: reject not just `undefined/empty` but also
+  // whitespace-only strings — user feedback "对于没有带 URL 的，选择后
+  // 图片也没加载进去，只是点一次就生成一行空白". Empty entries should
+  // never reach the picker at all.
   const brandLogos = (lib?.brand?.logos ?? []).filter((entry) => {
     if (!entry?.media?.url) return false;
+    if (!entry.media.url.trim()) return false;
     if (!entry.showIn || entry.showIn.length === 0) return true;
     return entry.showIn.includes(locale as any);
   });
@@ -848,49 +861,18 @@ function BrandAssetLogoPicker({
                   </div>
                 ) : (
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                    {brandLogos.map((entry, i) => {
-                      const key = `brand:${entry.id ?? i}`;
-                      const flashed = flashId === key;
-                      // Resolve URL: prefer locale-specific override on the
-                      // MediaRef, fall back to base url.
-                      const localized =
-                        entry.media.localizedUrls?.[locale as PageLocale];
-                      const src = localized ?? entry.media.url;
-                      const alt = entry.label ?? entry.media.alt ?? '';
-                      const isVideo = entry.media.kind === 'video';
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          onClick={() =>
-                            handlePick({ src, alt: alt || undefined }, key)
-                          }
-                          className={`relative flex h-16 items-center justify-center rounded-lg border bg-white p-2 transition ${
-                            flashed
-                              ? 'border-brand-400 bg-brand-50'
-                              : 'border-ink-100 hover:border-brand-400'
-                          }`}
-                          title={`点击加入 logo 列表${alt ? `：${alt}` : ''}`}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={isVideo ? entry.media.poster ?? src : src}
-                            alt={alt}
-                            className="max-h-full max-w-full object-contain"
-                          />
-                          {isVideo && (
-                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-[8px] text-white">
-                              ▶
-                            </span>
-                          )}
-                          {flashed && (
-                            <span className="absolute right-1 top-1 rounded bg-brand-600 px-1 text-[10px] text-white">
-                              ✓
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
+                    {brandLogos.map((entry, i) => (
+                      <BrandLogoTile
+                        key={`brand:${entry.id ?? i}`}
+                        entry={entry}
+                        index={i}
+                        locale={locale as PageLocale}
+                        flashed={flashId === `brand:${entry.id ?? i}`}
+                        onPick={(payload) =>
+                          handlePick(payload, `brand:${entry.id ?? i}`)
+                        }
+                      />
+                    ))}
                   </div>
                 )}
               </div>
@@ -957,6 +939,104 @@ function BrandAssetLogoPicker({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Single brand-logo tile inside the picker grid.
+ *
+ * Replaces the previous bare-img-in-button render (which produced totally
+ * blank tiles when the URL was private / 404 — user feedback "页面都不
+ * 渲染出来 / 选择后只是点一次就生成一行空白"). Now the tile ALWAYS shows
+ * something:
+ *  - When image loads → image (current behavior)
+ *  - When image fails (404 / private feishu URL / CORS) → amber ⚠ + entry label
+ *  - When entry has no resolvable URL at all → tile is filtered out upstream,
+ *    so this component never sees that case
+ *
+ * Disabled state on image-error: clicking a broken tile still dispatches
+ * the URL to the parent (user might know what they're doing — production
+ * renderer might have different headers); but visual hint makes it
+ * obvious "this won't render in the page either, fix the asset first."
+ */
+function BrandLogoTile({
+  entry,
+  index,
+  locale,
+  flashed,
+  onPick,
+}: {
+  entry: import('@/lib/types').LogoEntry;
+  index: number;
+  locale: PageLocale;
+  flashed: boolean;
+  onPick: (payload: SocialProofLogo) => void;
+}) {
+  const [errored, setErrored] = useState(false);
+  const localized = entry.media.localizedUrls?.[locale];
+  const src = localized ?? entry.media.url;
+  const alt = entry.label ?? entry.media.alt ?? '';
+  const isVideo = entry.media.kind === 'video';
+  const labelText = entry.label?.trim() || entry.media.alt?.trim() || `Logo ${index + 1}`;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onPick({ src, alt: alt || undefined })}
+      className={`relative flex flex-col items-center gap-1 rounded-lg border bg-white p-2 transition ${
+        flashed
+          ? 'border-brand-400 bg-brand-50'
+          : errored
+            ? 'border-amber-200 hover:border-amber-300'
+            : 'border-ink-100 hover:border-brand-400'
+      }`}
+      title={
+        errored
+          ? `图片加载失败 — ${labelText}（点击仍会用此 URL；建议先去资产库改用上传或公开 URL）`
+          : `点击加入 logo 列表${alt ? `：${alt}` : ''}`
+      }
+    >
+      <div className="relative flex h-10 w-full items-center justify-center">
+        {!errored ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={isVideo ? entry.media.poster ?? src : src}
+            alt={alt}
+            className="max-h-full max-w-full object-contain"
+            onError={() => setErrored(true)}
+          />
+        ) : (
+          <span
+            className="text-amber-600"
+            aria-label="图片加载失败"
+            title="图片无法加载"
+          >
+            ⚠
+          </span>
+        )}
+        {isVideo && (
+          <span className="absolute left-0 top-0 rounded bg-black/60 px-1 text-[8px] text-white">
+            ▶
+          </span>
+        )}
+        {flashed && (
+          <span className="absolute right-0 top-0 rounded bg-brand-600 px-1 text-[10px] text-white">
+            ✓
+          </span>
+        )}
+      </div>
+      {/* Label is ALWAYS visible — even when image renders, gives users
+          a fallback identifier in case the visual is ambiguous. When
+          image fails, this becomes the only identifier, preventing
+          totally-blank tiles. */}
+      <span
+        className={`max-w-full truncate text-[10px] ${
+          errored ? 'text-amber-700' : 'text-ink-500'
+        }`}
+      >
+        {labelText}
+      </span>
+    </button>
   );
 }
 
