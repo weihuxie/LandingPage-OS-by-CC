@@ -65,8 +65,14 @@ export interface ScenarioPolicy {
 export interface LLMConfig {
   version: 2;
   scenarios: {
-    strategy: { ja: ScenarioPolicy; default: ScenarioPolicy };
-    copy: { ja: ScenarioPolicy; default: ScenarioPolicy };
+    // v2.1 (2026-04): collapsed the JP/default split for strategy + copy.
+    // Original v2 had `{ ja, default }` per scenario, on the assumption
+    // Japanese needed Claude while everything else could go cheaper. The
+    // split made admins maintain two near-identical chains and read 6
+    // configs to understand 4 scenarios. Empirically the same chain works
+    // across locales — the model is the same; locale is just an input.
+    strategy: ScenarioPolicy;
+    copy: ScenarioPolicy;
     localize: ScenarioPolicy;
     extract: ScenarioPolicy;
   };
@@ -89,40 +95,20 @@ export const DEFAULT_LLM_CONFIG: LLMConfig = {
   version: 2,
   scenarios: {
     strategy: {
-      ja: {
-        enabled: true,
-        chain: chainFor(
-          ['claude', CLAUDE_MODEL_DEFAULT],
-          ['deepseek', DEEPSEEK_MODEL_DEFAULT],
-        ),
-        triggers: [...DEFAULT_TRIGGERS],
-      },
-      default: {
-        enabled: true,
-        chain: chainFor(
-          ['deepseek', DEEPSEEK_MODEL_DEFAULT],
-          ['claude', CLAUDE_MODEL_DEFAULT],
-        ),
-        triggers: [...DEFAULT_TRIGGERS],
-      },
+      enabled: true,
+      chain: chainFor(
+        ['deepseek', DEEPSEEK_MODEL_DEFAULT],
+        ['claude', CLAUDE_MODEL_DEFAULT],
+      ),
+      triggers: [...DEFAULT_TRIGGERS],
     },
     copy: {
-      ja: {
-        enabled: true,
-        chain: chainFor(
-          ['claude', CLAUDE_MODEL_DEFAULT],
-          ['deepseek', DEEPSEEK_MODEL_DEFAULT],
-        ),
-        triggers: [...DEFAULT_TRIGGERS],
-      },
-      default: {
-        enabled: true,
-        chain: chainFor(
-          ['deepseek', DEEPSEEK_MODEL_DEFAULT],
-          ['claude', CLAUDE_MODEL_DEFAULT],
-        ),
-        triggers: [...DEFAULT_TRIGGERS],
-      },
+      enabled: true,
+      chain: chainFor(
+        ['deepseek', DEEPSEEK_MODEL_DEFAULT],
+        ['claude', CLAUDE_MODEL_DEFAULT],
+      ),
+      triggers: [...DEFAULT_TRIGGERS],
     },
     localize: {
       enabled: true,
@@ -221,10 +207,8 @@ export function validateLLMConfig(cfg: unknown): string | null {
   if (c.version !== 2) return `unsupported version: ${c.version}`;
   const s = c.scenarios;
   if (!s) return 'scenarios missing';
-  if (!isPolicy(s.strategy?.ja)) return 'scenarios.strategy.ja invalid';
-  if (!isPolicy(s.strategy?.default)) return 'scenarios.strategy.default invalid';
-  if (!isPolicy(s.copy?.ja)) return 'scenarios.copy.ja invalid';
-  if (!isPolicy(s.copy?.default)) return 'scenarios.copy.default invalid';
+  if (!isPolicy((s as any).strategy)) return 'scenarios.strategy invalid';
+  if (!isPolicy((s as any).copy)) return 'scenarios.copy invalid';
   if (!isPolicy(s.localize)) return 'scenarios.localize invalid';
   if (!isPolicy(s.extract)) return 'scenarios.extract invalid';
   return null;
@@ -288,10 +272,15 @@ function buildChainFromLegacy(
 export function migrateOldConfig(legacy: LegacyV1Config): LLMConfig {
   const enabled = legacy.fallback?.enabled ?? false;
   const triggers = legacy.fallback?.triggers ?? [...DEFAULT_TRIGGERS];
-  const stratJa = legacy.scenarios?.strategy?.ja ?? 'claude';
-  const stratDef = legacy.scenarios?.strategy?.default ?? 'deepseek';
-  const copyJa = legacy.scenarios?.copy?.ja ?? 'claude';
-  const copyDef = legacy.scenarios?.copy?.default ?? 'deepseek';
+  // v2.1: drop the JP/default split. We pick `default` as the canonical
+  // primary because it covers the wider locale set; admins who want JP-
+  // specific routing can manually rewire the chain after migration.
+  const strat = legacy.scenarios?.strategy?.default
+    ?? legacy.scenarios?.strategy?.ja
+    ?? 'deepseek';
+  const cop = legacy.scenarios?.copy?.default
+    ?? legacy.scenarios?.copy?.ja
+    ?? 'deepseek';
   const loc = legacy.scenarios?.localize ?? 'openai';
   const ext = legacy.scenarios?.extract ?? 'gemini';
 
@@ -307,20 +296,11 @@ export function migrateOldConfig(legacy: LegacyV1Config): LLMConfig {
   return {
     version: 2,
     scenarios: {
-      strategy: {
-        ja: policy(buildChainFromLegacy(legacy, stratJa), true),
-        default: policy(buildChainFromLegacy(legacy, stratDef), true),
-      },
-      copy: {
-        ja: policy(buildChainFromLegacy(legacy, copyJa), true),
-        default: policy(buildChainFromLegacy(legacy, copyDef), true),
-      },
+      strategy: policy(buildChainFromLegacy(legacy, strat), true),
+      copy: policy(buildChainFromLegacy(legacy, cop), true),
       localize:
         loc === 'openai'
-          ? // Preserve graceful-degrade: when localize primary is openai
-            // (the only adapter), append a 'skip-polish' Claude step so the
-            // chain has somewhere to land on quota errors.
-            policy(
+          ? policy(
               [
                 { provider: 'openai', model: modelForProvider(legacy, 'openai'), mode: 'normal' },
                 { provider: 'claude', model: modelForProvider(legacy, 'claude'), mode: 'skip-polish' },
@@ -400,17 +380,28 @@ export async function writeLLMConfig(cfg: LLMConfig): Promise<void> {
 }
 
 function mergeWithDefaults(stored: Partial<LLMConfig>): LLMConfig {
+  // v2.0 → v2.1: collapse the old { ja, default } structure to a single
+  // policy. Take `default` (or `ja` if default's empty / not policy-shaped).
+  // Stored shape may still carry old ja/default in the wild — coerce here.
+  function pickStrategyOrCopy(
+    blob: any,
+    fallback: ScenarioPolicy,
+  ): ScenarioPolicy {
+    if (!blob) return fallback;
+    if (isPolicy(blob)) return blob; // already collapsed (v2.1+ KV blob)
+    // Old v2.0 shape: { ja: ScenarioPolicy, default: ScenarioPolicy }
+    if (isPolicy(blob.default)) return blob.default;
+    if (isPolicy(blob.ja)) return blob.ja;
+    return fallback;
+  }
   return {
     version: 2,
     scenarios: {
-      strategy: {
-        ja: stored.scenarios?.strategy?.ja ?? DEFAULT_LLM_CONFIG.scenarios.strategy.ja,
-        default: stored.scenarios?.strategy?.default ?? DEFAULT_LLM_CONFIG.scenarios.strategy.default,
-      },
-      copy: {
-        ja: stored.scenarios?.copy?.ja ?? DEFAULT_LLM_CONFIG.scenarios.copy.ja,
-        default: stored.scenarios?.copy?.default ?? DEFAULT_LLM_CONFIG.scenarios.copy.default,
-      },
+      strategy: pickStrategyOrCopy(
+        stored.scenarios?.strategy,
+        DEFAULT_LLM_CONFIG.scenarios.strategy,
+      ),
+      copy: pickStrategyOrCopy(stored.scenarios?.copy, DEFAULT_LLM_CONFIG.scenarios.copy),
       localize: stored.scenarios?.localize ?? DEFAULT_LLM_CONFIG.scenarios.localize,
       extract: stored.scenarios?.extract ?? DEFAULT_LLM_CONFIG.scenarios.extract,
     },
@@ -420,23 +411,18 @@ function mergeWithDefaults(stored: Partial<LLMConfig>): LLMConfig {
 // ---------- Resolution helper -----------------------------------------
 
 /**
- * Pick the scenario policy for a (scenario, locale) pair. Locale-aware
- * scenarios (strategy/copy) honor 'ja' vs 'default'; locale-independent
- * scenarios (localize/extract) ignore the locale arg.
+ * Pick the scenario policy. v2.1: locale-independent — every scenario
+ * uses one policy regardless of language. The `locale` param is kept
+ * in the signature for back-compat with callers that haven't been
+ * updated; it's accepted and ignored.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function policyFor(
   cfg: LLMConfig,
   scenario: LLMScenario,
-  locale: string,
+  _locale?: string,
 ): ScenarioPolicy {
-  if (scenario === 'strategy') {
-    return locale === 'ja' ? cfg.scenarios.strategy.ja : cfg.scenarios.strategy.default;
-  }
-  if (scenario === 'copy') {
-    return locale === 'ja' ? cfg.scenarios.copy.ja : cfg.scenarios.copy.default;
-  }
-  if (scenario === 'localize') return cfg.scenarios.localize;
-  return cfg.scenarios.extract;
+  return cfg.scenarios[scenario];
 }
 
 // ---------- Error classifier (carried over from v1) -------------------

@@ -90,17 +90,12 @@ export default function AdminLLMForm({
   );
 
   function updatePolicy(
-    path: ['strategy', 'ja' | 'default'] | ['copy', 'ja' | 'default'] | ['localize'] | ['extract'],
+    path: ['strategy'] | ['copy'] | ['localize'] | ['extract'],
     next: ScenarioPolicy,
   ): void {
     setConfig((prev) => {
       const cp: LLMConfig = JSON.parse(JSON.stringify(prev));
-      if (path[0] === 'strategy' || path[0] === 'copy') {
-        // Locale-keyed
-        (cp.scenarios[path[0]] as any)[path[1]] = next;
-      } else {
-        (cp.scenarios as any)[path[0]] = next;
-      }
+      (cp.scenarios as any)[path[0]] = next;
       return cp;
     });
   }
@@ -163,35 +158,31 @@ export default function AdminLLMForm({
       {/* Strategy — locale-aware */}
       <ScenarioCard
         title="策略生成"
-        hint="生成 4 段式 strategy summary。JP locale 走一条链，其他走另一条。"
+        hint="生成 4 段式 strategy summary。所有 locale 共用一条链。"
         modelOptions={modelOptions}
         providerStatus={providerStatus}
         showModeToggle={false}
       >
-        <LocalePolicyPair
-          ja={config.scenarios.strategy.ja}
-          def={config.scenarios.strategy.default}
-          onJa={(p) => updatePolicy(['strategy', 'ja'], p)}
-          onDef={(p) => updatePolicy(['strategy', 'default'], p)}
+        <PolicyEditor
+          policy={config.scenarios.strategy}
+          onChange={(p) => updatePolicy(['strategy'], p)}
           modelOptions={modelOptions}
           providerStatus={providerStatus}
           showModeToggle={false}
         />
       </ScenarioCard>
 
-      {/* Copy — locale-aware */}
+      {/* Copy — single chain across locales */}
       <ScenarioCard
         title="模块文案"
-        hint="重写 hero / pain / benefits / solution / cta 模块。JP/其他 分开配置。"
+        hint="重写 hero / pain / benefits / solution / cta 模块。所有 locale 共用一条链。"
         modelOptions={modelOptions}
         providerStatus={providerStatus}
         showModeToggle={false}
       >
-        <LocalePolicyPair
-          ja={config.scenarios.copy.ja}
-          def={config.scenarios.copy.default}
-          onJa={(p) => updatePolicy(['copy', 'ja'], p)}
-          onDef={(p) => updatePolicy(['copy', 'default'], p)}
+        <PolicyEditor
+          policy={config.scenarios.copy}
+          onChange={(p) => updatePolicy(['copy'], p)}
           modelOptions={modelOptions}
           providerStatus={providerStatus}
           showModeToggle={false}
@@ -297,65 +288,6 @@ function ScenarioCard({
       <p className="mt-1 text-xs text-ink-500">{hint}</p>
       <div className="mt-4">{children}</div>
     </section>
-  );
-}
-
-// ---------- Locale-pair editor (strategy / copy) ---------------------
-
-function LocalePolicyPair({
-  ja,
-  def,
-  onJa,
-  onDef,
-  modelOptions,
-  providerStatus,
-  showModeToggle,
-}: {
-  ja: ScenarioPolicy;
-  def: ScenarioPolicy;
-  onJa: (p: ScenarioPolicy) => void;
-  onDef: (p: ScenarioPolicy) => void;
-  modelOptions: Record<LLMProvider, ModelOption[]>;
-  providerStatus: ProviderStatus;
-  showModeToggle: boolean;
-}): JSX.Element {
-  const [tab, setTab] = useState<'ja' | 'default'>('default');
-  const policy = tab === 'ja' ? ja : def;
-  const onChange = tab === 'ja' ? onJa : onDef;
-  return (
-    <div>
-      <div className="flex gap-1 rounded-lg border border-ink-100 p-0.5 text-xs">
-        <button
-          type="button"
-          onClick={() => setTab('default')}
-          className={`flex-1 rounded-md px-2 py-1 transition ${
-            tab === 'default'
-              ? 'bg-brand-600 text-white'
-              : 'text-ink-500 hover:text-ink-900'
-          }`}
-        >
-          其他 locale
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab('ja')}
-          className={`flex-1 rounded-md px-2 py-1 transition ${
-            tab === 'ja' ? 'bg-brand-600 text-white' : 'text-ink-500 hover:text-ink-900'
-          }`}
-        >
-          JP（日文）
-        </button>
-      </div>
-      <div className="mt-3">
-        <PolicyEditor
-          policy={policy}
-          onChange={onChange}
-          modelOptions={modelOptions}
-          providerStatus={providerStatus}
-          showModeToggle={showModeToggle}
-        />
-      </div>
-    </div>
   );
 }
 
