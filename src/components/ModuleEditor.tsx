@@ -25,6 +25,7 @@ import { resolveSocialProofLogo } from '@/lib/types';
 import MediaField from './MediaField';
 import UploadButton from './UploadButton';
 import PageFontPicker from './PageFontPicker';
+import HelpTip from './HelpTip';
 
 type PageFontControl = {
   value: string | null;
@@ -129,15 +130,23 @@ function Field({
   value,
   onChange,
   multiline,
+  helpPath,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   multiline?: boolean;
+  /** When set, renders a HelpTip "?" badge next to the label, looked up
+   *  in src/lib/field-tooltips.ts. Pattern ③ from the AI-introduction
+   *  design doc. */
+  helpPath?: string;
 }) {
   return (
     <label className="block">
-      <span className="label">{label}</span>
+      <span className="label inline-flex items-center">
+        {label}
+        {helpPath && <HelpTip path={helpPath} />}
+      </span>
       {multiline ? (
         <textarea
           className="input mt-1 min-h-[72px]"
@@ -160,15 +169,20 @@ function LayoutPicker<T extends string>({
   value,
   options,
   onChange,
+  helpPath,
 }: {
   label: string;
   value: T;
   options: { id: T; name: string; desc: string }[];
   onChange: (v: T) => void;
+  helpPath?: string;
 }) {
   return (
     <div>
-      <div className="label mb-1.5">{label}</div>
+      <div className="label mb-1.5 inline-flex items-center">
+        {label}
+        {helpPath && <HelpTip path={helpPath} />}
+      </div>
       <div className="grid grid-cols-1 gap-1.5">
         {options.map((o) => (
           <button
@@ -205,13 +219,18 @@ const FONT_SCALES: { id: import('@/lib/types').FontScale; name: string }[] = [
 function FontScalePicker({
   value,
   onChange,
+  helpPath,
 }: {
   value: import('@/lib/types').FontScale;
   onChange: (v: import('@/lib/types').FontScale) => void;
+  helpPath?: string;
 }) {
   return (
     <div>
-      <div className="label mb-1.5">标题字号</div>
+      <div className="label mb-1.5 inline-flex items-center">
+        标题字号
+        {helpPath && <HelpTip path={helpPath} />}
+      </div>
       <div className="flex gap-1 rounded-lg border border-ink-100 p-0.5 text-xs">
         {FONT_SCALES.map((s) => (
           <button
@@ -252,10 +271,12 @@ function HeroEditor({
         value={c.layout ?? 'split'}
         options={HERO_LAYOUTS}
         onChange={(v) => setC({ ...c, layout: v })}
+        helpPath="hero.layout"
       />
       <FontScalePicker
         value={c.fontScale ?? 'md'}
         onChange={(v) => setC({ ...c, fontScale: v })}
+        helpPath="hero.fontScale"
       />
       {/* Per UX request: page-level font picker sits right under 标题字号
           so the user can debug typography while editing the Hero. Page-
@@ -270,27 +291,29 @@ function HeroEditor({
           onChange={pageFont.onChange}
         />
       )}
-      <Field label="Eyebrow" value={c.eyebrow} onChange={(v) => setC({ ...c, eyebrow: v })} />
-      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline />
-      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} multiline />
-      <Field label="Primary CTA" value={c.primaryCta} onChange={(v) => setC({ ...c, primaryCta: v })} />
+      <Field label="Eyebrow" value={c.eyebrow} onChange={(v) => setC({ ...c, eyebrow: v })} helpPath="hero.eyebrow" />
+      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline helpPath="hero.headline" />
+      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} multiline helpPath="hero.subhead" />
+      <Field label="Primary CTA" value={c.primaryCta} onChange={(v) => setC({ ...c, primaryCta: v })} helpPath="hero.primaryCta" />
       {/* href 留空 → 默认滚动到 #contact 表单；填 https://... 则打开外链 (新标签) */}
       <Field
         label="Primary CTA 链接 (留空 = 滚到表单 #contact)"
         value={c.primaryCtaHref ?? ''}
         onChange={(v) => setC({ ...c, primaryCtaHref: v || undefined })}
+        helpPath="hero.primaryCtaHref"
       />
       <Field
         label="Secondary CTA 文案 (可选)"
         value={c.secondaryCta ?? ''}
         onChange={(v) => setC({ ...c, secondaryCta: v || undefined })}
+        helpPath="hero.secondaryCta"
       />
       <Field
         label="Secondary CTA 链接 (留空 = 滚到 #contact)"
         value={c.secondaryCtaHref ?? ''}
         onChange={(v) => setC({ ...c, secondaryCtaHref: v || undefined })}
       />
-      <Field label="Bullets (one per line)" value={c.bullets.join('\n')} onChange={(v) => setC({ ...c, bullets: v.split('\n').filter(Boolean) })} multiline />
+      <Field label="Bullets (one per line)" value={c.bullets.join('\n')} onChange={(v) => setC({ ...c, bullets: v.split('\n').filter(Boolean) })} multiline helpPath="hero.bullets" />
       <MediaField
         label="Hero 主视觉 (可选 · 图片或视频)"
         value={c.media}
@@ -308,9 +331,10 @@ function BenefitsEditor({ c, setC }: { c: BenefitsContent; setC: (c: BenefitsCon
         value={c.layout ?? 'cards'}
         options={BENEFITS_LAYOUTS}
         onChange={(v) => setC({ ...c, layout: v })}
+        helpPath="benefits.layout"
       />
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
-      <div className="label">Items</div>
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="benefits.title" />
+      <div className="label inline-flex items-center">Items<HelpTip path="benefits.items" /></div>
       <div className="space-y-3">
         {c.items.map((it, i) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">
@@ -890,9 +914,9 @@ function BrandAssetLogoPicker({
 function SolutionEditor({ c, setC }: { c: SolutionContent; setC: (c: SolutionContent) => void }) {
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
-      <Field label="Subtitle" value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} />
-      <Field label="Body" value={c.body} onChange={(v) => setC({ ...c, body: v })} multiline />
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="solution.title" />
+      <Field label="Subtitle" value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} helpPath="solution.subtitle" />
+      <Field label="Body" value={c.body} onChange={(v) => setC({ ...c, body: v })} multiline helpPath="solution.body" />
       <MediaField
         label="配图 (架构图 / 流程图,可选)"
         value={c.media}
@@ -921,13 +945,14 @@ function PainEditor({ c, setC }: { c: PainContent; setC: (c: PainContent) => voi
 
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="pain.title" />
       <Field
         label="Subtitle"
         value={c.subtitle ?? ''}
         onChange={(v) => setC({ ...c, subtitle: v })}
+        helpPath="pain.subtitle"
       />
-      <div className="label">Items</div>
+      <div className="label inline-flex items-center">Items<HelpTip path="pain.items" /></div>
       <div className="space-y-3">
         {c.items.map((it, i) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">
@@ -1049,13 +1074,14 @@ function CTAEditor({ c, setC }: { c: CTAContent; setC: (c: CTAContent) => void }
         value={c.fontScale ?? 'md'}
         onChange={(v) => setC({ ...c, fontScale: v })}
       />
-      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} />
-      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} />
-      <Field label="Button" value={c.button} onChange={(v) => setC({ ...c, button: v })} />
+      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} helpPath="cta.headline" />
+      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} helpPath="cta.subhead" />
+      <Field label="Button" value={c.button} onChange={(v) => setC({ ...c, button: v })} helpPath="cta.button" />
       <Field
         label="按钮链接 (留空 = 滚到表单 #contact)"
         value={c.buttonHref ?? ''}
         onChange={(v) => setC({ ...c, buttonHref: v || undefined })}
+        helpPath="cta.buttonHref"
       />
     </>
   );

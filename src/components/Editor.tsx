@@ -20,6 +20,8 @@ import { nativeLabel, PAGE_LOCALES } from '@/lib/i18n-detect';
 import PageRenderer from './PageRenderer';
 import ModuleEditor from './ModuleEditor';
 import LocalizationPreviewModal from './LocalizationPreviewModal';
+import DiagnosticsBanner from './DiagnosticsBanner';
+import { findIssues, type Issue } from '@/lib/page-diagnostics';
 import type { LocalizationStrategy } from '@/lib/types';
 
 // -----------------------------------------------------------------------
@@ -1119,6 +1121,34 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
 
   const unusedTypes = ALL_TYPES.filter((t) => !project.modules.some((m) => m.type === t));
 
+  // Pattern ② "Inline 诊断 banner" — pure-rule scan of the current locale's
+  // modules, surfaces "looks unfinished" findings even when there are no
+  // errors AND the page is fully hydrated. Recomputes on every modules /
+  // locale change, so editing the offending field makes the entry vanish
+  // immediately. See src/lib/page-diagnostics.ts for the rule list.
+  const diagnosticsIssues = useMemo(
+    () => findIssues(project.modules, editingLocale, project.inputs?.name ?? ''),
+    [project.modules, editingLocale, project.inputs?.name],
+  );
+  const handleIssueAction = (issue: Issue) => {
+    if (!issue.action) return;
+    switch (issue.action.kind) {
+      case 'select-module':
+        setSelectedModuleId(issue.action.moduleId);
+        break;
+      case 'regenerate-module':
+        setSelectedModuleId(issue.action.moduleId);
+        regenerate(issue.action.moduleId);
+        break;
+      case 'relocalize':
+        // Re-hydrate the current locale via Claude — overwrites template /
+        // untranslated content with fresh LLM output. Same call wired to
+        // the hydration-failed banner.
+        hydrateNow();
+        break;
+    }
+  };
+
   return (
     <>
       {notice && (
@@ -1143,6 +1173,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
           }
         />
       )}
+      <DiagnosticsBanner issues={diagnosticsIssues} onAct={handleIssueAction} />
       <div className="grid min-h-[calc(100vh-56px)] grid-cols-12 gap-0">
       {/* Left rail — modules + findings only. Settings moved to a modal
           accessed from the ⋮ overflow menu; leads moved to Dashboard.
