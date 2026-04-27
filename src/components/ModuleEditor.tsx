@@ -284,10 +284,11 @@ function HeroEditor({
   setC: (c: HeroContent) => void;
   pageFont?: PageFontControl;
 }) {
+  const t = useTranslations();
   return (
     <>
       <LayoutPicker
-        label="布局"
+        label={t('editor.fields.layout')}
         value={c.layout ?? 'split'}
         options={HERO_LAYOUTS}
         onChange={(v) => setC({ ...c, layout: v })}
@@ -311,31 +312,31 @@ function HeroEditor({
           onChange={pageFont.onChange}
         />
       )}
-      <Field label="Eyebrow" value={c.eyebrow} onChange={(v) => setC({ ...c, eyebrow: v })} helpPath="hero.eyebrow" aiPath="hero.eyebrow" />
-      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline helpPath="hero.headline" aiPath="hero.headline" />
-      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} multiline helpPath="hero.subhead" aiPath="hero.subhead" />
-      <Field label="Primary CTA" value={c.primaryCta} onChange={(v) => setC({ ...c, primaryCta: v })} helpPath="hero.primaryCta" aiPath="hero.primaryCta" />
+      <Field label={t('editor.fields.eyebrow')} value={c.eyebrow} onChange={(v) => setC({ ...c, eyebrow: v })} helpPath="hero.eyebrow" aiPath="hero.eyebrow" />
+      <Field label={t('editor.fields.headline')} value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline helpPath="hero.headline" aiPath="hero.headline" />
+      <Field label={t('editor.fields.subhead')} value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} multiline helpPath="hero.subhead" aiPath="hero.subhead" />
+      <Field label={t('editor.fields.primaryCta')} value={c.primaryCta} onChange={(v) => setC({ ...c, primaryCta: v })} helpPath="hero.primaryCta" aiPath="hero.primaryCta" />
       {/* href 留空 → 默认滚动到 #contact 表单；填 https://... 则打开外链 (新标签) */}
       <Field
-        label="Primary CTA 链接 (留空 = 滚到表单 #contact)"
+        label={t('editor.fields.primaryCtaHref')}
         value={c.primaryCtaHref ?? ''}
         onChange={(v) => setC({ ...c, primaryCtaHref: v || undefined })}
         helpPath="hero.primaryCtaHref"
       />
       <Field
-        label="Secondary CTA 文案 (可选)"
+        label={t('editor.fields.secondaryCta')}
         value={c.secondaryCta ?? ''}
         onChange={(v) => setC({ ...c, secondaryCta: v || undefined })}
         helpPath="hero.secondaryCta"
       />
       <Field
-        label="Secondary CTA 链接 (留空 = 滚到 #contact)"
+        label={t('editor.fields.secondaryCtaHref')}
         value={c.secondaryCtaHref ?? ''}
         onChange={(v) => setC({ ...c, secondaryCtaHref: v || undefined })}
       />
-      <Field label="Bullets (one per line)" value={c.bullets.join('\n')} onChange={(v) => setC({ ...c, bullets: v.split('\n').filter(Boolean) })} multiline helpPath="hero.bullets" />
+      <Field label={t('editor.fields.bullets')} value={c.bullets.join('\n')} onChange={(v) => setC({ ...c, bullets: v.split('\n').filter(Boolean) })} multiline helpPath="hero.bullets" />
       <MediaField
-        label="Hero 主视觉 (可选 · 图片或视频)"
+        label={t('editor.fields.heroMedia')}
         value={c.media}
         onChange={(m) => setC({ ...c, media: m })}
       />
@@ -344,17 +345,18 @@ function HeroEditor({
 }
 
 function BenefitsEditor({ c, setC }: { c: BenefitsContent; setC: (c: BenefitsContent) => void }) {
+  const t = useTranslations();
   return (
     <>
       <LayoutPicker
-        label="布局"
+        label={t('editor.fields.layout')}
         value={c.layout ?? 'cards'}
         options={BENEFITS_LAYOUTS}
         onChange={(v) => setC({ ...c, layout: v })}
         helpPath="benefits.layout"
       />
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="benefits.title" aiPath="benefits.title" />
-      <div className="label inline-flex items-center">Items<HelpTip path="benefits.items" /></div>
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="benefits.title" aiPath="benefits.title" />
+      <div className="label inline-flex items-center">{t('editor.fields.items')}<HelpTip path="benefits.items" /></div>
       <div className="space-y-3">
         {c.items.map((it, i) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">
@@ -367,12 +369,12 @@ function BenefitsEditor({ c, setC }: { c: BenefitsContent; setC: (c: BenefitsCon
                 remove
               </button>
             </div>
-            <Field label="Title" value={it.title} onChange={(v) => { const next = [...c.items]; next[i] = { ...it, title: v }; setC({ ...c, items: next }); }} />
-            <Field label="Body" value={it.body} onChange={(v) => { const next = [...c.items]; next[i] = { ...it, body: v }; setC({ ...c, items: next }); }} multiline />
+            <Field label={t('editor.fields.itemTitle')} value={it.title} onChange={(v) => { const next = [...c.items]; next[i] = { ...it, title: v }; setC({ ...c, items: next }); }} />
+            <Field label={t('editor.fields.itemBody')} value={it.body} onChange={(v) => { const next = [...c.items]; next[i] = { ...it, body: v }; setC({ ...c, items: next }); }} multiline />
             {(c.layout === 'alternating') && (
               <div className="mt-2">
                 <MediaField
-                  label="配图 (交替布局用)"
+                  label={t('editor.fields.benefitsItemMedia')}
                   value={it.media}
                   onChange={(m) => { const next = [...c.items]; next[i] = { ...it, media: m }; setC({ ...c, items: next }); }}
                 />
@@ -398,11 +400,12 @@ function ProductShowcaseEditor({
   c: ProductShowcaseContent;
   setC: (c: ProductShowcaseContent) => void;
 }) {
+  const t = useTranslations();
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
-      <Field label="Subtitle" value={c.subtitle ?? ''} onChange={(v) => setC({ ...c, subtitle: v })} />
-      <div className="label">Items (交替左右排版)</div>
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label={t('editor.fields.subtitle')} value={c.subtitle ?? ''} onChange={(v) => setC({ ...c, subtitle: v })} />
+      <div className="label">{t('editor.fields.items')}</div>
       <div className="space-y-3">
         {c.items.map((it, i) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">
@@ -416,7 +419,7 @@ function ProductShowcaseEditor({
               </button>
             </div>
             <Field
-              label="标题"
+              label={t('editor.fields.itemTitle')}
               value={it.title}
               onChange={(v) => {
                 const next = [...c.items];
@@ -425,7 +428,7 @@ function ProductShowcaseEditor({
               }}
             />
             <Field
-              label="描述"
+              label={t('editor.fields.itemBody')}
               value={it.body}
               onChange={(v) => {
                 const next = [...c.items];
@@ -435,7 +438,7 @@ function ProductShowcaseEditor({
               multiline
             />
             <Field
-              label="要点 (每行一条)"
+              label={t('editor.fields.showcaseItemBullets')}
               value={(it.bullets ?? []).join('\n')}
               onChange={(v) => {
                 const next = [...c.items];
@@ -446,7 +449,7 @@ function ProductShowcaseEditor({
             />
             <div className="mt-2">
               <MediaField
-                label="配图 (可选)"
+                label={t('editor.fields.showcaseItemMedia')}
                 value={it.media}
                 onChange={(m) => {
                   const next = [...c.items];
@@ -483,16 +486,17 @@ function VideoEmbedEditor({
   c: VideoEmbedContent;
   setC: (c: VideoEmbedContent) => void;
 }) {
+  const t = useTranslations();
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
       <Field
-        label="Subtitle"
+        label={t('editor.fields.subtitle')}
         value={c.subtitle ?? ''}
         onChange={(v) => setC({ ...c, subtitle: v })}
       />
       <MediaField
-        label="视频 (YouTube / Vimeo / Loom / MP4)"
+        label={t('editor.fields.videoMedia')}
         value={c.media}
         onChange={(m) => setC({ ...c, media: m ?? { id: '', kind: 'video', url: '' } })}
         defaultKind="video"
@@ -502,6 +506,7 @@ function VideoEmbedEditor({
 }
 
 function SocialProofEditor({ c, setC }: { c: SocialProofContent; setC: (c: SocialProofContent) => void }) {
+  const t = useTranslations();
   const variant = c.variant ?? 'logos-and-stats';
   const VARIANTS: Array<{ key: 'logos-and-stats' | 'logos-only' | 'stats-only'; label: string; hint: string }> = [
     { key: 'logos-and-stats', label: 'Logos + Stats', hint: '默认：logo 墙在上，数字在下' },
@@ -512,7 +517,7 @@ function SocialProofEditor({ c, setC }: { c: SocialProofContent; setC: (c: Socia
   const showStats = variant !== 'logos-only';
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
       <div>
         <div className="label mb-1.5">Variant</div>
         <div className="flex flex-wrap gap-1.5">
@@ -932,13 +937,14 @@ function BrandAssetLogoPicker({
 }
 
 function SolutionEditor({ c, setC }: { c: SolutionContent; setC: (c: SolutionContent) => void }) {
+  const t = useTranslations();
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="solution.title" aiPath="solution.title" />
-      <Field label="Subtitle" value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} helpPath="solution.subtitle" aiPath="solution.subtitle" />
-      <Field label="Body" value={c.body} onChange={(v) => setC({ ...c, body: v })} multiline helpPath="solution.body" aiPath="solution.body" />
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="solution.title" aiPath="solution.title" />
+      <Field label={t('editor.fields.subtitle')} value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} helpPath="solution.subtitle" aiPath="solution.subtitle" />
+      <Field label={t('editor.fields.body')} value={c.body} onChange={(v) => setC({ ...c, body: v })} multiline helpPath="solution.body" aiPath="solution.body" />
       <MediaField
-        label="配图 (架构图 / 流程图,可选)"
+        label={t('editor.fields.solutionMedia')}
         value={c.media}
         onChange={(m) => setC({ ...c, media: m })}
       />
@@ -955,6 +961,7 @@ function SolutionEditor({ c, setC }: { c: SolutionContent; setC: (c: SolutionCon
  * text alone, so the upload path has to be first-class in the editor.
  */
 function PainEditor({ c, setC }: { c: PainContent; setC: (c: PainContent) => void }) {
+  const t = useTranslations();
   const updateItem = (i: number, patch: Partial<PainContent['items'][number]>) => {
     const next = [...c.items];
     next[i] = { ...next[i], ...patch };
@@ -965,15 +972,15 @@ function PainEditor({ c, setC }: { c: PainContent; setC: (c: PainContent) => voi
 
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="pain.title" aiPath="pain.title" />
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="pain.title" aiPath="pain.title" />
       <Field
-        label="Subtitle"
+        label={t('editor.fields.subtitle')}
         value={c.subtitle ?? ''}
         onChange={(v) => setC({ ...c, subtitle: v })}
         helpPath="pain.subtitle"
         aiPath="pain.subtitle"
       />
-      <div className="label inline-flex items-center">Items<HelpTip path="pain.items" /></div>
+      <div className="label inline-flex items-center">{t('editor.fields.items')}<HelpTip path="pain.items" /></div>
       <div className="space-y-3">
         {c.items.map((it, i) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">
@@ -987,13 +994,13 @@ function PainEditor({ c, setC }: { c: PainContent; setC: (c: PainContent) => voi
               </button>
             </div>
             <Field
-              label="title"
+              label={t('editor.fields.itemTitle')}
               value={it.title ?? ''}
               onChange={(v) => updateItem(i, { title: v })}
             />
             <div className="mt-1.5">
               <Field
-                label="body"
+                label={t('editor.fields.itemBody')}
                 value={it.body ?? ''}
                 onChange={(v) => updateItem(i, { body: v })}
                 multiline
@@ -1001,7 +1008,7 @@ function PainEditor({ c, setC }: { c: PainContent; setC: (c: PainContent) => voi
             </div>
             <div className="mt-2">
               <MediaField
-                label="插画 / GIF (可选)"
+                label={t('editor.fields.painItemMedia')}
                 value={it.media}
                 onChange={(m) => updateItem(i, { media: m })}
               />
@@ -1029,6 +1036,7 @@ function PainEditor({ c, setC }: { c: PainContent; setC: (c: PainContent) => voi
  * a thumbnail in the renderer.
  */
 function UseCaseEditor({ c, setC }: { c: UseCaseContent; setC: (c: UseCaseContent) => void }) {
+  const t = useTranslations();
   const updateItem = (i: number, patch: Partial<UseCaseContent['items'][number]>) => {
     const next = [...c.items];
     next[i] = { ...next[i], ...patch };
@@ -1039,8 +1047,8 @@ function UseCaseEditor({ c, setC }: { c: UseCaseContent; setC: (c: UseCaseConten
 
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
-      <div className="label">Items</div>
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <div className="label">{t('editor.fields.items')}</div>
       <div className="space-y-3">
         {c.items.map((it, i) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">
@@ -1054,13 +1062,13 @@ function UseCaseEditor({ c, setC }: { c: UseCaseContent; setC: (c: UseCaseConten
               </button>
             </div>
             <Field
-              label="role"
+              label={t('editor.fields.useCaseRole')}
               value={it.role ?? ''}
               onChange={(v) => updateItem(i, { role: v })}
             />
             <div className="mt-1.5">
               <Field
-                label="scenario"
+                label={t('editor.fields.useCaseScenario')}
                 value={it.scenario ?? ''}
                 onChange={(v) => updateItem(i, { scenario: v })}
                 multiline
@@ -1068,7 +1076,7 @@ function UseCaseEditor({ c, setC }: { c: UseCaseContent; setC: (c: UseCaseConten
             </div>
             <div className="mt-2">
               <MediaField
-                label="该角色 UI 截图 (可选)"
+                label={t('editor.fields.useCaseMedia')}
                 value={it.media}
                 onChange={(m) => updateItem(i, { media: m })}
               />
@@ -1089,17 +1097,18 @@ function UseCaseEditor({ c, setC }: { c: UseCaseContent; setC: (c: UseCaseConten
 }
 
 function CTAEditor({ c, setC }: { c: CTAContent; setC: (c: CTAContent) => void }) {
+  const t = useTranslations();
   return (
     <>
       <FontScalePicker
         value={c.fontScale ?? 'md'}
         onChange={(v) => setC({ ...c, fontScale: v })}
       />
-      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} helpPath="cta.headline" aiPath="cta.headline" />
-      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} helpPath="cta.subhead" aiPath="cta.subhead" />
-      <Field label="Button" value={c.button} onChange={(v) => setC({ ...c, button: v })} helpPath="cta.button" aiPath="cta.button" />
+      <Field label={t('editor.fields.ctaHeadline')} value={c.headline} onChange={(v) => setC({ ...c, headline: v })} helpPath="cta.headline" aiPath="cta.headline" />
+      <Field label={t('editor.fields.ctaSubhead')} value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} helpPath="cta.subhead" aiPath="cta.subhead" />
+      <Field label={t('editor.fields.ctaButton')} value={c.button} onChange={(v) => setC({ ...c, button: v })} helpPath="cta.button" aiPath="cta.button" />
       <Field
-        label="按钮链接 (留空 = 滚到表单 #contact)"
+        label={t('editor.fields.ctaButtonHref')}
         value={c.buttonHref ?? ''}
         onChange={(v) => setC({ ...c, buttonHref: v || undefined })}
         helpPath="cta.buttonHref"
@@ -1109,6 +1118,7 @@ function CTAEditor({ c, setC }: { c: CTAContent; setC: (c: CTAContent) => void }
 }
 
 function FormEditor({ c, setC }: { c: FormContent; setC: (c: FormContent) => void }) {
+  const t = useTranslations();
   const mode = c.mode ?? 'inline';
   const urlLooksValid = !c.externalUrl || /^https?:\/\//i.test(c.externalUrl);
 
@@ -1154,11 +1164,11 @@ function FormEditor({ c, setC }: { c: FormContent; setC: (c: FormContent) => voi
 
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
-      <Field label="Subtitle" value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} />
-      <Field label="Submit Label" value={c.submitLabel} onChange={(v) => setC({ ...c, submitLabel: v })} />
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label={t('editor.fields.subtitle')} value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} />
+      <Field label={t('editor.fields.formSubmitLabel')} value={c.submitLabel} onChange={(v) => setC({ ...c, submitLabel: v })} />
       <div>
-        <div className="label mb-1.5">Mode</div>
+        <div className="label mb-1.5">{t('editor.fields.formMode')}</div>
         <div className="flex flex-wrap gap-1.5">
           <button
             onClick={() => setC({ ...c, mode: 'inline' })}
@@ -1179,7 +1189,7 @@ function FormEditor({ c, setC }: { c: FormContent; setC: (c: FormContent) => voi
       {mode === 'external' ? (
         <>
           <Field
-            label="External URL"
+            label={t('editor.fields.formExternalUrl')}
             value={c.externalUrl ?? ''}
             onChange={(v) => setC({ ...c, externalUrl: v })}
           />
@@ -1300,6 +1310,7 @@ function TestimonialEditor({
   c: TestimonialContent;
   setC: (c: TestimonialContent) => void;
 }) {
+  const t = useTranslations();
   const updateItem = (i: number, patch: Partial<TestimonialContent['items'][number]>) => {
     const next = [...c.items];
     next[i] = { ...next[i], ...patch };
@@ -1310,8 +1321,8 @@ function TestimonialEditor({
 
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
-      <div className="label">Items</div>
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <div className="label">{t('editor.fields.items')}</div>
       <div className="space-y-3">
         {c.items.map((it, i) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">
@@ -1326,7 +1337,7 @@ function TestimonialEditor({
             </div>
             <div className="mt-1.5">
               <Field
-                label="quote"
+                label={t('editor.fields.testimonialQuote')}
                 value={it.quote ?? ''}
                 onChange={(v) => updateItem(i, { quote: v })}
                 multiline
@@ -1334,21 +1345,21 @@ function TestimonialEditor({
             </div>
             <div className="mt-1.5">
               <Field
-                label="author"
+                label={t('editor.fields.testimonialAuthor')}
                 value={it.author ?? ''}
                 onChange={(v) => updateItem(i, { author: v })}
               />
             </div>
             <div className="mt-1.5">
               <Field
-                label="company"
+                label={t('editor.fields.testimonialCompany')}
                 value={it.company ?? ''}
                 onChange={(v) => updateItem(i, { company: v })}
               />
             </div>
             <div className="mt-2">
               <MediaField
-                label="Avatar (头像,可选)"
+                label={t('editor.fields.testimonialAvatar')}
                 defaultKind="image"
                 value={it.avatar}
                 onChange={(v) => updateItem(i, { avatar: v })}
@@ -1381,17 +1392,18 @@ function ListItemsEditor({
   setC: (c: any) => void;
   itemFields: string[];
 }) {
+  const t = useTranslations();
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
       {'subtitle' in c && (
         <Field
-          label="Subtitle"
+          label={t('editor.fields.subtitle')}
           value={c.subtitle ?? ''}
           onChange={(v) => setC({ ...c, subtitle: v })}
         />
       )}
-      <div className="label">Items</div>
+      <div className="label">{t('editor.fields.items')}</div>
       <div className="space-y-3">
         {c.items.map((it: any, i: number) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">
