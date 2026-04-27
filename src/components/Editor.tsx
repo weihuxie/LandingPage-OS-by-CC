@@ -560,21 +560,45 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     }
   };
 
+  // Module IDs that have an in-flight regenerate fetch. The button uses
+  // this to flip its label to "生成中…" + spinner + disable so the user
+  // knows the click registered. Tracking by ID (not a single boolean)
+  // because module-level regen runs concurrently across modules in
+  // future flows; today only one fires at a time, but the structure
+  // doesn't cost anything and avoids a refactor later.
+  const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
+
   const regenerate = async (id: string) => {
     // Capture the locale at REQUEST time. If the user switches tabs during
     // the 5-15s Claude call, we must NOT paint these modules into their
     // current view — that's the "串显示" bug (日本語 tab suddenly showing
     // 繁中 content because regenerate was fired from 繁中 earlier).
     const requestLocale = editingLocale;
-    const res = await fetch(`/api/projects/${project.id}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        regenerateModuleId: id,
-        newTone: project.tone,
-        locale: requestLocale,
-      }),
+    setRegeneratingIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
     });
+    let res: Response;
+    try {
+      res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          regenerateModuleId: id,
+          newTone: project.tone,
+          locale: requestLocale,
+        }),
+      });
+    } finally {
+      // Clear the busy flag whether or not the call succeeded — the
+      // error banner / toast handles user feedback for failures.
+      setRegeneratingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
     if (!res.ok) {
       // Structured LLM error — surface as banner. Old behavior was: silent
       // no-op. User clicked regenerate, nothing happened, no idea if
@@ -1570,6 +1594,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             module={selected}
             onChange={(patch) => updateModule(selected.id, patch)}
             onRegenerate={() => regenerate(selected.id)}
+            isRegenerating={regeneratingIds.has(selected.id)}
             regenerateDisabledReason={
               capabilities && !capabilities.hasClaude && !capabilities.hasDeepseek
                 ? '需要 ANTHROPIC_API_KEY 或 DEEPSEEK_API_KEY 才能重写文案。'

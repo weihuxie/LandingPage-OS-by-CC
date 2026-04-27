@@ -36,6 +36,11 @@ type Props = {
   module: PageModule;
   onChange: (patch: Partial<PageModule>) => void;
   onRegenerate: () => void;
+  /** True while a regenerate fetch is in flight for this module. Flips
+   *  the button to "生成中…" with a spinner + disables it so the user
+   *  knows the click registered (Claude can take 5-15s; without this
+   *  the button looks unresponsive). */
+  isRegenerating?: boolean;
   // When Claude isn't configured (no ANTHROPIC_API_KEY), the regenerate
   // button is greyed out + carries a tooltip instead of letting the user
   // click and then see a 503 banner. Undefined = no gating info from
@@ -53,6 +58,7 @@ export default function ModuleEditor({
   module,
   onChange,
   onRegenerate,
+  isRegenerating,
   regenerateDisabledReason,
   pageFont,
 }: Props) {
@@ -74,10 +80,20 @@ export default function ModuleEditor({
       <button
         className="btn btn-secondary w-full text-xs disabled:cursor-not-allowed disabled:opacity-50"
         onClick={onRegenerate}
-        disabled={!!regenerateDisabledReason}
+        disabled={!!regenerateDisabledReason || !!isRegenerating}
         title={regenerateDisabledReason ?? undefined}
       >
-        ↻ {t('editor.regenerateCopy')}
+        {isRegenerating ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-3 w-3 rounded-full border-2 border-ink-300 border-t-brand-600 motion-safe:animate-spin"
+              aria-hidden
+            />
+            生成中… {/* Claude / DeepSeek 调用通常 5-15s */}
+          </span>
+        ) : (
+          <>↻ {t('editor.regenerateCopy')}</>
+        )}
       </button>
 
       <div className="space-y-3">
