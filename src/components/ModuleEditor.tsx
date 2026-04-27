@@ -26,6 +26,7 @@ import MediaField from './MediaField';
 import UploadButton from './UploadButton';
 import PageFontPicker from './PageFontPicker';
 import HelpTip from './HelpTip';
+import AIRewriteButton from './AIRewriteButton';
 
 type PageFontControl = {
   value: string | null;
@@ -131,6 +132,7 @@ function Field({
   onChange,
   multiline,
   helpPath,
+  aiPath,
 }: {
   label: string;
   value: string;
@@ -140,12 +142,30 @@ function Field({
    *  in src/lib/field-tooltips.ts. Pattern ③ from the AI-introduction
    *  design doc. */
   helpPath?: string;
+  /** When set, renders the ✨ AI 改写 button next to the label.
+   *  Pattern ① from the AI-introduction design doc. The button reads
+   *  AIRewriteContext from Editor.tsx for pageId + locale + suggest fn. */
+  aiPath?: string;
 }) {
+  // Use a div instead of <label> when aiPath is set — the AI panel renders
+  // below and contains its own focusable inputs/buttons. Wrapping that all
+  // in a <label> would make a click on the panel jump focus to the input.
+  // For HelpTip-only fields, <label> is still correct (semantic + click
+  // forwarding to the input).
+  const Wrap = aiPath ? 'div' : 'label';
   return (
-    <label className="block">
+    <Wrap className="block">
       <span className="label inline-flex items-center">
         {label}
         {helpPath && <HelpTip path={helpPath} />}
+        {aiPath && (
+          <AIRewriteButton
+            path={aiPath}
+            label={label}
+            value={value}
+            onAdopt={(text) => onChange(text)}
+          />
+        )}
       </span>
       {multiline ? (
         <textarea
@@ -160,7 +180,7 @@ function Field({
           onChange={(e) => onChange(e.target.value)}
         />
       )}
-    </label>
+    </Wrap>
   );
 }
 
@@ -291,10 +311,10 @@ function HeroEditor({
           onChange={pageFont.onChange}
         />
       )}
-      <Field label="Eyebrow" value={c.eyebrow} onChange={(v) => setC({ ...c, eyebrow: v })} helpPath="hero.eyebrow" />
-      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline helpPath="hero.headline" />
-      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} multiline helpPath="hero.subhead" />
-      <Field label="Primary CTA" value={c.primaryCta} onChange={(v) => setC({ ...c, primaryCta: v })} helpPath="hero.primaryCta" />
+      <Field label="Eyebrow" value={c.eyebrow} onChange={(v) => setC({ ...c, eyebrow: v })} helpPath="hero.eyebrow" aiPath="hero.eyebrow" />
+      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline helpPath="hero.headline" aiPath="hero.headline" />
+      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} multiline helpPath="hero.subhead" aiPath="hero.subhead" />
+      <Field label="Primary CTA" value={c.primaryCta} onChange={(v) => setC({ ...c, primaryCta: v })} helpPath="hero.primaryCta" aiPath="hero.primaryCta" />
       {/* href 留空 → 默认滚动到 #contact 表单；填 https://... 则打开外链 (新标签) */}
       <Field
         label="Primary CTA 链接 (留空 = 滚到表单 #contact)"
@@ -333,7 +353,7 @@ function BenefitsEditor({ c, setC }: { c: BenefitsContent; setC: (c: BenefitsCon
         onChange={(v) => setC({ ...c, layout: v })}
         helpPath="benefits.layout"
       />
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="benefits.title" />
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="benefits.title" aiPath="benefits.title" />
       <div className="label inline-flex items-center">Items<HelpTip path="benefits.items" /></div>
       <div className="space-y-3">
         {c.items.map((it, i) => (
@@ -914,9 +934,9 @@ function BrandAssetLogoPicker({
 function SolutionEditor({ c, setC }: { c: SolutionContent; setC: (c: SolutionContent) => void }) {
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="solution.title" />
-      <Field label="Subtitle" value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} helpPath="solution.subtitle" />
-      <Field label="Body" value={c.body} onChange={(v) => setC({ ...c, body: v })} multiline helpPath="solution.body" />
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="solution.title" aiPath="solution.title" />
+      <Field label="Subtitle" value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} helpPath="solution.subtitle" aiPath="solution.subtitle" />
+      <Field label="Body" value={c.body} onChange={(v) => setC({ ...c, body: v })} multiline helpPath="solution.body" aiPath="solution.body" />
       <MediaField
         label="配图 (架构图 / 流程图,可选)"
         value={c.media}
@@ -945,12 +965,13 @@ function PainEditor({ c, setC }: { c: PainContent; setC: (c: PainContent) => voi
 
   return (
     <>
-      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="pain.title" />
+      <Field label="Title" value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="pain.title" aiPath="pain.title" />
       <Field
         label="Subtitle"
         value={c.subtitle ?? ''}
         onChange={(v) => setC({ ...c, subtitle: v })}
         helpPath="pain.subtitle"
+        aiPath="pain.subtitle"
       />
       <div className="label inline-flex items-center">Items<HelpTip path="pain.items" /></div>
       <div className="space-y-3">
@@ -1074,9 +1095,9 @@ function CTAEditor({ c, setC }: { c: CTAContent; setC: (c: CTAContent) => void }
         value={c.fontScale ?? 'md'}
         onChange={(v) => setC({ ...c, fontScale: v })}
       />
-      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} helpPath="cta.headline" />
-      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} helpPath="cta.subhead" />
-      <Field label="Button" value={c.button} onChange={(v) => setC({ ...c, button: v })} helpPath="cta.button" />
+      <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} helpPath="cta.headline" aiPath="cta.headline" />
+      <Field label="Subhead" value={c.subhead} onChange={(v) => setC({ ...c, subhead: v })} helpPath="cta.subhead" aiPath="cta.subhead" />
+      <Field label="Button" value={c.button} onChange={(v) => setC({ ...c, button: v })} helpPath="cta.button" aiPath="cta.button" />
       <Field
         label="按钮链接 (留空 = 滚到表单 #contact)"
         value={c.buttonHref ?? ''}

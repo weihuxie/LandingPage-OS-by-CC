@@ -6,6 +6,7 @@ import { providerStatus } from '@/lib/llm';
 import { storageBackend } from '@/lib/storage';
 import { requireUserAndTenant } from '@/lib/server-auth';
 import ProductCard from '@/components/ProductCard';
+import OnboardingTour, { RestartTourButton } from '@/components/OnboardingTour';
 
 // `dynamic = 'force-dynamic'` alone was NOT enough.
 //
@@ -55,9 +56,16 @@ export default async function Dashboard({
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
+      <OnboardingTour hasProducts={products.length > 0} />
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">我的产品</h1>
+        <h1 className="text-2xl font-semibold" data-tour="header-title">
+          我的产品
+        </h1>
         <div className="flex items-center gap-2">
+          {/* "重新看引导" — Client Component so we don't have to flip
+              the whole dashboard to client rendering for one button.
+              Reads the global helper OnboardingTour registers on mount. */}
+          <RestartTourButton />
           <Link
             href={`/${locale}/dashboard/leads`}
             className="btn btn-secondary"
@@ -65,14 +73,21 @@ export default async function Dashboard({
           >
             留资明细
           </Link>
-          <Link href={`/${locale}/new`} className="btn btn-primary">
+          <Link
+            href={`/${locale}/new`}
+            className="btn btn-primary"
+            data-tour="new-product"
+          >
             + 新建产品
           </Link>
         </div>
       </div>
 
       {/* System status strip — at a glance LLM + storage health */}
-      <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-ink-500">
+      <div
+        className="mt-4 flex flex-wrap items-center gap-2 text-xs text-ink-500"
+        data-tour="status-strip"
+      >
         <StatusPill label="Claude" value={llm.claude} />
         <StatusPill label="DeepSeek" value={llm.deepseek} />
         <StatusPill label="Gemini" value={llm.gemini} />
@@ -111,11 +126,17 @@ export default async function Dashboard({
         </div>
       )}
       {products.length === 0 ? (
-        <div className="card mt-8 p-10 text-center text-ink-500">
+        <div
+          className="card mt-8 p-10 text-center text-ink-500"
+          data-tour="products-grid"
+        >
           还没有产品。点右上角创建你的第一个产品。
         </div>
       ) : (
-        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div
+          className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+          data-tour="products-grid"
+        >
           {products.map((p) => (
             <ProductCard
               key={p.id}

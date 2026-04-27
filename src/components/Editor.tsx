@@ -22,6 +22,7 @@ import ModuleEditor from './ModuleEditor';
 import LocalizationPreviewModal from './LocalizationPreviewModal';
 import DiagnosticsBanner from './DiagnosticsBanner';
 import { findIssues, type Issue } from '@/lib/page-diagnostics';
+import { AIRewriteContext, type FieldSuggestion, type SuggestRequest } from './AIRewriteButton';
 import type { LocalizationStrategy } from '@/lib/types';
 
 // -----------------------------------------------------------------------
@@ -1149,7 +1150,52 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     }
   };
 
+  // Pattern ① "Per-field AI 改写" — context value plumbed to every Field
+  // helper inside ModuleEditor. Memoized so unrelated re-renders (e.g.
+  // selectedModuleId changes) don't churn the context and remount the
+  // ✨ buttons. The `suggest` closure captures page.id + editingLocale
+  // freshly each render so it always hits the right page/locale.
+  const aiCanRun = !!(capabilities?.hasClaude || capabilities?.hasDeepseek);
+  const aiRewriteCtx = useMemo(
+    () => ({
+      enabled: aiCanRun && !!page?.id,
+      disabledReason: !page?.id
+        ? 'AI 改写需要落地页 ID（保存后再试）'
+        : !aiCanRun
+          ? '需要 ANTHROPIC_API_KEY 或 DEEPSEEK_API_KEY'
+          : undefined,
+      suggest: async (req: SuggestRequest): Promise<FieldSuggestion[]> => {
+        if (!page?.id) throw new Error('落地页未保存，无法调 AI');
+        const res = await fetch('/api/fields/suggest', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            pageId: page.id,
+            locale: editingLocale,
+            fieldPath: req.fieldPath,
+            fieldLabel: req.fieldLabel,
+            currentValue: req.currentValue,
+            hint: req.hint,
+          }),
+        });
+        if (!res.ok) {
+          // Same structured-error pattern as regenerate / hydrate. Use
+          // notice-banner-style readout so the failure surfaces inline.
+          const notice = await readStructuredError(res);
+          throw new Error(`${notice.title}：${notice.message}`);
+        }
+        const data = await res.json();
+        // Reuse the LLM trace toast pipeline so AI rewrite calls show in
+        // the same right-bottom flash users already see for regenerate.
+        if (data?.llm) dispatchLLMTrace(data.llm);
+        return Array.isArray(data?.alternatives) ? data.alternatives : [];
+      },
+    }),
+    [aiCanRun, page?.id, editingLocale],
+  );
+
   return (
+    <AIRewriteContext.Provider value={aiRewriteCtx}>
     <>
       {notice && (
         <NoticeBanner
@@ -1776,6 +1822,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
       />
     )}
     </>
+    </AIRewriteContext.Provider>
   );
 }
 

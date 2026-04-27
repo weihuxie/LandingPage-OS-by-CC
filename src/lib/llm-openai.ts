@@ -84,7 +84,7 @@ function buildOpenAIClient(): OpenAI {
  * and module-shape-aware parsing. DeepSeek is, for this purpose,
  * "OpenAI with a different URL".
  */
-function buildDeepseekClient(): OpenAI {
+export function buildDeepseekClient(): OpenAI {
   // eslint-disable-next-line dot-notation
   const apiKey = process.env['DEEPSEEK_API_KEY'];
   if (!apiKey) {
