@@ -1589,6 +1589,21 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
                 "复制 Vercel/预览链接" 同组（都是"拿一份页面"的低频读取动作）。
                 Publish-mode (single vs A/B split) 一直在 ⋮ —— 项目级设置用
                 户 flip 一次就不动，不该和 publish 按钮等权竞争视觉。 */}
+            {/* 重新看引导 — 跟 dashboard 顶部同款位置（与 查看/已发布 这类
+                高级别动作并排，但视觉权重轻一档：text-link 而非 button），
+                调 restartAllIntros + 全局 lpRestartOnboarding（如已注册）。 */}
+            <button
+              type="button"
+              onClick={() => {
+                restartAllIntros();
+                const fn = (window as any).lpRestartOnboarding;
+                if (typeof fn === 'function') fn();
+              }}
+              className="whitespace-nowrap flex-shrink-0 px-2 py-1.5 text-xs text-ink-500 underline-offset-2 hover:text-brand-600 hover:underline"
+              title="重新展示所有页面的小白指引卡片"
+            >
+              🎯 引导
+            </button>
             <a
               className="btn btn-secondary whitespace-nowrap flex-shrink-0 px-3 py-1.5 text-xs"
               href={viewUrl}
@@ -1747,23 +1762,6 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
                     }
                   >
                     {project.deploy?.url ? '重新部署到 Vercel ▲' : '部署到 Vercel ▲'}
-                  </button>
-                  <div className="my-1 border-t border-ink-100" />
-                  {/* 重新看引导 — 把 dashboard 顶部的同款机制带进编辑器，
-                      用户改到一半想再看本地化 modal / 字段 HelpTip 的提示
-                      也能立刻还原所有 IntroCard。复用 dashboard 注册的
-                      window.lpRestartOnboarding 全局函数 + restartAllIntros。 */}
-                  <button
-                    className="block w-full px-3 py-2 text-left text-xs text-ink-700 hover:bg-ink-50"
-                    onClick={() => {
-                      restartAllIntros();
-                      const fn = (window as any).lpRestartOnboarding;
-                      if (typeof fn === 'function') fn();
-                      setMenuOpen(false);
-                    }}
-                    title="重新展示所有页面的小白指引卡片"
-                  >
-                    🎯 重新看引导
                   </button>
                 </div>
               )}
