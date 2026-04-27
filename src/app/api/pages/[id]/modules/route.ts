@@ -10,6 +10,13 @@ export const dynamic = 'force-dynamic';
  * Write modules for a specific (variant, locale) cell of a LandingPage.
  * Used by the editor's locale tabs so edits on the JP tab don't clobber
  * the EN tab and vice-versa.
+ *
+ * Optional `mirror` field (2026-04, A↔B variant-sync): writes a second
+ * cell in the same request. Mirror MUST target the OTHER variant + the
+ * SAME locale — any other shape is rejected. Doing both writes server-
+ * side keeps them atomic from the autosave's perspective (one HTTP call,
+ * one storage round-trip) and prevents the "primary saved but mirror
+ * lost" half-update bug if the user navigates away mid-flight.
  */
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireUserApi();
@@ -22,11 +29,35 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     variant: NarrativeVariant;
     locale: PageLocale;
     modules: PageModule[];
+    mirror?: {
+      variant: NarrativeVariant;
+      locale: PageLocale;
+      modules: PageModule[];
+    };
   };
   if (!body.variant || !body.locale || !Array.isArray(body.modules)) {
     return NextResponse.json({ error: 'bad-request' }, { status: 400 });
   }
   page.variants[body.variant][body.locale] = body.modules;
+
+  if (body.mirror) {
+    const m = body.mirror;
+    const otherVariant: NarrativeVariant = body.variant === 'A' ? 'B' : 'A';
+    if (
+      m.variant !== otherVariant ||
+      m.locale !== body.locale ||
+      !Array.isArray(m.modules)
+    ) {
+      // Reject anything not matching the variant-sync contract:
+      // mirror MUST be (otherVariant, sameLocale). Avoids exposing a
+      // generic "write any cell" capability through this endpoint.
+      return NextResponse.json(
+        { error: 'mirror must target the other variant in the same locale' },
+        { status: 400 },
+      );
+    }
+    page.variants[m.variant][m.locale] = m.modules;
+  }
 
   // Recompute hydrationFailed — a user who manually edits the hero
   // headline away from the template should clear the warning banner.

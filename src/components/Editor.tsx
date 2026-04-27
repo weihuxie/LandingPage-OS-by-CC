@@ -23,6 +23,11 @@ import LocalizationPreviewModal from './LocalizationPreviewModal';
 import DiagnosticsBanner from './DiagnosticsBanner';
 import { findIssues, type Issue } from '@/lib/page-diagnostics';
 import { AIRewriteContext, type FieldSuggestion, type SuggestRequest } from './AIRewriteButton';
+import {
+  filterContentForSync,
+  findSyncTargetIndex,
+  mergeSyncedContent,
+} from '@/lib/variant-sync';
 import type { LocalizationStrategy } from '@/lib/types';
 
 // -----------------------------------------------------------------------
@@ -364,6 +369,16 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
 
   // Snapshot refs so the unmount / beforeunload flushers can read the
   // latest values synchronously without re-registering every render.
+  // Variant-sync (2026-04): when updateModule mirrors a content patch into
+  // the OTHER variant cell, it sets this ref so the autosave loop knows to
+  // ship that cell too on the next /modules PATCH (via `body.mirror`).
+  // Cleared after the autosave fires. Same-locale-only by construction —
+  // updateModule never sets it to a different locale than editingLocale.
+  const mirrorDirtyRef = useRef<{
+    variant: NarrativeVariant;
+    locale: PageLocale;
+  } | null>(null);
+
   const saveSnapRef = useRef({ project, page, editingLocale, saveState });
   useEffect(() => {
     saveSnapRef.current = { project, page, editingLocale, saveState };
@@ -377,6 +392,23 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
       try {
         // If v2 page available, save modules to exact (variant, locale) cell
         if (page) {
+          // Variant-sync mirror cell (if any). Read + clear in one shot so
+          // a re-trigger before the network responds doesn't ship the same
+          // mirror twice. Mirror is always (otherVariant, sameLocale) per
+          // updateModule's invariant.
+          const mirrorTarget = mirrorDirtyRef.current;
+          mirrorDirtyRef.current = null;
+          const mirrorBody =
+            mirrorTarget &&
+            page.variants[mirrorTarget.variant]?.[mirrorTarget.locale]
+              ? {
+                  variant: mirrorTarget.variant,
+                  locale: mirrorTarget.locale,
+                  modules:
+                    page.variants[mirrorTarget.variant][mirrorTarget.locale] ??
+                    [],
+                }
+              : undefined;
           const res = await fetch(`/api/pages/${page.id}/modules`, {
             method: 'PATCH',
             headers: { 'content-type': 'application/json' },
@@ -384,6 +416,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               variant: project.activeVariant ?? 'A',
               locale: editingLocale,
               modules: project.modules,
+              ...(mirrorBody ? { mirror: mirrorBody } : {}),
             }),
             // keepalive lets this request complete even if the user navigates
             // away mid-flight — otherwise the browser aborts and the edit is
@@ -461,6 +494,25 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         snap.saveState === 'saving' ||
         snap.saveState === 'error';
       if (!hasUnsaved || !snap.page) return;
+      // Same mirror handling as the timed autosave above — read+clear the
+      // ref atomically so we don't double-ship if the timed save fires
+      // simultaneously. Worst case: timed save already shipped the mirror,
+      // ref is null here, this flush sends only the primary cell. That's
+      // fine — page.variants[other][locale] on the server already has the
+      // mirrored data from the prior save.
+      const mirrorTarget = mirrorDirtyRef.current;
+      mirrorDirtyRef.current = null;
+      const mirrorBody =
+        mirrorTarget &&
+        snap.page.variants[mirrorTarget.variant]?.[mirrorTarget.locale]
+          ? {
+              variant: mirrorTarget.variant,
+              locale: mirrorTarget.locale,
+              modules:
+                snap.page.variants[mirrorTarget.variant][mirrorTarget.locale] ??
+                [],
+            }
+          : undefined;
       // Fire-and-forget with keepalive so the browser completes the POST
       // even after the page unloads. keepalive body is capped at ~64KB by
       // the spec, which is plenty for a module array.
@@ -471,6 +523,7 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
           variant: snap.project.activeVariant ?? 'A',
           locale: snap.editingLocale,
           modules: snap.project.modules,
+          ...(mirrorBody ? { mirror: mirrorBody } : {}),
         }),
         keepalive: true,
       }).catch(() => {});
@@ -518,10 +571,62 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   };
 
   const updateModule = (id: string, patch: Partial<PageModule>) => {
+    // 1. Apply patch to the current variant + current locale (existing
+    //    behavior — project.modules is the editor's view of that cell).
     setProject((p) => ({
       ...p,
       modules: p.modules.map((m) => (m.id === id ? { ...m, ...patch } : m)),
     }));
+
+    // 2. A↔B variant-sync (2026-04). If the patch changed `content` and
+    //    the module type has sync-eligible fields, mirror those fields
+    //    into the OTHER variant's same-type module IN THE SAME LOCALE.
+    //    Cross-locale never syncs — zh-CN logos are 大陆客户, en logos
+    //    are 欧美客户, those are independent worlds.
+    //
+    //    Implementation: locate the changed module in project.modules,
+    //    filter content via the variant-sync allowlist, then write into
+    //    page.variants[otherVariant][editingLocale]. The autosave
+    //    detects this cell is dirty (mirrorDirtyRef) and ships it as
+    //    `body.mirror` on the next /modules PATCH.
+    if (patch.content && page) {
+      const changedMod = project.modules.find((m) => m.id === id);
+      if (changedMod) {
+        const synced = filterContentForSync(
+          changedMod.type,
+          patch.content as unknown as Record<string, unknown>,
+        );
+        if (synced) {
+          const otherVariant: NarrativeVariant =
+            (project.activeVariant ?? 'A') === 'A' ? 'B' : 'A';
+          setPage((prev) => {
+            if (!prev) return prev;
+            const otherMods = prev.variants[otherVariant]?.[editingLocale] ?? [];
+            const idx = findSyncTargetIndex(otherMods, changedMod.type);
+            if (idx === -1) return prev; // other variant doesn't have this type
+            const newMods = [...otherMods];
+            newMods[idx] = mergeSyncedContent(otherMods[idx], synced);
+            return {
+              ...prev,
+              variants: {
+                ...prev.variants,
+                [otherVariant]: {
+                  ...prev.variants[otherVariant],
+                  [editingLocale]: newMods,
+                },
+              },
+            };
+          });
+          // Mark the mirror cell as dirty so the autosave sends it as
+          // `body.mirror` on the next /modules PATCH (atomic two-cell
+          // write server-side).
+          mirrorDirtyRef.current = {
+            variant: otherVariant,
+            locale: editingLocale,
+          };
+        }
+      }
+    }
     touch();
   };
 
