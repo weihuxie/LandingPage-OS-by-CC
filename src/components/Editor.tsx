@@ -23,7 +23,7 @@ import LocalizationPreviewModal from './LocalizationPreviewModal';
 import DiagnosticsBanner from './DiagnosticsBanner';
 import { findIssues, type Issue } from '@/lib/page-diagnostics';
 import { AIRewriteContext, type FieldSuggestion, type SuggestRequest } from './AIRewriteButton';
-import { restartAllIntros } from './IntroCard';
+import IntroCard, { restartAllIntros } from './IntroCard';
 import {
   filterContentForSync,
   findSyncTargetIndex,
@@ -1326,6 +1326,40 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         />
       )}
       <DiagnosticsBanner issues={diagnosticsIssues} onAct={handleIssueAction} />
+      {/* 编辑器自身的 IntroCard — 给"🎯 引导"按钮一个真正能"重新展示"
+          的目标，否则点了在编辑器里毫无视觉反应（用户反馈 2026-04）。
+          内容覆盖编辑器六个核心心智：模块列表 / locale tabs / A/B 方案
+          / ✨ AI 改写 / 自动保存 / 查看与发布。 */}
+      <div className="mx-auto max-w-screen-2xl px-4 pt-3">
+        <IntroCard storageKey="editor-overview" title="编辑器速览（30 秒）">
+          <ul className="list-disc space-y-1 pl-4">
+            <li>
+              <strong>左栏</strong> 是模块列表 — 拖排序、↑↓ 调位、× 删除。点模块在右栏编辑。
+              "+ 痛点区"等按钮添加新模块。
+            </li>
+            <li>
+              <strong>顶部 4 个语言 tab</strong>（简体 / 繁体 / 日 / 英）是各自独立的内容版本。
+              改 zh-CN <em>不会</em> 自动同步到其他 locale。点 "+ 加语言" 添加。
+            </li>
+            <li>
+              <strong>A · 痛点 / B · 收益</strong> 是 A/B 双叙事——同一页面两套文案。发布时可选
+              "单方案" 或 "A/B 分流"。资产（logo / 图片 / form）会在 A↔B 内部自动镜像，文案不会。
+            </li>
+            <li>
+              右栏字段标签旁的 <strong>?</strong> 是字段说明，<strong>✨</strong> 是 AI
+              单字段改写（每次给 3 个备选 + 采用一键替换）。
+            </li>
+            <li>
+              改了什么 <strong>不用按保存</strong>——自动存。左上角 "已保存 · 21:00" 是状态指示。
+              改完没看到自动保存说明遇到问题，去查看右栏顶部的红条提示。
+            </li>
+            <li>
+              <strong>查看 ↗</strong> 在新标签页开预览（已发布的走 Vercel URL，未发布的走本地 /p/slug）。
+              <strong>已发布 ✓</strong> 一键发布到 Vercel。
+            </li>
+          </ul>
+        </IntroCard>
+      </div>
       <div className="grid min-h-[calc(100vh-56px)] grid-cols-12 gap-0">
       {/* Left rail — modules + findings only. Settings moved to a modal
           accessed from the ⋮ overflow menu; leads moved to Dashboard.
