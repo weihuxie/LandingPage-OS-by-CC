@@ -404,9 +404,9 @@ function ProductShowcaseEditor({
   const t = useTranslations();
   return (
     <>
-      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
-      <Field label={t('editor.fields.subtitle')} value={c.subtitle ?? ''} onChange={(v) => setC({ ...c, subtitle: v })} />
-      <div className="label">{t('editor.fields.items')}</div>
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="productShowcase.title" />
+      <Field label={t('editor.fields.subtitle')} value={c.subtitle ?? ''} onChange={(v) => setC({ ...c, subtitle: v })} helpPath="productShowcase.subtitle" />
+      <div className="label inline-flex items-center">{t('editor.fields.items')}<HelpTip path="productShowcase.items" /></div>
       <div className="space-y-3">
         {c.items.map((it, i) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">
@@ -490,18 +490,26 @@ function VideoEmbedEditor({
   const t = useTranslations();
   return (
     <>
-      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="videoEmbed.title" />
       <Field
         label={t('editor.fields.subtitle')}
         value={c.subtitle ?? ''}
         onChange={(v) => setC({ ...c, subtitle: v })}
+        helpPath="videoEmbed.subtitle"
       />
-      <MediaField
-        label={t('editor.fields.videoMedia')}
-        value={c.media}
-        onChange={(m) => setC({ ...c, media: m ?? { id: '', kind: 'video', url: '' } })}
-        defaultKind="video"
-      />
+      <div>
+        <div className="label inline-flex items-center">
+          {t('editor.fields.videoMedia')}
+          <HelpTip path="videoEmbed.media" />
+        </div>
+        <div className="mt-1">
+          <MediaField
+            value={c.media}
+            onChange={(m) => setC({ ...c, media: m ?? { id: '', kind: 'video', url: '' } })}
+            defaultKind="video"
+          />
+        </div>
+      </div>
     </>
   );
 }
@@ -518,9 +526,12 @@ function SocialProofEditor({ c, setC }: { c: SocialProofContent; setC: (c: Socia
   const showStats = variant !== 'logos-only';
   return (
     <>
-      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="socialProof.title" />
       <div>
-        <div className="label mb-1.5">Variant</div>
+        <div className="label mb-1.5 inline-flex items-center">
+          Variant
+          <HelpTip path="socialProof.variant" />
+        </div>
         <div className="flex flex-wrap gap-1.5">
           {VARIANTS.map((v) => (
             <button
@@ -537,7 +548,10 @@ function SocialProofEditor({ c, setC }: { c: SocialProofContent; setC: (c: Socia
       {showLogos && (
         <>
           <div>
-            <div className="label mb-1.5">Logo 展示</div>
+            <div className="label mb-1.5 inline-flex items-center">
+              Logo 展示
+              <HelpTip path="socialProof.logoMode" />
+            </div>
             <div className="flex gap-1.5">
               {(['grid', 'scroll'] as const).map((m) => (
                 <button
@@ -559,7 +573,10 @@ function SocialProofEditor({ c, setC }: { c: SocialProofContent; setC: (c: Socia
       )}
       {showStats && (
         <div>
-          <div className="label mb-1">Stats</div>
+          <div className="label mb-1 inline-flex items-center">
+            Stats
+            <HelpTip path="socialProof.stats" />
+          </div>
           <div className="space-y-1.5">
             {c.stats.map((s, i) => (
               <div key={i} className="flex gap-1.5">
@@ -1202,8 +1219,8 @@ function UseCaseEditor({ c, setC }: { c: UseCaseContent; setC: (c: UseCaseConten
 
   return (
     <>
-      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
-      <div className="label">{t('editor.fields.items')}</div>
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="useCase.title" />
+      <div className="label inline-flex items-center">{t('editor.fields.items')}<HelpTip path="useCase.items" /></div>
       <div className="space-y-3">
         {c.items.map((it, i) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">
@@ -1319,11 +1336,14 @@ function FormEditor({ c, setC }: { c: FormContent; setC: (c: FormContent) => voi
 
   return (
     <>
-      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="form.title" />
       <Field label={t('editor.fields.subtitle')} value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} />
-      <Field label={t('editor.fields.formSubmitLabel')} value={c.submitLabel} onChange={(v) => setC({ ...c, submitLabel: v })} />
+      <Field label={t('editor.fields.formSubmitLabel')} value={c.submitLabel} onChange={(v) => setC({ ...c, submitLabel: v })} helpPath="form.submit" />
       <div>
-        <div className="label mb-1.5">{t('editor.fields.formMode')}</div>
+        <div className="label mb-1.5 inline-flex items-center">
+          {t('editor.fields.formMode')}
+          <HelpTip path="form.mode" />
+        </div>
         <div className="flex flex-wrap gap-1.5">
           <button
             onClick={() => setC({ ...c, mode: 'inline' })}
@@ -1347,6 +1367,7 @@ function FormEditor({ c, setC }: { c: FormContent; setC: (c: FormContent) => voi
             label={t('editor.fields.formExternalUrl')}
             value={c.externalUrl ?? ''}
             onChange={(v) => setC({ ...c, externalUrl: v })}
+            helpPath="form.externalUrl"
           />
           {!urlLooksValid && (
             <div className="text-[11px] text-amber-600">URL 应以 http:// 或 https:// 开头</div>
@@ -1476,8 +1497,8 @@ function TestimonialEditor({
 
   return (
     <>
-      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
-      <div className="label">{t('editor.fields.items')}</div>
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="testimonial.title" />
+      <div className="label inline-flex items-center">{t('editor.fields.items')}<HelpTip path="testimonial.items" /></div>
       <div className="space-y-3">
         {c.items.map((it, i) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">
@@ -1550,7 +1571,7 @@ function ListItemsEditor({
   const t = useTranslations();
   return (
     <>
-      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} />
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="faq.title" />
       {'subtitle' in c && (
         <Field
           label={t('editor.fields.subtitle')}
@@ -1558,7 +1579,7 @@ function ListItemsEditor({
           onChange={(v) => setC({ ...c, subtitle: v })}
         />
       )}
-      <div className="label">{t('editor.fields.items')}</div>
+      <div className="label inline-flex items-center">{t('editor.fields.items')}<HelpTip path="faq.items" /></div>
       <div className="space-y-3">
         {c.items.map((it: any, i: number) => (
           <div key={i} className="rounded-xl border border-ink-100 p-3">

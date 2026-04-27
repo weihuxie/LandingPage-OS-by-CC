@@ -33,6 +33,7 @@
 import { useEffect } from 'react';
 import { driver, type Driver, type DriveStep } from 'driver.js';
 import 'driver.js/dist/driver.css';
+import { restartAllIntros } from './IntroCard';
 
 const STORAGE_KEY = 'lp:onboarding-done';
 const VERSION_KEY = 'lp:onboarding-version';
@@ -139,11 +140,20 @@ export function RestartTourButton() {
     <button
       type="button"
       onClick={() => {
+        // Two systems coexist:
+        //   1) driver.js multi-step popover for the dashboard layout
+        //      (lpRestartOnboarding registered by OnboardingTour effect)
+        //   2) IntroCard inline dismissible panels scattered across the
+        //      app (LocalizationPreviewModal, etc.) — restartAllIntros
+        //      clears their localStorage flags + dispatches an event
+        //      that re-mounted cards listen for.
+        // Trigger both — clicking "重新看引导" should restore everything.
+        restartAllIntros();
         const fn = (window as any).lpRestartOnboarding;
         if (typeof fn === 'function') fn();
       }}
       className="text-xs text-ink-500 underline-offset-2 hover:text-brand-600 hover:underline"
-      title="重新走一遍快速引导"
+      title="重新走一遍快速引导（包括所有页面的小白指引）"
     >
       🎯 重新看引导
     </button>

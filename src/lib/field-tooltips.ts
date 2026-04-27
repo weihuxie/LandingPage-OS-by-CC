@@ -247,6 +247,29 @@ export const FIELD_TOOLTIPS: Record<string, Tooltip> = {
     short: '认证有效期至（YYYY-MM-DD）。过期前 30 天 dashboard 会提醒。可选。',
     example: '2027-06-30',
   },
+
+  // ----- ProductShowcase (功能截图模块) -----
+  'productShowcase.title': {
+    short: '功能展示模块的总标题。让访客知道下面要看到的是产品功能截图。',
+    example: '"看看 INO 的实际样子"',
+  },
+  'productShowcase.subtitle': {
+    short: '副标题，可选。补充上下文（"3 个核心场景，60 秒看完核心能力"）。',
+  },
+  'productShowcase.items': {
+    short: '每条 = 一个功能截图 + 描述。建议 3-5 条，每条配真实 UI 截图。视觉权重比文字大。',
+  },
+
+  // ----- VideoEmbed (视频模块) -----
+  'videoEmbed.title': {
+    short: 'Demo 视频区标题。"看 60 秒演示" 比 "Demo Video" 强一档。',
+  },
+  'videoEmbed.subtitle': {
+    short: '副标题，可选。可以挑明视频时长（"60 秒"）降低观看门槛。',
+  },
+  'videoEmbed.media': {
+    short: 'YouTube / Vimeo / Loom 链接，或直接 MP4 URL。建议 60 秒以内，移动端访客耐心有限。',
+  },
 };
 
 /**

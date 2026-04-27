@@ -10,6 +10,7 @@ import type {
 } from '@/lib/types';
 import { nativeLabel } from '@/lib/i18n-detect';
 import { STYLE_PRESETS } from '@/lib/styles';
+import IntroCard from './IntroCard';
 
 const MARKETS: MarketCode[] = ['CN', 'TW', 'JP', 'US', 'EU', 'GLOBAL'];
 
@@ -137,6 +138,30 @@ export default function LocalizationPreviewModal({
           >
             ×
           </button>
+        </div>
+
+        {/* 小白指引 — 第一次添加语言时关键的几个心智 */}
+        <div className="mb-3">
+          <IntroCard storageKey="localize-modal" title="本地化 ≠ 翻译">
+            <ul className="list-disc space-y-1 pl-4">
+              <li>
+                <strong>每个 locale 是独立的页面</strong> — 生成后你可以单独改 Hero / 留资字段，
+                互不影响。源语言改了不会自动同步过来。
+              </li>
+              <li>
+                <strong>"继承自 X"</strong> 会保留来源版本的模块顺序 / 隐藏 / 表单字段 / 图片，
+                只把文案翻译过来。<strong>"从头生成"</strong> 按目标市场默认模板重新写一遍 ——
+                CN 偏短手机号字段，EU 加 GDPR 同意，JP 多正式语等。
+              </li>
+              <li>
+                LLM 会根据目标市场调整风格和信任点（CN/JP/US/EU 各不一样），
+                <strong>不只是直译</strong>。下面这些选项可改、可重新生成。
+              </li>
+              <li>
+                生成后这个 locale 默认 <strong>未发布</strong>，需要你显式点"发布"才上线。
+              </li>
+            </ul>
+          </IntroCard>
         </div>
 
         {loading || !strategy ? (
