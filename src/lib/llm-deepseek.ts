@@ -130,6 +130,20 @@ function safeModelOrDefault(model: string, callsite: string): string {
   return model;
 }
 
+/**
+ * Hardcoded universal-fallback model for the runtime catch path. Used when
+ * the configured model AND the in-code default both fail at runtime — at
+ * which point we don't trust either, so we drop to the proven-to-work V3
+ * chat model.
+ *
+ * Why a separate constant rather than reusing `DEFAULT_LLM_CONFIG.providers.
+ * deepseek.model`: future deploys may ship a new default that ALSO has
+ * tool_choice issues (ask the V4-Pro deployment from 2026-04 how that
+ * went). When that happens, the runtime catch needs an escape hatch that
+ * doesn't depend on what someone made the default this week.
+ */
+const RUNTIME_FALLBACK_MODEL = 'deepseek-chat';
+
 async function resolveModel(): Promise<string> {
   let configured: string;
   try {
@@ -305,15 +319,16 @@ Verbatim rules:
     try {
       response = await callApi(model);
     } catch (e) {
-      // Belt-and-suspenders: even if resolveModel didn't catch a reasoner-
-      // family alias, DeepSeek itself tells us the model rejected
-      // tool_choice. Retry once with deepseek-chat before giving up.
-      if (isToolChoiceUnsupportedError(e) && model !== DEFAULT_LLM_CONFIG.providers.deepseek.model) {
-        const fallback = DEFAULT_LLM_CONFIG.providers.deepseek.model;
+      // Belt-and-suspenders: even if resolveModel didn't catch a model
+      // that rejects tool_choice, DeepSeek itself tells us via the 400.
+      // Retry once with the hardcoded RUNTIME_FALLBACK_MODEL (deepseek-chat,
+      // V3) — proven-working baseline that ignores whatever broken default
+      // happens to be configured this week.
+      if (isToolChoiceUnsupportedError(e) && model !== RUNTIME_FALLBACK_MODEL) {
         console.warn(
-          `[deepseek] model "${model}" rejected tool_choice at runtime — retrying once with ${fallback}.`,
+          `[deepseek] strategy: model "${model}" rejected tool_choice at runtime — retrying once with ${RUNTIME_FALLBACK_MODEL}.`,
         );
-        model = fallback;
+        model = RUNTIME_FALLBACK_MODEL;
         response = await callApi(model);
       } else {
         throw e;
@@ -503,14 +518,14 @@ export async function regenerateModuleViaDeepseek(
     } catch (e) {
       // Belt-and-suspenders for the same case as the strategy path: if
       // DeepSeek itself rejects the model's tool_choice support at runtime,
-      // bring the model to deepseek-chat for the rest of this call (and
-      // for the retry-loop's next iteration) and try again immediately.
-      if (isToolChoiceUnsupportedError(e) && model !== DEFAULT_LLM_CONFIG.providers.deepseek.model) {
-        const fallback = DEFAULT_LLM_CONFIG.providers.deepseek.model;
+      // bring the model to RUNTIME_FALLBACK_MODEL (V3 chat, proven-working)
+      // for the rest of this call (and for the retry-loop's next iteration)
+      // and try again immediately.
+      if (isToolChoiceUnsupportedError(e) && model !== RUNTIME_FALLBACK_MODEL) {
         console.warn(
-          `[deepseek] module ${type}: model "${model}" rejected tool_choice at runtime — retrying once with ${fallback}.`,
+          `[deepseek] module ${type}: model "${model}" rejected tool_choice at runtime — retrying once with ${RUNTIME_FALLBACK_MODEL}.`,
         );
-        model = fallback;
+        model = RUNTIME_FALLBACK_MODEL;
         response = await client.chat.completions.create({
           model: safeModelOrDefault(model, `module-regen:${type}:retry`),
           max_tokens: MAX_TOKENS,

@@ -131,7 +131,13 @@ export const DEFAULT_LLM_CONFIG: LLMConfig = {
   version: 1,
   providers: {
     claude: { model: 'claude-opus-4-20250514' },
-    deepseek: { model: 'deepseek-v4-pro' },
+    // 2026-04 测试结论：DeepSeek V4 Pro 实际还不支持 tool_choice（错误
+    // 体里写 "deepseek-reasoner does not support this tool_choice"，但
+    // 请求送的是 v4-pro——V4 内部把 tool_choice 路由到 reasoner backend
+    // 后撞同一个限制）。在 DeepSeek 接好 V4 tool_choice 之前，默认仍用
+    // V3 chat（2026-07-24 弃用前还有 3 个月寿命，足够等）。Admin 想试
+    // V4 可以自己在 /admin/llm 切。
+    deepseek: { model: 'deepseek-chat' },
     openai: { model: 'gpt-4o-2024-08-06' },
     gemini: { model: 'gemini-3.0-pro' },
   },
@@ -179,9 +185,9 @@ export const MODEL_OPTIONS: Record<
     { id: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash (旧)' },
   ],
   deepseek: [
-    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (最新旗舰 · 推荐)' },
-    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (V4 轻量 · 更快更便宜)' },
-    { id: 'deepseek-chat', label: 'DeepSeek V3 Chat (旧 · 2026-07-24 弃用)' },
+    { id: 'deepseek-chat', label: 'DeepSeek V3 Chat (推荐 · tool_choice 稳定 · 2026-07-24 弃用)' },
+    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (V4 旗舰 · 当前 tool_choice 不可用 ⚠️)' },
+    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (V4 轻量 · 当前 tool_choice 不可用 ⚠️)' },
     // NOTE: deepseek-reasoner (R1) intentionally omitted. This codebase's
     // DeepSeek adapter uses tool_choice to force structured JSON, and
     // reasoner returns HTTP 400 ("does not support this tool_choice") —
