@@ -97,10 +97,37 @@ const BASE_URL = 'https://api.deepseek.com/v1';
  * is safe because all chat-family models share the same prompt → JSON
  * contract on the happy path.
  */
-const REASONER_FAMILY_RE = /^deepseek-(reasoner|r\d+)\b/i;
+// Broader pattern: anything whose model starts `deepseek-r…` / `deepseek-reasoner…`
+// gets coerced to the safe default. Plus we catch standalone "reasoner" /
+// "r1" / "r2" tokens. Intentionally over-eager: false positives only cost
+// a coercion to deepseek-v4-pro (which works fine), false negatives cost a
+// 502 in the user's face.
+const REASONER_FAMILY_RE = /^deepseek-(reasoner|r\d+|r-)/i;
 
 export function isReasonerFamily(model: string): boolean {
+  if (!model) return false;
   return REASONER_FAMILY_RE.test(model.trim());
+}
+
+/**
+ * Final-line-of-defense sanitizer. Even if resolveModel() somehow let a
+ * reasoner-family alias through (KV race, future model name we haven't
+ * predicted, admin typo into 自定义 field), this function intercepts the
+ * model string at the very last step before sending to DeepSeek's API.
+ *
+ * Pattern: defense in depth. resolveModel coerces. The runtime catch retries.
+ * This belt prevents the request from ever leaving with a known-bad model.
+ */
+function safeModelOrDefault(model: string, callsite: string): string {
+  if (isReasonerFamily(model)) {
+    const safe = DEFAULT_LLM_CONFIG.providers.deepseek.model;
+    console.warn(
+      `[deepseek] safeModelOrDefault: ${callsite} attempted to send "${model}" — coerced to "${safe}". ` +
+        `This is the last defense; resolveModel() should have caught this. Update /admin/llm to silence.`,
+    );
+    return safe;
+  }
+  return model;
 }
 
 async function resolveModel(): Promise<string> {
@@ -250,7 +277,7 @@ Verbatim rules:
   let model = await resolveModel();
   const callApi = (m: string) =>
     client.chat.completions.create({
-      model: m,
+      model: safeModelOrDefault(m, 'strategy'),
       max_tokens: MAX_TOKENS,
       temperature: 0.4,
       messages: [
@@ -451,7 +478,7 @@ export async function regenerateModuleViaDeepseek(
     let response;
     try {
       response = await client.chat.completions.create({
-        model,
+        model: safeModelOrDefault(model, `module-regen:${type}`),
         max_tokens: MAX_TOKENS,
         temperature: 0.5,
         messages: [
@@ -485,7 +512,7 @@ export async function regenerateModuleViaDeepseek(
         );
         model = fallback;
         response = await client.chat.completions.create({
-          model,
+          model: safeModelOrDefault(model, `module-regen:${type}:retry`),
           max_tokens: MAX_TOKENS,
           temperature: 0.5,
           messages: [
