@@ -51,6 +51,8 @@ import type {
   MarketCode,
   TrafficSource,
 } from '@/lib/types';
+import HelpTip from './HelpTip';
+import IntroCard from './IntroCard';
 
 const MARKETS: MarketCode[] = ['CN', 'TW', 'JP', 'US', 'EU', 'GLOBAL'];
 const LOCALES: LocaleCode[] = ['zh-CN', 'zh-TW', 'ja', 'en'];
@@ -398,7 +400,7 @@ export default function Wizard({ locale }: Props) {
         </div>
       </div>
 
-      <div className="mb-6 flex gap-1.5">
+      <div className="mb-4 flex gap-1.5">
         {Array.from({ length: totalSteps }).map((_, i) => (
           <div
             key={i}
@@ -409,12 +411,33 @@ export default function Wizard({ locale }: Props) {
         ))}
       </div>
 
+      {/* 全 wizard 通用 IntroCard — 创建第一个产品时讲清流程，可关可重看。
+          只在第 0 步显示，避免占用后续步骤的视觉空间。 */}
+      {step === 0 && (
+        <div className="mb-4">
+          <IntroCard storageKey="wizard-intro" title="创建产品 4 步走">
+            <ol className="list-decimal space-y-0.5 pl-4">
+              <li>填基础（产品名 / 一句话定位 / 转化目标）</li>
+              <li>选目标市场和受众（决定语气、模块顺序、信任点）</li>
+              <li>(可选) 上传白皮书 / 贴官网文案，AI 摘出真实数字 + 客户名做 grounding</li>
+              <li>AI 生成 4 个语言版本的落地页（A/B 双叙事）— 进编辑器再细调</li>
+            </ol>
+            <div className="mt-2 text-[11px] opacity-70">
+              中途可以"上一步"回去改。关掉浏览器不丢——会自动存草稿（24 小时内有效）。
+            </div>
+          </IntroCard>
+        </div>
+      )}
+
       <div className="card p-6 sm:p-8">
         {step === 0 && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold">{t('wizard.step1.title')}</h2>
             <div>
-              <label className="label">{t('wizard.step1.name')}</label>
+              <label className="label inline-flex items-center">
+                {t('wizard.step1.name')}
+                <HelpTip path="wizard.name" />
+              </label>
               <input
                 className="input mt-1.5"
                 placeholder={t('wizard.step1.namePh')}
@@ -423,7 +446,10 @@ export default function Wizard({ locale }: Props) {
               />
             </div>
             <div>
-              <label className="label">{t('wizard.step1.tagline')}</label>
+              <label className="label inline-flex items-center">
+                {t('wizard.step1.tagline')}
+                <HelpTip path="wizard.tagline" />
+              </label>
               <input
                 className="input mt-1.5"
                 placeholder={t('wizard.step1.taglinePh')}
@@ -433,7 +459,10 @@ export default function Wizard({ locale }: Props) {
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label className="label">{t('wizard.step1.category')}</label>
+                <label className="label inline-flex items-center">
+                  {t('wizard.step1.category')}
+                  <HelpTip path="wizard.category" />
+                </label>
                 <input
                   className="input mt-1.5"
                   value={inputs.category}
@@ -441,7 +470,10 @@ export default function Wizard({ locale }: Props) {
                 />
               </div>
               <div>
-                <label className="label">{t('wizard.step1.cta')}</label>
+                <label className="label inline-flex items-center">
+                  {t('wizard.step1.cta')}
+                  <HelpTip path="wizard.cta" />
+                </label>
                 <select
                   className="input mt-1.5"
                   value={inputs.cta}
@@ -456,7 +488,10 @@ export default function Wizard({ locale }: Props) {
               </div>
             </div>
             <div>
-              <label className="label">{t('wizard.step1.value')}</label>
+              <label className="label inline-flex items-center">
+                {t('wizard.step1.value')}
+                <HelpTip path="wizard.value" />
+              </label>
               <textarea
                 className="input mt-1.5 min-h-[96px]"
                 placeholder={t('wizard.step1.valuePh')}
@@ -472,7 +507,10 @@ export default function Wizard({ locale }: Props) {
             <h2 className="text-lg font-semibold">{t('wizard.step2.title')}</h2>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label className="label">{t('wizard.step2.market')}</label>
+                <label className="label inline-flex items-center">
+                  {t('wizard.step2.market')}
+                  <HelpTip path="wizard.market" />
+                </label>
                 <select
                   className="input mt-1.5"
                   value={inputs.market}
@@ -486,7 +524,10 @@ export default function Wizard({ locale }: Props) {
                 </select>
               </div>
               <div>
-                <label className="label">{t('wizard.step2.language')}</label>
+                <label className="label inline-flex items-center">
+                  {t('wizard.step2.language')}
+                  <HelpTip path="wizard.locale" />
+                </label>
                 <select
                   className="input mt-1.5"
                   value={inputs.locale}
@@ -500,7 +541,10 @@ export default function Wizard({ locale }: Props) {
                 </select>
               </div>
               <div>
-                <label className="label">{t('wizard.step2.industry')}</label>
+                <label className="label inline-flex items-center">
+                  {t('wizard.step2.industry')}
+                  <HelpTip path="wizard.industry" />
+                </label>
                 <input
                   className="input mt-1.5"
                   value={inputs.industry}
@@ -508,7 +552,10 @@ export default function Wizard({ locale }: Props) {
                 />
               </div>
               <div>
-                <label className="label">{t('wizard.step2.size')}</label>
+                <label className="label inline-flex items-center">
+                  {t('wizard.step2.size')}
+                  <HelpTip path="wizard.companySize" />
+                </label>
                 <input
                   className="input mt-1.5"
                   value={inputs.companySize}
@@ -516,7 +563,10 @@ export default function Wizard({ locale }: Props) {
                 />
               </div>
               <div>
-                <label className="label">{t('wizard.step2.role')}</label>
+                <label className="label inline-flex items-center">
+                  {t('wizard.step2.role')}
+                  <HelpTip path="wizard.role" />
+                </label>
                 <input
                   className="input mt-1.5"
                   value={inputs.role}
@@ -524,7 +574,10 @@ export default function Wizard({ locale }: Props) {
                 />
               </div>
               <div>
-                <label className="label">{t('wizard.step2.source')}</label>
+                <label className="label inline-flex items-center">
+                  {t('wizard.step2.source')}
+                  <HelpTip path="wizard.source" />
+                </label>
                 <select
                   className="input mt-1.5"
                   value={inputs.source}

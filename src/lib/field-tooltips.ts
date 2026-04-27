@@ -270,6 +270,48 @@ export const FIELD_TOOLTIPS: Record<string, Tooltip> = {
   'videoEmbed.media': {
     short: 'YouTube / Vimeo / Loom 链接，或直接 MP4 URL。建议 60 秒以内，移动端访客耐心有限。',
   },
+
+  // ----- Wizard (创建第一个产品的 4 步向导 /[locale]/new) -----
+  'wizard.name': {
+    short: '产品名 / 公司名。整个落地页里 AI 会反复用这个词，写错了重新生成全要改。',
+    example: 'INO · Helios · Acme Compliance OS',
+  },
+  'wizard.tagline': {
+    short: '一句话定位 — 访客 5 秒内看到的"我是谁"。具体动词 + 具体数字胜过抽象口号。',
+    example: '✗ "让团队工作更高效"   ✓ "给 AI 团队的合规底座，30 秒接入"',
+  },
+  'wizard.category': {
+    short: '产品所属类目。AI 用这个推断"行业惯例 + 该 vertical 的卖点偏好"。',
+    example: 'B2B SaaS · 合规科技 · 跨境支付 · 电商工具',
+  },
+  'wizard.cta': {
+    short: '主转化目标 = 整个页面想让访客做什么。决定 Hero CTA 文案 / 表单字段 / 整体语气。',
+  },
+  'wizard.value': {
+    short: '核心价值主张：你解决谁的什么问题，量化效果。AI 会从这里抽 Hero / Pain / Solution / CTA 的所有锚点。',
+    example: '"帮 AI 团队 30 秒搞定合规审计，节省 80% 法务工时，已被 500+ 团队采用"',
+  },
+  'wizard.market': {
+    short: '目标市场 — 决定语气、模块顺序、信任点选择（EU 强 GDPR / US 强 SOC2 / CN 强等保）。',
+  },
+  'wizard.locale': {
+    short: '源语言版本（最先生成的那个）。其他语言之后从这个版本继承或独立生成。',
+  },
+  'wizard.industry': {
+    short: '受众所在行业。越具体越好，AI 才能挑这个行业的客户证言 / 行业话术。',
+    example: '"金融科技 / 数字资产" 比 "金融" 强',
+  },
+  'wizard.companySize': {
+    short: '受众公司规模。早期创业公司 vs 大企业的痛点完全不同。',
+    example: '"50-200 人 ToB 团队" · "Fortune 500 合规部门"',
+  },
+  'wizard.role': {
+    short: '决策者 / 使用者角色。Hero 文案是说给谁的？',
+    example: '"合规负责人 (CCO)" · "AI 工程负责人"',
+  },
+  'wizard.source': {
+    short: '主流量来源。投放访客点开就走的多，要短促直接 CTA；自然搜索来的耐心，可以铺多模块。',
+  },
 };
 
 /**

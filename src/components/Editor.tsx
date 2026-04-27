@@ -23,6 +23,7 @@ import LocalizationPreviewModal from './LocalizationPreviewModal';
 import DiagnosticsBanner from './DiagnosticsBanner';
 import { findIssues, type Issue } from '@/lib/page-diagnostics';
 import { AIRewriteContext, type FieldSuggestion, type SuggestRequest } from './AIRewriteButton';
+import { restartAllIntros } from './IntroCard';
 import {
   filterContentForSync,
   findSyncTargetIndex,
@@ -1746,6 +1747,23 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
                     }
                   >
                     {project.deploy?.url ? '重新部署到 Vercel ▲' : '部署到 Vercel ▲'}
+                  </button>
+                  <div className="my-1 border-t border-ink-100" />
+                  {/* 重新看引导 — 把 dashboard 顶部的同款机制带进编辑器，
+                      用户改到一半想再看本地化 modal / 字段 HelpTip 的提示
+                      也能立刻还原所有 IntroCard。复用 dashboard 注册的
+                      window.lpRestartOnboarding 全局函数 + restartAllIntros。 */}
+                  <button
+                    className="block w-full px-3 py-2 text-left text-xs text-ink-700 hover:bg-ink-50"
+                    onClick={() => {
+                      restartAllIntros();
+                      const fn = (window as any).lpRestartOnboarding;
+                      if (typeof fn === 'function') fn();
+                      setMenuOpen(false);
+                    }}
+                    title="重新展示所有页面的小白指引卡片"
+                  >
+                    🎯 重新看引导
                   </button>
                 </div>
               )}
