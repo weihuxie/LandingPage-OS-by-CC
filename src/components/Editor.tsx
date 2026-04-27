@@ -18,6 +18,7 @@ import { auditProject } from '@/lib/linter';
 import { nativeLabel, PAGE_LOCALES } from '@/lib/i18n-detect';
 import PageRenderer from './PageRenderer';
 import ModuleEditor from './ModuleEditor';
+import PageFontPicker from './PageFontPicker';
 import LocalizationPreviewModal from './LocalizationPreviewModal';
 import type { LocalizationStrategy } from '@/lib/types';
 
@@ -1556,6 +1557,36 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
 
       {/* Right: module editor */}
       <aside className="col-span-12 border-l border-ink-100 bg-white p-4 md:col-span-3 lg:col-span-3">
+        {/* Always-visible page-level font picker. Same field as the one
+            in Settings modal; both surfaces read/write page.fontPresetId
+            so they stay in sync. Kept above the per-module editor on
+            purpose — fonts are global, modules are local; the visual
+            grouping makes the scope obvious. */}
+        {page && (
+          <div className="mb-4 border-b border-ink-100 pb-4">
+            <PageFontPicker
+              value={page.fontPresetId ?? null}
+              onChange={async (presetId) => {
+                setPage((prev) => {
+                  if (!prev) return prev;
+                  const next = { ...prev };
+                  if (presetId) next.fontPresetId = presetId;
+                  else delete next.fontPresetId;
+                  return next;
+                });
+                try {
+                  await fetch(`/api/pages/${page.id}`, {
+                    method: 'PATCH',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ fontPresetId: presetId }),
+                  });
+                } catch {
+                  // Optimistic — let next autosave round-trip surface errors.
+                }
+              }}
+            />
+          </div>
+        )}
         {selected ? (
           <ModuleEditor
             module={selected}
