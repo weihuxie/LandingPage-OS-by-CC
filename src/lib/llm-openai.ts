@@ -73,6 +73,33 @@ function buildOpenAIClient(): OpenAI {
   return baseURL ? new OpenAI({ baseURL }) : new OpenAI();
 }
 
+/**
+ * List models the configured OpenAI endpoint reports as available.
+ * Used by the admin diagnostic to show "what model IDs is the gateway
+ * actually willing to serve" — important for KSP / Azure / other proxy
+ * setups where the activated model list differs from openai.com.
+ *
+ * Throws on any HTTP failure. The admin UI surfaces the message.
+ */
+export async function listOpenAIModels(): Promise<{
+  baseURL: string;
+  models: Array<{ id: string; ownedBy?: string; created?: number }>;
+}> {
+  if (!hasOpenAIKey()) throw new Error('OPENAI_API_KEY not configured');
+  const client = buildOpenAIClient();
+  const baseURL = getOpenAIBaseURL() ?? 'https://api.openai.com/v1';
+  // The SDK's models.list() pages, but for a diagnostic we only need
+  // the first page (gateways rarely return >50 models, and the list
+  // endpoint without `after` cursor returns the entire catalog inline).
+  const page = await client.models.list();
+  const out = page.data.map((m) => ({
+    id: m.id,
+    ownedBy: (m as any).owned_by,
+    created: (m as any).created,
+  }));
+  return { baseURL, models: out };
+}
+
 // Model comes from the admin-configurable llm-config at runtime; default
 // (gpt-4o-2024-08-06) is defined in DEFAULT_LLM_CONFIG.
 async function resolveModel(): Promise<string> {

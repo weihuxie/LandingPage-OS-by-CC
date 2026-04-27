@@ -549,7 +549,131 @@ function ModelRow({
             {incompatible.reason}
           </div>
         )}
+        {provider === 'openai' && keyConfigured && (
+          <OpenAIModelProbe currentModel={model} onPick={onChange} />
+        )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Diagnostic widget on the OpenAI row · click "查看可用模型" to hit
+ * GET /api/admin/probe-openai-models which calls the configured
+ * OPENAI_BASE_URL's /v1/models endpoint. Shows the catalog so the admin
+ * can pick an ID that's actually activated on the gateway (KSP / Azure
+ * frequently activate a SUBSET of openai.com's full list, and the
+ * runtime 403 "model not activated" is the kind of error the admin
+ * needs the gateway to tell them about, not a guess).
+ *
+ * Click a result row to copy the id straight back into the model field
+ * — saves the operator from typing.
+ */
+function OpenAIModelProbe({
+  currentModel,
+  onPick,
+}: {
+  currentModel: string;
+  onPick: (id: string) => void;
+}) {
+  const [state, setState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | {
+        kind: 'ok';
+        baseURL: string;
+        models: Array<{ id: string; ownedBy?: string; created?: number }>;
+      }
+    | { kind: 'err'; message: string; status?: number }
+  >({ kind: 'idle' });
+
+  const probe = async () => {
+    setState({ kind: 'loading' });
+    try {
+      const r = await fetch('/api/admin/probe-openai-models');
+      const body = await r.json();
+      if (!body.ok) {
+        setState({
+          kind: 'err',
+          message: body.error ?? `HTTP ${r.status}`,
+          status: body.status,
+        });
+        return;
+      }
+      setState({
+        kind: 'ok',
+        baseURL: body.baseURL,
+        models: body.models,
+      });
+    } catch (e: any) {
+      setState({ kind: 'err', message: e?.message ?? '网络错误' });
+    }
+  };
+
+  return (
+    <div className="mt-2 rounded-md border border-ink-100 bg-ink-50/40 p-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-ink-600">
+          看 OpenAI 网关给你开通了哪些模型 ID（KSP / Azure 等代理常用）
+        </span>
+        <button
+          type="button"
+          onClick={probe}
+          disabled={state.kind === 'loading'}
+          className="rounded-md border border-ink-200 bg-white px-2 py-1 text-[11px] hover:border-brand-300 disabled:opacity-50"
+        >
+          {state.kind === 'loading' ? '探测中…' : '🔍 查看可用模型'}
+        </button>
+      </div>
+      {state.kind === 'err' && (
+        <div className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-[11px] text-red-800">
+          <div className="font-medium">探测失败</div>
+          <div className="mt-0.5 break-all font-mono text-[10px]">
+            {state.status ? `[${state.status}] ` : ''}
+            {state.message}
+          </div>
+          <div className="mt-1 text-[10px] text-red-700">
+            常见原因：API key 错 / OPENAI_BASE_URL 拼错 / 网关没开通 /v1/models
+            端点。检查 Vercel 函数日志看完整错误。
+          </div>
+        </div>
+      )}
+      {state.kind === 'ok' && (
+        <div className="mt-2">
+          <div className="text-[10px] text-ink-500">
+            <code className="font-mono">{state.baseURL}</code> · 共
+            {state.models.length} 个 model（最新在前）
+          </div>
+          <div className="mt-1 max-h-48 overflow-y-auto rounded-md border border-ink-100 bg-white">
+            {state.models.length === 0 && (
+              <div className="px-2 py-1.5 text-[11px] text-ink-500">
+                网关没返回任何模型。
+              </div>
+            )}
+            {state.models.map((m) => {
+              const isCurrent = m.id === currentModel;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => onPick(m.id)}
+                  className={`flex w-full items-center justify-between border-b border-ink-100 px-2 py-1.5 text-left text-[11px] last:border-b-0 ${
+                    isCurrent
+                      ? 'bg-brand-50/60'
+                      : 'hover:bg-ink-50'
+                  }`}
+                  title={m.ownedBy ? `owned by ${m.ownedBy}` : undefined}
+                >
+                  <code className="font-mono text-[11px] text-ink-700">{m.id}</code>
+                  <span className="text-[10px] text-ink-400">
+                    {isCurrent ? '✓ 当前' : '点击选用 →'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
