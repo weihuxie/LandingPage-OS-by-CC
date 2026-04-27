@@ -1,14 +1,6 @@
 /**
  * 页面字体快选 · always-visible flat tile picker on the right-rail.
  *
- * Why this exists: the same control lives in the Settings modal, but
- * Settings is 2 clicks deep (⋮ kebab → ⚙ 设置). For users debugging
- * "which font reads best for this market" the comparison loop has to
- * be one click each — sit at the editor, click a tile, see preview
- * update, click another tile, compare. So we duplicate the picker
- * here for shallow access; both surfaces read/write the same
- * page.fontPresetId field so they stay in sync automatically.
- *
  * Layout: 2-column tile grid. Each tile shows
  *   - the preset label (zh-CN)
  *   - a sample line "你好 · Hello · 123" rendered in that preset's
@@ -16,34 +8,67 @@
  *     a glance whether the chosen face actually renders the CJK glyphs
  *     differently from the default.
  *
- * Selection state writes through onChange immediately (no save button)
- * — the parent debounces persistence to /api/pages/[id] PATCH.
+ * Locale-aware: shows 6 presets curated for the current editing locale
+ * (Japanese pages get JP-friendly fonts, Chinese pages get Chinese-
+ * friendly fonts, etc.). The selection is still page-scoped — one font
+ * stack applies across all the page's locales — but the OPTIONS the
+ * user picks from depend on which locale they're authoring in. Cross-
+ * locale fallback chains in each fontStack mean the choice still
+ * renders correctly when other locales' tabs view the same page.
  */
 'use client';
 
-import { FONT_PRESETS, FONT_PRESET_IDS, type FontPresetId } from '@/lib/font-presets';
+import {
+  presetsForLocale,
+  type FontPreset,
+} from '@/lib/font-presets';
+import type { LocaleCode } from '@/lib/types';
 
 interface Props {
-  value?: string | null; // fontPresetId or empty/null = "default"
+  /** Current page.fontPresetId or null/empty for "default" */
+  value?: string | null;
+  /** Editing locale — picks which locale's 6 presets to display */
+  locale: LocaleCode;
+  /** Locale's display label, used in the heading */
+  localeLabel?: string;
   onChange: (presetId: string | null) => void;
 }
 
-const SAMPLE = '你好 · Hello · 123';
+const SAMPLE_BY_LOCALE: Record<LocaleCode, string> = {
+  'zh-CN': '你好 · Hello · 123',
+  'zh-TW': '你好 · Hello · 123',
+  ja: 'こんにちは · Hello · 123',
+  en: 'Hello · 123',
+};
 
-export default function PageFontPicker({ value, onChange }: Props) {
-  const items: Array<{ id: string | null; label: string; hint?: string; fontStack?: string }> = [
+export default function PageFontPicker({ value, locale, localeLabel, onChange }: Props) {
+  const presets = presetsForLocale(locale);
+  const sample = SAMPLE_BY_LOCALE[locale] ?? SAMPLE_BY_LOCALE['zh-CN'];
+  const items: Array<{
+    id: string | null;
+    label: string;
+    hint?: string;
+    fontStack?: string;
+  }> = [
     { id: null, label: '默认', hint: '跟风格预设走' },
-    ...FONT_PRESET_IDS.map((id) => ({
-      id,
-      label: FONT_PRESETS[id].label,
-      hint: FONT_PRESETS[id].hint,
-      fontStack: FONT_PRESETS[id].fontStack,
+    ...presets.map((p) => ({
+      id: p.id,
+      label: p.label,
+      hint: p.hint,
+      fontStack: p.fontStack,
     })),
   ];
 
   return (
     <div>
-      <div className="label mb-1.5">页面字体</div>
+      <div className="label mb-1.5">
+        页面字体
+        {localeLabel && (
+          <span className="ml-1 text-[10px] font-normal text-ink-500">
+            · {localeLabel}
+          </span>
+        )}
+      </div>
       <div className="grid grid-cols-2 gap-1.5">
         {items.map((it) => {
           const selected = (value ?? null) === it.id;
@@ -68,14 +93,15 @@ export default function PageFontPicker({ value, onChange }: Props) {
                     : undefined
                 }
               >
-                {it.fontStack ? SAMPLE : '—'}
+                {it.fontStack ? sample : '—'}
               </div>
             </button>
           );
         })}
       </div>
       <p className="mt-1 text-[10px] leading-relaxed text-ink-500">
-        点击切换，实时 preview。下方"模块编辑"区域不影响。
+        点击切换，实时 preview。字体设置作用全页面（所有 locale 共享），
+        但选项按当前编辑语言展示。
       </p>
     </div>
   );

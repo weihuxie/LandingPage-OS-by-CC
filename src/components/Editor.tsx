@@ -13,7 +13,7 @@ import type {
   PageLocale,
 } from '@/lib/types';
 import { STYLE_PRESETS } from '@/lib/styles';
-import { FONT_PRESETS, FONT_PRESET_IDS } from '@/lib/font-presets';
+import { presetsForLocale, FONT_PRESET_INDEX } from '@/lib/font-presets';
 import { auditProject } from '@/lib/linter';
 import { nativeLabel, PAGE_LOCALES } from '@/lib/i18n-detect';
 import PageRenderer from './PageRenderer';
@@ -1572,10 +1572,17 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             // editors don't render it; users switch to Hero to debug
             // fonts visually. Settings modal still has the same control
             // for "all page-level config" entry-point completeness.
+            //
+            // Locale wiring: picker shows 6 presets curated for the
+            // current editing locale. The chosen fontStack is page-
+            // scoped (applies across locales via cross-locale fallback
+            // chains), but the OPTIONS surface what's appropriate for
+            // the locale the user is staring at right now.
             pageFont={
               page
                 ? {
                     value: page.fontPresetId ?? null,
+                    locale: editingLocale,
                     onChange: async (presetId) => {
                       setPage((prev) => {
                         if (!prev) return prev;
@@ -1893,22 +1900,26 @@ function SettingsModal({
             </div>
           </div>
           <div>
-            <div className="label mb-1.5">字体</div>
+            <div className="label mb-1.5">字体（按页面默认语言）</div>
             <select
               className="input"
               value={fontPresetId ?? ''}
               onChange={(e) => onChangeFontPreset(e.target.value || null)}
             >
               <option value="">默认（按风格预设自动选）</option>
-              {FONT_PRESET_IDS.map((id) => (
-                <option key={id} value={id}>
-                  {FONT_PRESETS[id].label} — {FONT_PRESETS[id].hint}
+              {/* Settings modal shows the page's defaultLocale's curated
+                  6 — primary entry point keyed off page identity. The
+                  inline picker in Hero editor uses editingLocale for
+                  more contextual switching. */}
+              {presetsForLocale(project.inputs.locale as any).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label} — {p.hint}
                 </option>
               ))}
             </select>
             <p className="mt-1 text-[11px] leading-relaxed text-ink-500">
-              所选字体只作用在这张落地页的渲染。空着 = 跟着上面"风格"
-              的市场默认字体。
+              字体作用全页面（所有语言共享）。选项按页面默认语言展示；
+              切到具体语言 tab 时编辑器右栏 Hero 块下也能选当前语言的字体。
             </p>
           </div>
           <div>

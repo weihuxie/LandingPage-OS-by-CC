@@ -18,14 +18,31 @@
  *   doesn't actually download the SC bytes until a CJK glyph appears.
  */
 import {
+  // Latin sans
   Inter,
   Manrope,
+  Plus_Jakarta_Sans,
+  DM_Sans,
+  Space_Grotesk,
+  // Latin serif / display
   Lora,
+  Playfair_Display,
+  // CJK SC
   Noto_Sans_SC,
-  Noto_Sans_TC,
-  Noto_Sans_JP,
   Noto_Serif_SC,
+  ZCOOL_XiaoWei,
+  ZCOOL_QingKe_HuangYou,
+  Long_Cang,
+  // CJK TC
+  Noto_Sans_TC,
+  Noto_Serif_TC,
+  // CJK JP
+  Noto_Sans_JP,
+  Noto_Serif_JP,
   Zen_Kaku_Gothic_New,
+  M_PLUS_1p,
+  Shippori_Mincho,
+  BIZ_UDPGothic,
 } from 'next/font/google';
 
 // ---------- Latin family ----------------------------------------------
@@ -44,12 +61,41 @@ export const manrope = Manrope({
   variable: '--font-manrope',
 });
 
+export const plusJakartaSans = Plus_Jakarta_Sans({
+  subsets: ['latin', 'latin-ext'],
+  weight: ['400', '500', '600', '700', '800'],
+  display: 'swap',
+  variable: '--font-plus-jakarta-sans',
+});
+
+export const dmSans = DM_Sans({
+  subsets: ['latin', 'latin-ext'],
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+  variable: '--font-dm-sans',
+});
+
+export const spaceGrotesk = Space_Grotesk({
+  subsets: ['latin', 'latin-ext'],
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+  variable: '--font-space-grotesk',
+});
+
 export const lora = Lora({
   subsets: ['latin', 'latin-ext'],
   weight: ['400', '500', '600', '700'],
   style: ['normal', 'italic'],
   display: 'swap',
   variable: '--font-lora',
+});
+
+export const playfairDisplay = Playfair_Display({
+  subsets: ['latin', 'latin-ext'],
+  weight: ['400', '500', '600', '700', '800'],
+  style: ['normal', 'italic'],
+  display: 'swap',
+  variable: '--font-playfair-display',
 });
 
 // ---------- CJK family -------------------------------------------------
@@ -64,11 +110,49 @@ export const notoSansSC = Noto_Sans_SC({
   variable: '--font-noto-sans-sc',
 });
 
+export const notoSerifSC = Noto_Serif_SC({
+  weight: ['400', '600', '700'],
+  display: 'swap',
+  preload: false,
+  variable: '--font-noto-serif-sc',
+});
+
+export const zcoolXiaoWei = ZCOOL_XiaoWei({
+  subsets: ['latin'],
+  weight: ['400'],
+  display: 'swap',
+  preload: false,
+  variable: '--font-zcool-xiaowei',
+});
+
+export const zcoolQingKeHuangYou = ZCOOL_QingKe_HuangYou({
+  subsets: ['latin'],
+  weight: ['400'],
+  display: 'swap',
+  preload: false,
+  variable: '--font-zcool-qingke-huangyou',
+});
+
+export const longCang = Long_Cang({
+  subsets: ['latin'],
+  weight: ['400'],
+  display: 'swap',
+  preload: false,
+  variable: '--font-long-cang',
+});
+
 export const notoSansTC = Noto_Sans_TC({
   weight: ['400', '500', '700'],
   display: 'swap',
   preload: false,
   variable: '--font-noto-sans-tc',
+});
+
+export const notoSerifTC = Noto_Serif_TC({
+  weight: ['400', '600', '700'],
+  display: 'swap',
+  preload: false,
+  variable: '--font-noto-serif-tc',
 });
 
 export const notoSansJP = Noto_Sans_JP({
@@ -78,11 +162,11 @@ export const notoSansJP = Noto_Sans_JP({
   variable: '--font-noto-sans-jp',
 });
 
-export const notoSerifSC = Noto_Serif_SC({
+export const notoSerifJP = Noto_Serif_JP({
   weight: ['400', '600', '700'],
   display: 'swap',
   preload: false,
-  variable: '--font-noto-serif-sc',
+  variable: '--font-noto-serif-jp',
 });
 
 export const zenKakuGothicNew = Zen_Kaku_Gothic_New({
@@ -90,8 +174,30 @@ export const zenKakuGothicNew = Zen_Kaku_Gothic_New({
   display: 'swap',
   preload: false,
   variable: '--font-zen-kaku-gothic-new',
-  // Zen Kaku ships with subset declarations for Japanese, Latin, and the
-  // common-symbol range so we don't need to specify subsets explicitly.
+});
+
+export const mPlus1p = M_PLUS_1p({
+  subsets: ['latin'],
+  weight: ['400', '500', '700'],
+  display: 'swap',
+  preload: false,
+  variable: '--font-m-plus-1p',
+});
+
+export const shipporiMincho = Shippori_Mincho({
+  subsets: ['latin'],
+  weight: ['400', '500', '700'],
+  display: 'swap',
+  preload: false,
+  variable: '--font-shippori-mincho',
+});
+
+export const bizUDPGothic = BIZ_UDPGothic({
+  subsets: ['latin'],
+  weight: ['400', '700'],
+  display: 'swap',
+  preload: false,
+  variable: '--font-biz-udpgothic',
 });
 
 /**
@@ -104,12 +210,29 @@ export const zenKakuGothicNew = Zen_Kaku_Gothic_New({
  * explicit fontStack declarations (PageRenderer + brand override).
  */
 export const fontVariables = [
+  // Latin sans
   inter.variable,
   manrope.variable,
+  plusJakartaSans.variable,
+  dmSans.variable,
+  spaceGrotesk.variable,
+  // Latin serif / display
   lora.variable,
+  playfairDisplay.variable,
+  // CJK SC
   notoSansSC.variable,
-  notoSansTC.variable,
-  notoSansJP.variable,
   notoSerifSC.variable,
+  zcoolXiaoWei.variable,
+  zcoolQingKeHuangYou.variable,
+  longCang.variable,
+  // CJK TC
+  notoSansTC.variable,
+  notoSerifTC.variable,
+  // CJK JP
+  notoSansJP.variable,
+  notoSerifJP.variable,
   zenKakuGothicNew.variable,
+  mPlus1p.variable,
+  shipporiMincho.variable,
+  bizUDPGothic.variable,
 ].join(' ');

@@ -28,6 +28,7 @@ import PageFontPicker from './PageFontPicker';
 
 type PageFontControl = {
   value: string | null;
+  locale: import('@/lib/types').LocaleCode;
   onChange: (presetId: string | null) => void;
 };
 
@@ -247,7 +248,11 @@ function HeroEditor({
           pageFont prop (i.e. when this Hero is inside a real LandingPage
           context, not e.g. a fixture preview). */}
       {pageFont && (
-        <PageFontPicker value={pageFont.value} onChange={pageFont.onChange} />
+        <PageFontPicker
+          value={pageFont.value}
+          locale={pageFont.locale}
+          onChange={pageFont.onChange}
+        />
       )}
       <Field label="Eyebrow" value={c.eyebrow} onChange={(v) => setC({ ...c, eyebrow: v })} />
       <Field label="Headline" value={c.headline} onChange={(v) => setC({ ...c, headline: v })} multiline />
