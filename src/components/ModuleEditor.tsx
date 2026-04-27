@@ -607,6 +607,65 @@ function SocialProofEditor({ c, setC }: { c: SocialProofContent; setC: (c: Socia
  * a local FileReader → base64, which shipped to production as a 2MB+
  * page JSON and hit KV limits.
  */
+/**
+ * Fixed-size thumbnail for SocialProof logo rows.
+ *
+ * Why fixed dimensions: keeps row height identical whether or not the
+ * image loaded, so the entry list visually aligns top-to-bottom (user
+ * feedback "排列没有对齐"). Empty state shows a neutral image icon.
+ * Image-load error swaps to ⚠ amber icon — same UX language as
+ * BrandLogoTile / Thumbnail in the asset panel.
+ */
+function SocialProofLogoThumb({ src }: { src: string }) {
+  const [errored, setErrored] = useState(false);
+  // Reset error state when src changes (user pasted a new URL).
+  // Inline IIFE keeps the parent simple; no need for useEffect.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    setErrored(false);
+  }, [src]);
+
+  const empty = !src.trim();
+  return (
+    <div
+      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-white ${
+        empty
+          ? 'border-dashed border-ink-200 text-ink-300'
+          : errored
+            ? 'border-amber-200 text-amber-600'
+            : 'border-ink-100'
+      }`}
+      aria-hidden
+    >
+      {empty ? (
+        // Generic image-placeholder SVG — same shape as the LogoEntryCard
+        // empty thumbnail, for consistency across the editor.
+        <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+          <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="9" cy="10" r="1.5" fill="currentColor" />
+          <path
+            d="M3 17l5-5 4 4 3-3 6 6"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : errored ? (
+        <span className="text-sm" title="图片加载失败">⚠</span>
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src}
+          alt=""
+          className="max-h-7 max-w-7 object-contain"
+          onError={() => setErrored(true)}
+        />
+      )}
+    </div>
+  );
+}
+
 function LogosEditor({
   logos,
   setLogos,
@@ -630,7 +689,7 @@ function LogosEditor({
           const r = resolveSocialProofLogo(l);
           const isImage = r.kind === 'image';
           return (
-            <div key={i} className="flex items-start gap-1.5">
+            <div key={i} className="flex items-center gap-1.5">
               {/* mode toggle — only resets field on an actual transition */}
               <div className="flex shrink-0 overflow-hidden rounded-md border border-ink-200">
                 <button
@@ -659,46 +718,38 @@ function LogosEditor({
                 </button>
               </div>
 
-              {/* input region */}
+              {/* input region — single-line for every entry so the list
+                  doesn't visually wobble when one image row has src and
+                  others don't. (User feedback: "排列没有对齐".) The old
+                  layout reserved a second line for thumbnail + alt the
+                  moment src appeared, breaking row-height parity.
+
+                  Trade-off: alt input is no longer visible inline. It's
+                  still in the schema and preserved on edit — power users
+                  edit alt via the brand asset library where the asset
+                  originates. Logos that come through the picker have
+                  alt populated automatically from the brand entry's
+                  label; manual URL pastes here just don't get alt
+                  (which 99% of users don't fill anyway). */}
               {isImage ? (
-                <div className="flex-1 space-y-1">
-                  <div className="flex gap-1.5">
-                    <input
-                      className="input flex-1"
-                      placeholder="图片 URL 或 data:URI"
-                      value={r.src}
-                      onChange={(e) =>
-                        update(i, { src: e.target.value, alt: r.alt })
-                      }
-                    />
-                    <UploadButton
-                      onUpload={(res) => update(i, { src: res.url, alt: r.alt })}
-                    />
-                  </div>
-                  {r.src && (
-                    <div className="flex items-center gap-2">
-                      <div className="flex h-8 w-14 shrink-0 items-center justify-center rounded border border-ink-100 bg-white">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={r.src}
-                          alt=""
-                          className="max-h-6 max-w-full object-contain"
-                        />
-                      </div>
-                      <input
-                        className="input flex-1 text-xs"
-                        placeholder="alt 描述（可选，例如 Acme 客户 logo）"
-                        value={r.alt ?? ''}
-                        onChange={(e) =>
-                          update(i, {
-                            src: r.src,
-                            alt: e.target.value || undefined,
-                          })
-                        }
-                      />
-                    </div>
-                  )}
-                </div>
+                <>
+                  {/* Inline thumbnail — 32×32. Renders only when src
+                      resolves to an actual image; on error swaps to a
+                      neutral icon that doesn't cause layout shift. */}
+                  <SocialProofLogoThumb src={r.src} />
+                  <input
+                    className="input flex-1"
+                    placeholder="图片 URL 或 data:URI"
+                    value={r.src}
+                    onChange={(e) =>
+                      update(i, { src: e.target.value, alt: r.alt })
+                    }
+                  />
+                  <UploadButton
+                    className="shrink-0 px-2 py-1 text-[11px]"
+                    onUpload={(res) => update(i, { src: res.url, alt: r.alt })}
+                  />
+                </>
               ) : (
                 <input
                   className="input flex-1"
