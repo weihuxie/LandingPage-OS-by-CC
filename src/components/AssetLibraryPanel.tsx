@@ -14,6 +14,8 @@ import type {
 import { PAGE_LOCALES } from '@/lib/types';
 import { nativeLabel } from '@/lib/i18n-detect';
 import MediaField from './MediaField';
+import UploadButton from './UploadButton';
+import HelpTip from './HelpTip';
 
 /**
  * Feishu #6 (ownership layering):
@@ -418,13 +420,36 @@ function LogoEntryCard({
         <Thumbnail media={entry.media} />
 
         <div className="min-w-0 flex-1 space-y-2">
-          {/* PRIMARY · URL input — always visible, this is the main action. */}
-          <input
-            className="input w-full text-xs"
-            placeholder="https://example.com/logo.png  (粘贴图片 / 视频 / GIF 链接)"
-            value={entry.media.url}
-            onChange={(e) => setUrl(e.target.value)}
-          />
+          {/* PRIMARY · URL input + 上传 — always visible. URL is for users
+              with a public CDN link; 上传 covers the much more common case
+              ("我有图片在本地"). Either path ends up populating media.url. */}
+          <div className="flex gap-2">
+            <input
+              className="input flex-1 text-xs"
+              placeholder="https://example.com/logo.png  (公开图片 / 视频 / GIF 链接)"
+              value={entry.media.url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+            <UploadButton
+              accept="image/*,video/*"
+              onUpload={(r) => setUrl(r.url)}
+              className="shrink-0 px-2 py-1 text-[11px]"
+            />
+          </div>
+          {/* Diagnostic line — fires when user pastes a known-private URL
+              (feishu / lark / google drive / notion / slack file). Tells
+              them to upload instead of staring at a broken thumbnail.
+              For other broken URLs we let Thumbnail's ⚠ fallback speak
+              for itself; only loud here when we have a specific cause. */}
+          {(() => {
+            const diag = diagnosePrivateUrl(entry.media.url);
+            return diag ? (
+              <div className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] leading-relaxed text-amber-800">
+                <span aria-hidden>⚠</span>
+                <span>{diag}</span>
+              </div>
+            ) : null;
+          })()}
 
           {/* SECONDARY · name + locale chips on a single compact row */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px]">
@@ -436,35 +461,18 @@ function LogoEntryCard({
             />
             <div className="flex flex-wrap items-center gap-1">
               <span className="text-ink-500">适用：</span>
-              <button
-                type="button"
-                onClick={setAllLocales}
-                className={`pill px-2 py-0.5 ${
-                  allLocales
-                    ? 'border-brand-300 bg-brand-50 text-brand-700'
-                    : 'border-ink-200 text-ink-500'
-                }`}
-              >
-                全部
-              </button>
-              {PAGE_LOCALES.map((loc) => {
-                const active = !allLocales && showIn.includes(loc);
-                return (
-                  <button
-                    key={loc}
-                    type="button"
-                    onClick={() => toggleLocale(loc)}
-                    className={`pill px-2 py-0.5 ${
-                      active
-                        ? 'border-brand-300 bg-brand-50 text-brand-700'
-                        : 'border-ink-200 text-ink-500'
-                    }`}
-                    title={nativeLabel(loc)}
-                  >
-                    {loc}
-                  </button>
-                );
-              })}
+              {/* 不用 .pill 类 — 它的 @apply bg-white 会盖住 active 状态。
+                  全自写 inline tailwind 来保证 active vs inactive 对比强。 */}
+              <Chip active={allLocales} onClick={setAllLocales} label="全部" />
+              {PAGE_LOCALES.map((loc) => (
+                <Chip
+                  key={loc}
+                  active={!allLocales && showIn.includes(loc)}
+                  onClick={() => toggleLocale(loc)}
+                  label={loc}
+                  title={nativeLabel(loc)}
+                />
+              ))}
             </div>
           </div>
 
@@ -495,22 +503,16 @@ function LogoEntryCard({
           </button>
           {advOpen && (
             <div className="space-y-2 rounded-lg border border-ink-100 bg-ink-50/30 p-2">
-              {/* Kind switcher */}
+              {/* Kind switcher — same Chip helper, high-contrast active state */}
               <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                 <span className="text-ink-500">类型：</span>
                 {(['image', 'video', 'gif', 'logo'] as const).map((k) => (
-                  <button
+                  <Chip
                     key={k}
-                    type="button"
+                    active={entry.media.kind === k}
                     onClick={() => setKind(k)}
-                    className={`pill px-2 py-0.5 ${
-                      entry.media.kind === k
-                        ? 'border-brand-300 bg-brand-50 text-brand-700'
-                        : 'border-ink-200 text-ink-500'
-                    }`}
-                  >
-                    {k}
-                  </button>
+                    label={k}
+                  />
                 ))}
                 <span className="text-[10px] text-ink-400">
                   （粘贴 .mp4 / .gif 链接会自动识别）
@@ -579,6 +581,60 @@ function LogoEntryCard({
       </div>
     </div>
   );
+}
+
+/**
+ * Strong-contrast chip used by LogoEntryCard for locale + kind toggles.
+ *
+ * Why not the global `.pill` class: `.pill` @applies `bg-white text-ink-700`
+ * which won the cascade against my conditional `bg-brand-50 text-brand-700`,
+ * so active state was invisible (用户反馈"选中没有反应"). Inline tailwind
+ * here fully owns the visual — no fight.
+ */
+function Chip({
+  active,
+  onClick,
+  label,
+  title,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] transition ${
+        active
+          ? 'border-brand-600 bg-brand-600 text-white shadow-sm'
+          : 'border-ink-200 bg-white text-ink-600 hover:border-brand-300 hover:text-brand-600'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * Detect URLs that browsers cannot fetch directly (private / auth-walled).
+ * The most common case in this product is feishu / lark file references —
+ * users paste these because they had the URL in a feishu doc, but the
+ * browser can't load them as <img src>. We surface a specific hint so
+ * they know to upload instead of staring at a broken thumbnail.
+ */
+function diagnosePrivateUrl(url: string): string | null {
+  if (!url) return null;
+  const lower = url.toLowerCase();
+  if (/feishu\.cn\/file\/|lark(?:office)?\.com\/file\//.test(lower)) {
+    return '飞书文件 URL 是私有的，浏览器无法直接加载。请改为「上传」该图片，或粘贴公开 CDN 链接。';
+  }
+  if (/(drive\.google\.com|notion\.so|slack\.com\/files)/.test(lower)) {
+    return '该平台需要登录才能访问，浏览器无法直接加载。请改为「上传」或使用公开链接。';
+  }
+  return null;
 }
 
 /**
@@ -666,6 +722,16 @@ function CertsTab({
   const MARKETS: MarketCode[] = ['CN', 'TW', 'JP', 'US', 'EU', 'GLOBAL'];
   return (
     <div>
+      {/* Onboarding banner — same pattern as PressTab. */}
+      <div className="mb-3 rounded-xl border border-brand-100 bg-brand-50/40 p-3 text-xs leading-relaxed text-ink-700">
+        <div className="mb-1 font-medium text-brand-700">如何填写</div>
+        <div>
+          每条 = 一项你过的合规认证（SOC 2、GDPR、等保…）。访客看到这个判断"这家是否能托管我们的数据"。
+          <br />
+          示例：名称 <code className="rounded bg-white px-1">SOC 2 Type II</code>
+          ，logo URL（可选），适用市场勾 <code className="rounded bg-white px-1">US / EU / GLOBAL</code>。
+        </div>
+      </div>
       <div className="mb-3 flex items-center justify-between">
         <div className="text-sm text-ink-500">SOC2 / ISO / GDPR — 不同市场强化不同信任点</div>
         <button
@@ -677,49 +743,60 @@ function CertsTab({
           + 添加认证
         </button>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-3">
         {value.map((c, i) => (
           <div key={c.id} className="rounded-xl border border-ink-100 p-3">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <input
-                className="input"
-                placeholder="名称（如 SOC 2 Type II）"
-                value={c.name}
-                onChange={(e) => {
-                  const next = [...value];
-                  next[i] = { ...c, name: e.target.value };
-                  onChange(next);
-                }}
-              />
-              <input
-                className="input"
-                placeholder="Logo URL"
-                value={c.logoUrl ?? ''}
-                onChange={(e) => {
-                  const next = [...value];
-                  next[i] = { ...c, logoUrl: e.target.value };
-                  onChange(next);
-                }}
-              />
-              <input
-                className="input"
-                placeholder="有效期"
-                value={c.validUntil ?? ''}
-                onChange={(e) => {
-                  const next = [...value];
-                  next[i] = { ...c, validUntil: e.target.value };
-                  onChange(next);
-                }}
-              />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <FieldWithLabel label="认证名称" helpPath="cert.name" required>
+                <input
+                  className="input"
+                  placeholder="SOC 2 Type II / ISO 27001 / GDPR ..."
+                  value={c.name}
+                  onChange={(e) => {
+                    const next = [...value];
+                    next[i] = { ...c, name: e.target.value };
+                    onChange(next);
+                  }}
+                />
+              </FieldWithLabel>
+              <FieldWithLabel label="Logo URL（可选）" helpPath="cert.logoUrl">
+                <input
+                  className="input"
+                  placeholder="https://...soc2-badge.svg"
+                  value={c.logoUrl ?? ''}
+                  onChange={(e) => {
+                    const next = [...value];
+                    next[i] = { ...c, logoUrl: e.target.value };
+                    onChange(next);
+                  }}
+                />
+              </FieldWithLabel>
+              <FieldWithLabel label="有效期至（可选）" helpPath="cert.validUntil">
+                <input
+                  className="input"
+                  placeholder="2027-06-30"
+                  value={c.validUntil ?? ''}
+                  onChange={(e) => {
+                    const next = [...value];
+                    next[i] = { ...c, validUntil: e.target.value };
+                    onChange(next);
+                  }}
+                />
+              </FieldWithLabel>
             </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {MARKETS.map((m) => {
-                const on = c.markets.includes(m);
-                return (
-                  <button
+            <div className="mt-3">
+              <div className="mb-1 inline-flex items-center text-[11px] uppercase tracking-wider text-ink-500">
+                适用市场
+                <HelpTip path="cert.markets" />
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {MARKETS.map((m) => (
+                  <Chip
                     key={m}
-                    className={`pill ${on ? 'border-brand-200 bg-brand-50 text-brand-700' : ''}`}
+                    active={c.markets.includes(m)}
+                    label={m}
                     onClick={() => {
+                      const on = c.markets.includes(m);
                       const next = [...value];
                       next[i] = {
                         ...c,
@@ -727,11 +804,9 @@ function CertsTab({
                       };
                       onChange(next);
                     }}
-                  >
-                    {m}
-                  </button>
-                );
-              })}
+                  />
+                ))}
+              </div>
             </div>
             <div className="mt-2 flex justify-end">
               <button
@@ -762,6 +837,20 @@ function PressTab({
   };
   return (
     <div>
+      {/* Onboarding banner — what to fill, what to expect, real example.
+          Without this users see 4 unlabeled inputs and have no idea what
+          shape data we want. Fixed by 2026-04 user feedback "如何填写完
+          全不知道". */}
+      <div className="mb-3 rounded-xl border border-brand-100 bg-brand-50/40 p-3 text-xs leading-relaxed text-ink-700">
+        <div className="mb-1 font-medium text-brand-700">如何填写</div>
+        <div>
+          每条 = 一篇真实的第三方媒体报道。访客看到会想"哦这家被 XX 采访过"。
+          <br />
+          示例：媒体名 <code className="rounded bg-white px-1">36氪</code>
+          ，标题 <code className="rounded bg-white px-1">"AI 行业 OS：新一代合规底座"</code>
+          ，链接是该报道的公开 URL。
+        </div>
+      </div>
       <div className="mb-3 flex items-center justify-between">
         <div className="text-sm text-ink-500">
           第三方媒体公信力 — 文字引用 / 媒体 logo / 采访视频片段都支持
@@ -778,26 +867,56 @@ function PressTab({
           + 添加报道
         </button>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-3">
         {value.map((p, i) => (
           <div key={p.id} className="rounded-xl border border-ink-100 p-3">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <input className="input" placeholder="媒体" value={p.outlet} onChange={(e) => up(i, { ...p, outlet: e.target.value })} />
-              <input className="input" placeholder="标题" value={p.headline} onChange={(e) => up(i, { ...p, headline: e.target.value })} />
-              <input className="input sm:col-span-2" placeholder="原文链接" value={p.url} onChange={(e) => up(i, { ...p, url: e.target.value })} />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <FieldWithLabel label="媒体名称" helpPath="press.outlet" required>
+                <input
+                  className="input"
+                  placeholder="36氪 / TechCrunch / Bloomberg ..."
+                  value={p.outlet}
+                  onChange={(e) => up(i, { ...p, outlet: e.target.value })}
+                />
+              </FieldWithLabel>
+              <FieldWithLabel label="报道标题" helpPath="press.headline" required>
+                <input
+                  className="input"
+                  placeholder='"AI 行业 OS：新一代合规底座"'
+                  value={p.headline}
+                  onChange={(e) => up(i, { ...p, headline: e.target.value })}
+                />
+              </FieldWithLabel>
+              <div className="sm:col-span-2">
+                <FieldWithLabel label="原文链接" helpPath="press.url" required>
+                  <input
+                    className="input"
+                    placeholder="https://36kr.com/p/..."
+                    value={p.url}
+                    onChange={(e) => up(i, { ...p, url: e.target.value })}
+                  />
+                </FieldWithLabel>
+              </div>
             </div>
-            <textarea
-              className="input mt-2 min-h-[60px]"
-              placeholder="引用金句（可选）"
-              value={p.quote ?? ''}
-              onChange={(e) => up(i, { ...p, quote: e.target.value })}
-            />
+            <div className="mt-3">
+              <FieldWithLabel label="引用金句（可选）" helpPath="press.quote">
+                <textarea
+                  className="input min-h-[60px]"
+                  placeholder='例如："年度最值得关注的 AI 工具之一"'
+                  value={p.quote ?? ''}
+                  onChange={(e) => up(i, { ...p, quote: e.target.value })}
+                />
+              </FieldWithLabel>
+            </div>
             {/* 媒体附件 — optional MediaRef. Outlet logo / article screenshot
                 / video clip (CCTV / Bloomberg / 财经访谈片段). 当 kind=video
                 时渲染器会播视频；当 kind=image 时渲染器显示外刊 logo 或截图。 */}
-            <div className="mt-2 rounded-lg border border-ink-100 bg-ink-50/30 p-2">
+            <div className="mt-3 rounded-lg border border-ink-100 bg-ink-50/30 p-2">
+              <div className="mb-1 inline-flex items-center text-xs font-medium uppercase tracking-wider text-ink-500">
+                媒体附件（可选）
+                <HelpTip path="press.media" />
+              </div>
               <MediaField
-                label="媒体附件 (可选 · 图片 / 视频 / GIF)"
                 value={p.media}
                 onChange={(m) => up(i, { ...p, media: m })}
                 defaultKind="image"
@@ -815,5 +934,36 @@ function PressTab({
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * Reusable label-above-input wrapper used by PressTab + CertsTab + LogoEntryCard.
+ * Why it exists: the original press / cert UI relied entirely on placeholders
+ * for context. Once a user typed anything, the placeholder vanished and so
+ * did the field's identity ("这是 outlet 还是 headline 来着？"). User
+ * feedback 2026-04: "如何填写完全不知道". This helper restores the
+ * label as first-class.
+ */
+function FieldWithLabel({
+  label,
+  helpPath,
+  required,
+  children,
+}: {
+  label: string;
+  helpPath?: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="label inline-flex items-center text-[11px] uppercase tracking-wider">
+        {label}
+        {required && <span className="ml-0.5 text-red-500">*</span>}
+        {helpPath && <HelpTip path={helpPath} />}
+      </span>
+      <div className="mt-1">{children}</div>
+    </label>
   );
 }

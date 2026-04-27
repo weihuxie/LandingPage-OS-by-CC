@@ -193,6 +193,60 @@ export const FIELD_TOOLTIPS: Record<string, Tooltip> = {
   'form.consentText': {
     short: '隐私同意框文案。EU/GDPR 受众必填；CN/JP 也建议放，提升提交意愿。',
   },
+
+  // ----- Brand asset library (页面 /[locale]/assets) -----
+  'brand.primaryColor': {
+    short: '品牌主色 — 用在 Hero 主 CTA 按钮、超链接、强调色。改这里全产品落地页的按钮颜色都跟着变。',
+    example: '#4861ff (蓝) · #ff47e7 (粉) · #16a34a (绿)',
+  },
+  'brand.logo.url': {
+    short: '客户 / 合作伙伴 logo 的图片 URL，必须是公开可访问的（飞书 / 谷歌网盘 / Slack 文件之类的私链都拉不到，要上传或用 CDN 公链）。',
+    example: 'https://cdn.acme.com/logos/microsoft.svg',
+  },
+  'brand.logo.label': {
+    short: '客户名称（可选）。仅在编辑器列表里识别用，访客看不到；同时作为 alt 文案的兜底。',
+    example: '阿里巴巴 / Microsoft / LINE',
+  },
+  'brand.logo.showIn': {
+    short: '该 logo 在哪些 locale 的落地页里出现。"全部"=所有语言通用；选了具体 locale = 只在那些页面显示。',
+    example: 'zh-CN/zh-TW 选大陆 + 港台客户；en 选欧美客户；ja 选日本客户',
+  },
+
+  // ----- Press / Media endorsement -----
+  'press.outlet': {
+    short: '媒体名称。访客看到这个会判断"这是哪家"，写他们认得的简称。',
+    example: 'TechCrunch / 36氪 / Nikkei / Bloomberg / 央视',
+  },
+  'press.headline': {
+    short: '报道原标题，用该媒体发出的真实标题；不要自己改写。',
+    example: '"AI 行业 OS：新一代合规底座" — 36氪 2026 年 3 月报道',
+  },
+  'press.url': {
+    short: '原报道公开 URL。访客点 logo / 标题会跳过去，链接打不开会减损信任。',
+  },
+  'press.quote': {
+    short: '从报道里摘出的金句（30 字以内最佳）。一句话强化"这家媒体说我什么"。',
+    example: '"年度最值得关注的 AI 工具之一"',
+  },
+  'press.media': {
+    short: '可选媒体附件：媒体 logo（最常见）/ 报道截图 / 采访视频片段。视频建议 30 秒以内。',
+  },
+
+  // ----- Certifications & Compliance -----
+  'cert.name': {
+    short: '认证或合规标准的全名。访客看到这个判断"这家是不是过了 XX"。',
+    example: 'SOC 2 Type II / ISO 27001 / GDPR / 等保三级 / HIPAA',
+  },
+  'cert.logoUrl': {
+    short: '认证标识 logo URL（公开可访问）。会显示在落地页底部信任带。留空则只显示文字名称。',
+  },
+  'cert.markets': {
+    short: '该认证在哪些市场被认可 / 强相关。EU 市场强 GDPR，US 市场强 SOC 2，CN 强等保。按目标受众勾。',
+  },
+  'cert.validUntil': {
+    short: '认证有效期至（YYYY-MM-DD）。过期前 30 天 dashboard 会提醒。可选。',
+    example: '2027-06-30',
+  },
 };
 
 /**
