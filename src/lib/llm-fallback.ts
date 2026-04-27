@@ -126,6 +126,22 @@ export async function executeWithFallback<T>(
     const cls = classifyProviderError(err);
     const msg = err instanceof Error ? err.message : String(err);
 
+    // Diagnostic — surfaced in Vercel logs so admins can see why fallback
+    // either ran or short-circuited. Useful when the user reports
+    // "fallback's enabled but I still get a 502" (usually the classifier
+    // bucketed the error in 4xx-auth/-other and the trigger list doesn't
+    // contain that bucket; intentionally — but the log makes it visible).
+    console.warn(
+      `[llm-fallback] ${scenario} primary=${primary} threw → ` +
+        `classified=${cls ?? 'null'} ` +
+        `enabled=${cfg.fallback.enabled} ` +
+        `triggers=${cfg.fallback.triggers.join('|')} ` +
+        `triggerHit=${isTriggered(cls, cfg.fallback.triggers)} ` +
+        `errorType=${err?.constructor?.name ?? typeof err} ` +
+        `causeStatus=${(err as any)?.cause?.status ?? 'n/a'} ` +
+        `causeMsgHead=${String((err as any)?.cause?.message ?? '').slice(0, 100)}`,
+    );
+
     if (!cfg.fallback.enabled) throw err;
     if (!isTriggered(cls, cfg.fallback.triggers)) throw err;
 
