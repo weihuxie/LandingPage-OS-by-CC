@@ -466,3 +466,66 @@ npm run build       # 验证 Vercel 部署前会否 build 失败
 - Lead：只读但**没有 export / 详情页** — 违反"只读实体必须有 archive 路径"条款。见 §四 TODO。
 - Product rename：API `PATCH /api/products/[id]` 已支持，UI 仅在 Editor > Settings 里 —— 不算违规，但"改名要绕两层"是 UX 割裂。
 - Editor 里删当前 page：要退回 ProductPagesList 才能删。不违反规范（ProductPagesList 已有入口），但 Danger Zone 加上会更顺手。
+
+### 7.2 用户引导（onboarding / 小白指引）的三层模型
+
+**为什么有这条规则**：2026-04 给整个产品铺小白指引时，很多页面第一反应是"加个 driver.js 多步导览"。试着上了几个之后明显感觉不对：editor 这种信息密集的页面套多步等于把交互打断 8 次，用户走到第 3 步就关掉。重新梳理后定下"什么场合用什么形式"的硬规则——本节就是这条规则，避免下次又有人想给某个 form 加 8 步导览。
+
+**形式 → 解决的认知需求**
+
+| 形式 | 解决问题 | 实现 | 用在哪 |
+|------|----|----|----|
+| **多步 popover**（driver.js） | "**东西在哪里**" — 帮用户建空间地图 | [`OnboardingTour.tsx`](src/components/OnboardingTour.tsx) | **仅 dashboard 一个** |
+| **单块 IntroCard** | "**这是什么 / 为什么**" — 帮用户建概念地图 | [`IntroCard.tsx`](src/components/IntroCard.tsx) + 全局 `restartAllIntros()` | editor / wizard / localize modal / 资产库 / cert / press 各 tab |
+| **字段 HelpTip ?** | "**这个具体字段写啥**" — 局部 micro-help | [`HelpTip.tsx`](src/components/HelpTip.tsx) + [`field-tooltips.ts`](src/lib/field-tooltips.ts) | 字段标签旁悬停 |
+
+**判断标准**：
+
+> "我想让用户知道这个东西**长什么样**，还是知道它**意味着什么**？"
+>
+> - 长什么样 → 多步（指着告诉他）
+> - 意味着什么 → 单块（写明白让他读）
+
+**多步只在以下三个条件**全部**满足时使用**：
+1. 页面布局稀疏，有 3-5 个明确的视觉锚点（"这里是 X，这里是 Y"）
+2. 用户是**真正的首次访问**——还没在脑子里建立基础地图
+3. 锚点的 className / data-* 属性比较稳定，不会因为常规 UI 调整就静默失效
+
+dashboard 满足这三条所以用了 driver.js（产品卡 / "+ 新建产品" / LLM 状态条 / 产品 grid 四个锚点）。**editor 不满足任何一条**——20+ 交互点没有清晰先后、用户大概率已经创建过页面、UI 改动频繁锚点容易失效。所以 editor 用单块 IntroCard。
+
+**单块为默认的理由**：
+- **可扫读** —— 30 秒读完，多步要 2-3 分钟
+- **不阻塞** —— 旁边可继续点别的，多步弹层会盖住主操作区
+- **抽象概念必须文字** —— "A/B 双叙事" / "本地化≠翻译" / "locale 各自独立" 这种因果关系指着 UI 元素也讲不清
+- **维护便宜** —— 改 className 不会让它静默失效；多步的 anchor selector 是隐形脆弱依赖
+- **再次观看友好** —— 整段一起重现用户挑着读；多步只能从头走一遍
+
+**实现要点**：
+- 单块 IntroCard 用 `storageKey` 独立追踪 dismissed 状态
+- 全局 `restartAllIntros()` 清空所有 `lp:intro:*` localStorage 键 + dispatch `'lp:restart-intros'` 自定义事件 → 已挂载的 IntroCard 同时复活
+- 编辑器 / dashboard 顶部的 **🎯 引导** 按钮调 `restartAllIntros()` + `window.lpRestartOnboarding`（dashboard 多步导览复用）
+- 字段级 HelpTip 内容集中放 `field-tooltips.ts`，发现性差是已知 trade-off（用户只在卡住时 hover），换来"加新字段时不用改 4 个 message 文件"
+
+**反面教训（如果硬给 editor 套多步）**：
+
+```
+Step 1/8: 这是模块列表
+Step 2/8: 这是 locale tab
+Step 3/8: 这是 variant tab
+Step 4/8: 这是 ✨ 按钮
+Step 5/8: 这是 ? 按钮
+Step 6/8: 这是 自动保存指示器
+...
+```
+
+用户走到第 3 步就关掉了。而且每个 popover 文字框 < 80 字，根本讲不清"locale 各自独立、改 zh-CN 不会同步到 ja"这种抽象因果。
+
+**例外**：未来如果有真正全新且陌生的 UI 模式（画布拖拽 / 节点连线 / 多面板布局之类），那时候 driver.js 重新出场指着说"试试拖这个连到那个"是合理的。**信息密集的表单类页面绝不上多步**。
+
+**新页面落地的 PR 自检**（任何带 form 或多区域的新页面）：
+- [ ] 有没有想过加引导？没想过 = 这条不适用，跳过
+- [ ] 想加 → 用 IntroCard 还是 driver.js？走上面的"判断标准"
+- [ ] 选 IntroCard：`storageKey` 唯一，内容用 `<ul>` 列条目（不超过 7 条），每条 < 50 字
+- [ ] 选 driver.js：通过本节"三个条件全部满足"的硬门槛——满足不了改回 IntroCard
+- [ ] 字段级解释 → 加 HelpTip + 在 `field-tooltips.ts` 写一句 `short` + 例子
+- [ ] 重看入口：本页有 IntroCard 时，要确保 **🎯 引导** 按钮在工具栏或顶部可见（dashboard / editor 已经接好；新页面参考它们的位置）
