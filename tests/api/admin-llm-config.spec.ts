@@ -240,4 +240,27 @@ test.describe('API-ADMIN-LLM · classifyProviderError 分类', () => {
     expect(classifyProviderError(new Error('fetch failed'))).toBe('network');
     expect(classifyProviderError(null)).toBeNull();
   });
+
+  test('API-ADMIN-LLM-107 · KSP "has not activated the model" 403 视为 429-quota', () => {
+    // Gateway-style "model not activated" 是账户级 billing/授权问题，
+    // 跟 quota 同源；归到 429-quota 让 fallback.enabled 时能触发优雅
+    // 降级 (localize 跳 polish 用 hydrate 产物)。归到 4xx-auth 会永
+    // 不回退，用户撞 hard 502。
+    const kspErr = Object.assign(
+      new Error(
+        '403 Your account 2000172632 has not activated the model gpt-4o-2024-08-06. Please activate the model in the KSP Console',
+      ),
+      { status: 403 },
+    );
+    expect(classifyProviderError(kspErr)).toBe('429-quota');
+
+    // mini 也走同一路径
+    const kspErrMini = Object.assign(
+      new Error(
+        '403 Your account 2000172632 has not activated the model gpt-4o-mini. Please activate the model in the KSP Console',
+      ),
+      { status: 403 },
+    );
+    expect(classifyProviderError(kspErrMini)).toBe('429-quota');
+  });
 });

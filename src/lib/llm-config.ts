@@ -487,6 +487,25 @@ export function classifyProviderError(
   const status = typeof e.status === 'number' ? e.status : undefined;
   const code = (e.code ?? '').toLowerCase();
 
+  // 4xx with gateway-style "billing / not activated" sentinels gets
+  // promoted to 429-quota BEFORE the auth short-circuit below. This
+  // matters for 403 specifically: KSP / Azure / Aliyun gateways often
+  // return 403 with "has not activated the model" or "credit balance
+  // too low" — those are billing problems, not key-is-wrong problems,
+  // and fallback (when enabled) should treat them like quota.
+  const isQuotaMessage =
+    msg.includes('credit balance') ||
+    msg.includes('insufficient_quota') ||
+    msg.includes('purchase credits') ||
+    msg.includes('plans & billing') ||
+    msg.includes('billing') ||
+    msg.includes('has not activated the model') ||
+    msg.includes('activate the model in the ksp') ||
+    msg.includes('not activated') ||
+    code === 'insufficient_quota';
+  if (status && status >= 400 && status < 500 && isQuotaMessage) {
+    return '429-quota';
+  }
   if (status === 401 || status === 403) return '4xx-auth';
   if (status === 402) return '429-quota'; // Payment Required — same as quota exhaustion.
   if (status === 429) {
@@ -504,22 +523,10 @@ export function classifyProviderError(
   }
   if (status && status >= 500 && status < 600) return '5xx';
   if (status && status >= 400 && status < 500) {
-    // "Out of money" sentinels on 4xx — see case (b) in the header comment.
-    // Listed as full phrases rather than single words to avoid promoting
-    // a legit 400 ("prompt exceeded max_tokens") to quota. "quota" alone
-    // is intentionally excluded on 4xx for the same reason: 429 already
-    // catches the quota case, and a 400 mentioning "quota" is more
-    // likely a request-size issue.
-    if (
-      msg.includes('credit balance') ||
-      msg.includes('insufficient_quota') ||
-      msg.includes('purchase credits') ||
-      msg.includes('plans & billing') ||
-      msg.includes('billing') ||
-      code === 'insufficient_quota'
-    ) {
-      return '429-quota';
-    }
+    // Quota-message detection happens above (before the 401/403 short-
+    // circuit) so we'd never reach this branch with a billing-flavored
+    // message — anything that lands here is a genuine 4xx that fallback
+    // shouldn't try to retry on.
     return '4xx-other';
   }
   if (!status) return 'network';
