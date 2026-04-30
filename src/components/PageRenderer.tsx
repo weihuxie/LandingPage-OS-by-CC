@@ -242,7 +242,12 @@ function Nav({
         <div className="truncate text-sm font-semibold text-ink-900">
           {productName}
         </div>
-        <ul className="hidden min-w-0 items-center gap-1 overflow-x-auto text-sm sm:flex">
+        {/* min-w-0 + overflow-x-auto 让 nav 在窄宽度下能横向滚（触控板/
+            滚轮/swipe 触发），但 [scrollbar-*] 把系统 scrollbar 完全
+            隐藏——视觉上 nav 像永远干净，只在真挤不下时悄悄可滚。 */}
+        <ul
+          className="hidden min-w-0 items-center gap-1 overflow-x-auto text-sm sm:flex [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           {items.map((it) => {
             const active = activeId === it.moduleId;
             return (
@@ -306,6 +311,39 @@ const NAV_LABELS: Record<PageLocale, Partial<Record<PageModule['type'], string>>
   },
 };
 
+/**
+ * 反馈："导航带滚动条，你设计的是不是太离谱了？"
+ *
+ * 旧版自动把 hero 之外所有启用模块都塞进 nav (9 项)，挤不下露 scrollbar。
+ * 新版默认只放高价值锚点，按以下优先级裁到 ≤ 5 项：
+ *
+ *   1. 方案 (solution)        ── 用户必看
+ *   2. 价值 (benefits)        ── 用户必看
+ *   3. 场景 (useCase)         ── 让访客代入
+ *   4. 证言 (testimonial)     ── 信任建立
+ *   5. 产品 (productShowcase) ── 视觉重磅
+ *   6. 演示 (videoEmbed)      ── 同上
+ *   7. 联系 (form)            ── 转化锚点
+ *
+ * 主动剔除 (访客自然滚到 / 重复 / 锚点价值低):
+ *   - socialProof   (出现在 Hero 后立刻看到，不需 nav 锚)
+ *   - pain          (痛点开头，前置部分用户已读)
+ *   - faq           (页面尾部，自然滚到)
+ *   - cta           (页面底 CTA，已被 form 替代)
+ *
+ * 用户可以通过 nav.items 显式指定覆盖默认裁剪 (老的 explicit 路径不动)。
+ */
+const NAV_AUTO_INCLUDE: ReadonlySet<PageModule['type']> = new Set([
+  'solution',
+  'benefits',
+  'useCase',
+  'testimonial',
+  'productShowcase',
+  'videoEmbed',
+  'form',
+]);
+const NAV_AUTO_MAX = 5;
+
 function resolveNavItems(
   modules: PageModule[],
   explicit: Array<{ moduleId: string; label: string }> | undefined,
@@ -318,7 +356,8 @@ function resolveNavItems(
   }
   const labels = NAV_LABELS[locale] ?? NAV_LABELS['en'];
   return modules
-    .filter((m) => m.type !== 'hero' && labels[m.type])
+    .filter((m) => m.type !== 'hero' && labels[m.type] && NAV_AUTO_INCLUDE.has(m.type))
+    .slice(0, NAV_AUTO_MAX)
     .map((m) => ({ moduleId: m.id, label: labels[m.type]! }));
 }
 
