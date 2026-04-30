@@ -183,7 +183,7 @@ function BrandTab({
           Replaces the old textarea where users pasted URLs one-per-line. */}
       <LogoListEditor
         label="Logo"
-        hint='客户 logo 墙、合作伙伴。支持图片 / 视频 / GIF。每条可设"适用语言"，留空 = 全 locale 通用。'
+        hint='客户 logo 墙、合作伙伴。支持图片 / 视频 / GIF。每条可设"适用语言"，留空 = 全 locale 通用。建议尺寸：长方形 (3:1 ~ 4:1，如 240×80) 视觉最稳；方形 logo 也支持但展示尺寸偏小。'
         value={b.logos}
         onChange={(logos) => onChange({ ...b, logos })}
       />

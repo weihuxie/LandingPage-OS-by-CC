@@ -691,16 +691,21 @@ function SocialProof({ content }: { content: SocialProofContent }) {
           {content.logos.map((l, i) => {
             const r = resolveSocialProofLogo(l);
             return r.kind === 'image' ? (
+              // 反馈 #18: 之前 max-h-8 (32px) 让方形 logo 在 1:1 比例下
+              // 显得比长方形 logo 小很多。容器改固定 h-16 (64px)，图片
+              // max-h-full 让方形吃满高度，长方形也保留 max-w-full
+              // object-contain 比例不变。整体视觉单元更大、square/wide
+              // 之间差距缩小。
               <div
                 key={i}
-                className="flex items-center justify-center rounded-lg border border-ink-100 bg-white p-3"
+                className="flex h-16 items-center justify-center rounded-lg border border-ink-100 bg-white p-3"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={r.src}
                   alt={r.alt ?? ''}
                   loading="lazy"
-                  className="max-h-8 max-w-full object-contain"
+                  className="max-h-full max-w-full object-contain"
                 />
               </div>
             ) : (
@@ -1229,57 +1234,91 @@ function ProductShowcase({
   locale: PageLocale;
   market: MarketCode;
 }) {
+  // 反馈 #17: 新增 gallery layout，大图主导文字简短压底，针对"想展示
+  // 产品大图"场景。alternating 默认仍是左右交替。
+  const layout = content.layout ?? 'alternating';
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <div className="max-w-3xl">
         <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
         {content.subtitle && <p className="mt-2 text-ink-500">{content.subtitle}</p>}
       </div>
-      <div className="mt-10 space-y-14">
-        {content.items.map((it, i) => {
-          const m = resolveMedia(it.media, locale, market);
-          const textFirst = i % 2 === 0;
-          return (
-            // 反馈 #15: items-center 让短文字对齐到大图的垂直中点，文字
-            // 像悬浮在中间。改 items-start，文字与图顶部对齐，视觉锚定
-            // 一致。
-            <div key={i} className="grid items-start gap-8 md:grid-cols-2">
-              <div className={textFirst ? '' : 'md:order-2'}>
-                <h3 className="text-xl font-semibold">{it.title}</h3>
-                <p className="mt-2 text-ink-500">{it.body}</p>
-                {it.bullets && it.bullets.length > 0 && (
-                  <ul className="mt-4 space-y-1.5 text-sm text-ink-700">
-                    {it.bullets.map((b, j) => (
-                      <li key={j} className="flex gap-2">
-                        <span
-                          className="mt-1.5 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full"
-                          style={{ background: 'var(--brand)' }}
-                        />
-                        <span>{b}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <div className={textFirst ? '' : 'md:order-1'}>
+      {layout === 'gallery' ? (
+        // Gallery layout: 大图横铺，标题 + 简介压在卡片下方。bullets 隐藏
+        // （这种 layout 视觉权重在图，文字越精简越好）。
+        <div className="mt-10 space-y-10">
+          {content.items.map((it, i) => {
+            const m = resolveMedia(it.media, locale, market);
+            return (
+              <div key={i} className="overflow-hidden rounded-2xl border border-ink-100 bg-white shadow-soft">
                 {m ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={m.url}
-                    alt={m.alt ?? ''}
-                    className="w-full rounded-2xl border border-ink-100 shadow-soft"
+                    alt={m.alt ?? it.title}
+                    className="block w-full"
                     loading="lazy"
                   />
                 ) : (
-                  <div className="grid aspect-video place-items-center rounded-2xl border border-dashed border-ink-100 bg-ink-100/30 text-xs text-ink-300">
+                  <div className="grid aspect-video place-items-center bg-ink-100/30 text-xs text-ink-300">
                     截图缺失
                   </div>
                 )}
+                <div className="p-6">
+                  <h3 className="text-xl font-semibold">{it.title}</h3>
+                  {it.body && <p className="mt-2 text-ink-500">{it.body}</p>}
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-10 space-y-14">
+          {content.items.map((it, i) => {
+            const m = resolveMedia(it.media, locale, market);
+            const textFirst = i % 2 === 0;
+            return (
+              // 反馈 #15: items-center 让短文字对齐到大图的垂直中点，文字
+              // 像悬浮在中间。改 items-start，文字与图顶部对齐，视觉锚定
+              // 一致。
+              <div key={i} className="grid items-start gap-8 md:grid-cols-2">
+                <div className={textFirst ? '' : 'md:order-2'}>
+                  <h3 className="text-xl font-semibold">{it.title}</h3>
+                  <p className="mt-2 text-ink-500">{it.body}</p>
+                  {it.bullets && it.bullets.length > 0 && (
+                    <ul className="mt-4 space-y-1.5 text-sm text-ink-700">
+                      {it.bullets.map((b, j) => (
+                        <li key={j} className="flex gap-2">
+                          <span
+                            className="mt-1.5 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full"
+                            style={{ background: 'var(--brand)' }}
+                          />
+                          <span>{b}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className={textFirst ? '' : 'md:order-1'}>
+                  {m ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={m.url}
+                      alt={m.alt ?? ''}
+                      className="w-full rounded-2xl border border-ink-100 shadow-soft"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="grid aspect-video place-items-center rounded-2xl border border-dashed border-ink-100 bg-ink-100/30 text-xs text-ink-300">
+                      截图缺失
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -421,6 +421,15 @@ function ProductShowcaseEditor({
   const t = useTranslations();
   return (
     <>
+      <LayoutPicker
+        label={t('editor.fields.layout')}
+        value={c.layout ?? 'alternating'}
+        options={[
+          { id: 'alternating', name: '左右交替', desc: '文字 + 截图 50/50 交替排版。适合 3-5 条功能点，每条都有截图。' },
+          { id: 'gallery', name: '大图主导', desc: '截图横铺，文字简短压底。视觉权重在图，适合"展示产品大图"场景。' },
+        ]}
+        onChange={(v) => setC({ ...c, layout: v })}
+      />
       <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="productShowcase.title" />
       <Field label={t('editor.fields.subtitle')} value={c.subtitle ?? ''} onChange={(v) => setC({ ...c, subtitle: v })} helpPath="productShowcase.subtitle" />
       <div className="label inline-flex items-center">{t('editor.fields.items')}<HelpTip path="productShowcase.items" /></div>

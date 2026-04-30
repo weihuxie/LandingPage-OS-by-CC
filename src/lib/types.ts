@@ -130,6 +130,16 @@ export interface HeroContent {
   fontScale?: FontScale; // default 'md' — see FontScale comment
 }
 
+/**
+ * ProductShowcase 布局选项（反馈 #17：用户报"只有这一个样式可用"）。
+ * - 'alternating'：默认，左右交替，文字 + 截图 50/50（适合 3-5 条
+ *   功能点，每条都有截图）
+ * - 'gallery'：大图主导，文字简短压在卡片下方（适合"想展示产品大图"
+ *   的场景，截图占主视觉权重）
+ * 之后真有更多样式需求再加。
+ */
+export type ProductShowcaseLayout = 'alternating' | 'gallery';
+
 export interface ProductShowcaseContent {
   title: string;
   subtitle?: string;
@@ -139,6 +149,7 @@ export interface ProductShowcaseContent {
     bullets?: string[];
     media?: MediaRef; // each item has its own screenshot/video
   }>;
+  layout?: ProductShowcaseLayout; // default 'alternating'
 }
 
 export interface VideoEmbedContent {
