@@ -177,6 +177,7 @@ export function projectViewFromV2(
     variants: { A: variantA, B: variantB },
     activeVariant: page.activeVariant,
     publishMode: page.publishMode,
+    nav: page.nav, // 静态导出 (render-html.ts) 用
     theme: {
       primary: page.theme.primary ?? product.theme.primary,
       styleId: page.theme.styleId ?? product.theme.styleId,

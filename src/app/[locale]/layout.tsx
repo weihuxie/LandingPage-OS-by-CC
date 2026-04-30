@@ -52,7 +52,12 @@ export default async function LocaleLayout({
             <Link href={`/${locale}/analytics`} className="btn btn-ghost hidden sm:inline-flex">
               增长看板
             </Link>
-            <Link href={`/${locale}/new`} className="btn btn-primary">
+            {/* 反馈："dashboard 一个新建一个新建产品两个按钮让人困惑"。
+                方案 C：dashboard 的"+ 新建产品"保持蓝色主 CTA（contextual
+                primary），header 这个"+ 新建"降级为 btn-secondary 灰白
+                次级动作——任何页面都能用作"快速创建"应急入口，但不再
+                抢 dashboard 上"+ 新建产品"的蓝色 CTA 视觉权重。 */}
+            <Link href={`/${locale}/new`} className="btn btn-secondary">
               + 新建
             </Link>
             <HeaderAuthBadge locale={locale} />

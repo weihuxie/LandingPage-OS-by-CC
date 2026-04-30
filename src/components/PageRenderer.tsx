@@ -25,6 +25,7 @@ import type {
 import { resolveSocialProofLogo } from '@/lib/types';
 import { STYLE_PRESETS, cssVarsForStyle } from '@/lib/styles';
 import { resolveFontStack, type FontPresetId } from '@/lib/font-presets';
+import { resolveNavItems } from '@/lib/nav-resolver';
 import {
   resolveMedia,
   detectVideoHost,
@@ -286,80 +287,8 @@ function Nav({
   );
 }
 
-// Default nav labels per module type, keyed by locale. Hero is never a
-// nav item — it's the landing page itself.
-const NAV_LABELS: Record<PageLocale, Partial<Record<PageModule['type'], string>>> = {
-  'zh-CN': {
-    socialProof: '客户', pain: '痛点', solution: '方案', benefits: '价值',
-    useCase: '场景', testimonial: '证言', faq: '常见问题', cta: '开始', form: '联系',
-    productShowcase: '产品', videoEmbed: '演示',
-  },
-  'zh-TW': {
-    socialProof: '客戶', pain: '痛點', solution: '方案', benefits: '價值',
-    useCase: '場景', testimonial: '證言', faq: '常見問題', cta: '開始', form: '聯絡',
-    productShowcase: '產品', videoEmbed: '示範',
-  },
-  'ja': {
-    socialProof: '導入企業', pain: '課題', solution: 'ソリューション', benefits: '価値',
-    useCase: '活用例', testimonial: 'お客様の声', faq: 'FAQ', cta: '開始', form: 'お問い合わせ',
-    productShowcase: '製品', videoEmbed: 'デモ',
-  },
-  'en': {
-    socialProof: 'Customers', pain: 'Problem', solution: 'Solution', benefits: 'Benefits',
-    useCase: 'Use cases', testimonial: 'Testimonials', faq: 'FAQ', cta: 'Get started', form: 'Contact',
-    productShowcase: 'Product', videoEmbed: 'Demo',
-  },
-};
-
-/**
- * 反馈："导航带滚动条，你设计的是不是太离谱了？"
- *
- * 旧版自动把 hero 之外所有启用模块都塞进 nav (9 项)，挤不下露 scrollbar。
- * 新版默认只放高价值锚点，按以下优先级裁到 ≤ 5 项：
- *
- *   1. 方案 (solution)        ── 用户必看
- *   2. 价值 (benefits)        ── 用户必看
- *   3. 场景 (useCase)         ── 让访客代入
- *   4. 证言 (testimonial)     ── 信任建立
- *   5. 产品 (productShowcase) ── 视觉重磅
- *   6. 演示 (videoEmbed)      ── 同上
- *   7. 联系 (form)            ── 转化锚点
- *
- * 主动剔除 (访客自然滚到 / 重复 / 锚点价值低):
- *   - socialProof   (出现在 Hero 后立刻看到，不需 nav 锚)
- *   - pain          (痛点开头，前置部分用户已读)
- *   - faq           (页面尾部，自然滚到)
- *   - cta           (页面底 CTA，已被 form 替代)
- *
- * 用户可以通过 nav.items 显式指定覆盖默认裁剪 (老的 explicit 路径不动)。
- */
-const NAV_AUTO_INCLUDE: ReadonlySet<PageModule['type']> = new Set([
-  'solution',
-  'benefits',
-  'useCase',
-  'testimonial',
-  'productShowcase',
-  'videoEmbed',
-  'form',
-]);
-const NAV_AUTO_MAX = 5;
-
-function resolveNavItems(
-  modules: PageModule[],
-  explicit: Array<{ moduleId: string; label: string }> | undefined,
-  locale: PageLocale,
-): Array<{ moduleId: string; label: string }> {
-  if (explicit && explicit.length > 0) {
-    // Filter to modules that still exist and are enabled.
-    const ids = new Set(modules.map((m) => m.id));
-    return explicit.filter((it) => ids.has(it.moduleId));
-  }
-  const labels = NAV_LABELS[locale] ?? NAV_LABELS['en'];
-  return modules
-    .filter((m) => m.type !== 'hero' && labels[m.type] && NAV_AUTO_INCLUDE.has(m.type))
-    .slice(0, NAV_AUTO_MAX)
-    .map((m) => ({ moduleId: m.id, label: labels[m.type]! }));
-}
+// nav 标签 / 白名单 / resolveNavItems 已抽到 src/lib/nav-resolver.ts
+// 以便从 Node 单元测试 import 不必加载 React 组件。
 
 function ModuleBody({
   module,

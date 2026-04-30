@@ -397,6 +397,15 @@ export interface Project {
   variants: ProjectVariants; // PRD §4.3 — A and B narratives
   activeVariant: NarrativeVariant; // currently selected in editor
   publishMode: 'single' | 'ab-split'; // PRD §6
+  /**
+   * 反馈：静态导出（render-html.ts）也要带 nav。projectViewFromV2 从
+   * page.nav 透传过来，render-html 在 body 顶部渲染一份纯静态 nav
+   * （无 IntersectionObserver active 检测，但 anchor link 工作）。
+   */
+  nav?: {
+    enabled: boolean;
+    items?: Array<{ moduleId: string; label: string }>;
+  };
   theme: {
     primary: string;
     secondary?: string;
