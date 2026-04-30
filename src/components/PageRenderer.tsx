@@ -1,5 +1,5 @@
 'use client';
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import type {
   Project,
   PageModule,
@@ -109,6 +109,15 @@ export default function PageRenderer({
 
   const activeModules = project.modules.filter((m) => m.enabled !== false);
   const navItems = nav?.enabled ? resolveNavItems(activeModules, nav.items, pageLocale) : [];
+  // 反馈：nav 重设方案 C — 右侧加 brand-color CTA。文案/链接复用 hero
+  // 主 CTA（用户最熟悉的转化承诺），缺省回退到 #contact。
+  const heroForNav = activeModules.find((m) => m.type === 'hero');
+  const navCta = heroForNav
+    ? {
+        label: (heroForNav.content as HeroContent).primaryCta || '联系',
+        href: ((heroForNav.content as HeroContent).primaryCtaHref?.trim() || '#contact'),
+      }
+    : undefined;
 
   return (
     <div
@@ -129,6 +138,7 @@ export default function PageRenderer({
         <Nav
           items={navItems}
           productName={project.inputs.name}
+          cta={navCta}
         />
       )}
       {activeModules.map((m) => (
@@ -163,33 +173,103 @@ export default function PageRenderer({
 }
 
 /**
- * Sticky top navigation (Feishu #10). Renders once per page above all
- * module sections; items jump to `#mod-<moduleId>`. Hero is excluded from
- * the default item list because the page already starts on it.
+ * Sticky top navigation (Feishu #10).
+ *
+ * 2026-04 重设：方案 C "Pill 高亮"
+ *   - bg-ink-50/85 浅灰底 + backdrop-blur，跟白页面对比明显
+ *   - nav 项 rounded-full pill，hover 加 bg-ink-100
+ *   - 当前可视 section 对应的 nav 项 → 实心 brand-color pill 高亮
+ *     用 IntersectionObserver 检测，rootMargin 偏上 30% 让"刚滚到"
+ *     就高亮，不必滚到正中
+ *   - 右侧 CTA 按钮（brand-color 实心），文案/链接复用 hero 的 primaryCta
+ *   - 字体不写死，跟随页面 fontFamily 继承
  */
 function Nav({
   items,
   productName,
+  cta,
 }: {
   items: Array<{ moduleId: string; label: string }>;
   productName: string;
+  cta?: { label: string; href: string };
 }) {
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || items.length === 0) return;
+    // rootMargin '-30% 0 -50% 0' 创建一条接近顶部 1/3 的"激活带"。
+    // section 顶边进入这条带就成为 active；过了带就让位给下一个。
+    // 多 section 同时部分可见时，最靠上的进入带的优先（靠 entries 顺序）。
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // 取所有 isIntersecting 的，按 boundingClientRect.top 升序，最靠上的优先
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible.length > 0) {
+          const id = visible[0].target.id.replace(/^mod-/, '');
+          setActiveId(id);
+        }
+      },
+      { rootMargin: '-30% 0px -50% 0px', threshold: 0 },
+    );
+
+    const els: HTMLElement[] = [];
+    for (const it of items) {
+      const el = document.getElementById(`mod-${it.moduleId}`);
+      if (el) {
+        observer.observe(el);
+        els.push(el);
+      }
+    }
+    return () => {
+      els.forEach((el) => observer.unobserve(el));
+      observer.disconnect();
+    };
+  }, [items]);
+
+  const isExt = cta?.href ? /^https?:\/\//i.test(cta.href) : false;
+
   return (
-    <nav className="sticky top-0 z-40 border-b border-ink-100 bg-white/90 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
-        <div className="truncate text-sm font-semibold text-ink-900">{productName}</div>
-        <ul className="hidden items-center gap-5 text-sm text-ink-700 sm:flex">
-          {items.map((it) => (
-            <li key={it.moduleId}>
-              <a
-                href={`#mod-${it.moduleId}`}
-                className="transition hover:text-ink-900"
-              >
-                {it.label}
-              </a>
-            </li>
-          ))}
+    <nav className="sticky top-0 z-40 border-b border-ink-100 bg-ink-50/85 backdrop-blur">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-2.5">
+        <div className="truncate text-sm font-semibold text-ink-900">
+          {productName}
+        </div>
+        <ul className="hidden items-center gap-1 text-sm sm:flex">
+          {items.map((it) => {
+            const active = activeId === it.moduleId;
+            return (
+              <li key={it.moduleId}>
+                <a
+                  href={`#mod-${it.moduleId}`}
+                  aria-current={active ? 'true' : undefined}
+                  className={`rounded-full px-3 py-1.5 text-[13px] font-medium transition ${
+                    active
+                      ? 'text-white shadow-sm'
+                      : 'text-ink-600 hover:bg-ink-100 hover:text-ink-900'
+                  }`}
+                  style={
+                    active ? { backgroundColor: 'var(--brand)' } : undefined
+                  }
+                >
+                  {it.label}
+                </a>
+              </li>
+            );
+          })}
         </ul>
+        {cta && (
+          <a
+            href={cta.href}
+            target={isExt ? '_blank' : undefined}
+            rel={isExt ? 'noopener noreferrer' : undefined}
+            className="hidden shrink-0 rounded-full px-4 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:opacity-90 sm:inline-flex"
+            style={{ backgroundColor: 'var(--brand)' }}
+          >
+            {cta.label}
+          </a>
+        )}
       </div>
     </nav>
   );
