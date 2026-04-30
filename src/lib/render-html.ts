@@ -50,7 +50,7 @@ export function renderProjectHtml(project: Project): string {
 ${cssVarBlock}
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; font-family: ${preset.fontStack}; color: #0b1020; background: #fff; line-height: 1.7; }
+html, body { margin: 0; font-family: ${preset.fontStack}; color: #0b1020; background: #fff; line-height: 1.7; overflow-wrap: anywhere; }
 .wrap { max-width: 1152px; margin: 0 auto; padding: 0 24px; }
 h1, h2, h3 { line-height: 1.25; margin: 0; font-weight: var(--heading-weight); }
 .hero { padding: 96px 0; background: radial-gradient(80% 60% at 10% 10%, color-mix(in oklch, var(--brand) 22%, transparent), transparent 60%), linear-gradient(180deg, #fff, #f6f8ff); }

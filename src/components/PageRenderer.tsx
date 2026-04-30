@@ -116,6 +116,12 @@ export default function PageRenderer({
       style={{
         ...(styleVars as React.CSSProperties),
         fontFamily: overrideFontStack ?? preset.fontStack,
+        // 长无空格字符串（用户编辑器里能粘进去的 URL / 长 ID / 任意纯数字串）
+        // 默认 overflow-wrap:normal 不换行，会撑破 grid/flex 卡片边界。
+        // anywhere 在需要时允许任意位置断行，同时让 min-content 收缩到 0 —
+        // 这样 grid item (`min-width:auto`) 不会被某条长字符串顶宽。
+        // 全树继承，新模块/新字段不必单独处理。
+        overflowWrap: 'anywhere',
       }}
       data-style={styleId}
     >
@@ -725,7 +731,7 @@ function SocialProof({ content }: { content: SocialProofContent }) {
           {content.stats.map((s, i) => (
             <div
               key={i}
-              className="rounded-2xl border border-ink-100 bg-white p-5 text-center"
+              className="min-w-0 rounded-2xl border border-ink-100 bg-white p-5 text-center"
             >
               <div className="text-2xl font-semibold text-ink-900">{s.value}</div>
               <div className="mt-1 text-xs text-ink-500">{s.label}</div>
@@ -820,7 +826,7 @@ function Pain({
           return (
             <div
               key={i}
-              className="flex h-full flex-col overflow-hidden rounded-2xl border border-ink-100 bg-white"
+              className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-ink-100 bg-white"
             >
               {m && <BenefitThumb url={m.url} alt={m.alt ?? it.title} />}
               <div className="flex flex-1 flex-col p-5">
@@ -910,7 +916,7 @@ function Benefits({
             return (
               <div
                 key={i}
-                className="flex h-full flex-col overflow-hidden rounded-2xl border border-ink-100 bg-white"
+                className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-ink-100 bg-white"
               >
                 {m && <BenefitThumb url={m.url} alt={m.alt ?? b.title} />}
                 <div className="flex flex-1 flex-col p-5">
@@ -1093,7 +1099,7 @@ function UseCases({
           return (
             <div
               key={i}
-              className="flex h-full flex-col overflow-hidden rounded-2xl border border-ink-100 bg-white"
+              className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-ink-100 bg-white"
             >
               {m && <BenefitThumb url={m.url} alt={m.alt ?? it.role} />}
               <div className="flex flex-1 flex-col p-5">
@@ -1127,7 +1133,9 @@ function Testimonials({
         {content.items.map((it, i) => {
           const avatar = resolveMedia(it.avatar, locale, market);
           return (
-            <blockquote key={i} className="flex h-full flex-col rounded-2xl border border-ink-100 bg-white p-6">
+            // min-w-0: grid item 默认 min-width:auto = min-content，长无空格
+            // quote 会撑破 grid track。手动设 0 让 item 严格服从 grid track 宽度。
+            <blockquote key={i} className="flex h-full min-w-0 flex-col rounded-2xl border border-ink-100 bg-white p-6">
               <p className="flex-1 text-ink-700">“{it.quote}”</p>
               <footer className="mt-3 flex items-center gap-3 text-sm text-ink-500">
                 {avatar ? (
@@ -1149,7 +1157,10 @@ function Testimonials({
                     {initialsOf(it.author)}
                   </span>
                 )}
-                <span>
+                {/* min-w-0: footer 是 flex row，author/company span 默认 min-width:
+                    auto 会被长名挤出 footer 边界。配合上层 overflow-wrap:anywhere
+                    继承，author 长串可在 footer 内任意位置断行。 */}
+                <span className="min-w-0">
                   — {it.author}, {it.company}
                 </span>
               </footer>
@@ -1250,7 +1261,7 @@ function ProductShowcase({
           {content.items.map((it, i) => {
             const m = resolveMedia(it.media, locale, market);
             return (
-              <div key={i} className="overflow-hidden rounded-2xl border border-ink-100 bg-white shadow-soft">
+              <div key={i} className="min-w-0 overflow-hidden rounded-2xl border border-ink-100 bg-white shadow-soft">
                 {m ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
