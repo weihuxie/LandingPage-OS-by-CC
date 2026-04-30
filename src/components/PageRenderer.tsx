@@ -231,20 +231,26 @@ function Nav({
   const isExt = cta?.href ? /^https?:\/\//i.test(cta.href) : false;
 
   return (
-    <nav className="sticky top-0 z-40 border-b border-ink-100 bg-ink-50/85 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-2.5">
+    // 反馈："每个汉字单独一行" — 根 div 的 overflow-wrap:anywhere（修
+    // testimonial 长串溢出加的）会让 nav 项数挤窄时 per-character 断行。
+    // 在 nav 上重置回 normal，再给每个 link 加 whitespace-nowrap 双保险。
+    <nav
+      className="sticky top-0 z-40 border-b border-ink-100 bg-ink-50/85 backdrop-blur"
+      style={{ overflowWrap: 'normal', wordBreak: 'normal' }}
+    >
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-6 py-2.5">
         <div className="truncate text-sm font-semibold text-ink-900">
           {productName}
         </div>
-        <ul className="hidden items-center gap-1 text-sm sm:flex">
+        <ul className="hidden min-w-0 items-center gap-1 overflow-x-auto text-sm sm:flex">
           {items.map((it) => {
             const active = activeId === it.moduleId;
             return (
-              <li key={it.moduleId}>
+              <li key={it.moduleId} className="shrink-0">
                 <a
                   href={`#mod-${it.moduleId}`}
                   aria-current={active ? 'true' : undefined}
-                  className={`rounded-full px-3 py-1.5 text-[13px] font-medium transition ${
+                  className={`whitespace-nowrap rounded-full px-3 py-1.5 text-[13px] font-medium transition ${
                     active
                       ? 'text-white shadow-sm'
                       : 'text-ink-600 hover:bg-ink-100 hover:text-ink-900'
@@ -264,7 +270,7 @@ function Nav({
             href={cta.href}
             target={isExt ? '_blank' : undefined}
             rel={isExt ? 'noopener noreferrer' : undefined}
-            className="hidden shrink-0 rounded-full px-4 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:opacity-90 sm:inline-flex"
+            className="hidden shrink-0 whitespace-nowrap rounded-full px-4 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:opacity-90 sm:inline-flex"
             style={{ backgroundColor: 'var(--brand)' }}
           >
             {cta.label}
