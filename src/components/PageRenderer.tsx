@@ -1056,6 +1056,11 @@ function UseCases({
   );
 
   if (!anyMedia) {
+    // 反馈 #12: 用户报"对齐问题，字数不一致就会不对齐"。原 flex-row +
+    // justify-between 让 role 紧靠左缘 / scenario 紧靠右缘，行间因为
+    // role 字数不同导致 scenario 起始 x 位置错乱。改成 grid 双列：
+    // role 固定 9em 宽度（够 4 个中文字），scenario 占剩余。所有行的
+    // scenario 起点都在同一 x 上 — 视觉对齐。
     return (
       <div className="mx-auto max-w-6xl px-6 py-14">
         <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
@@ -1063,7 +1068,7 @@ function UseCases({
           {content.items.map((it, i) => (
             <div
               key={i}
-              className="flex flex-col gap-2 rounded-2xl border border-ink-100 bg-white p-5 sm:flex-row sm:items-center sm:justify-between"
+              className="rounded-2xl border border-ink-100 bg-white p-5 sm:grid sm:grid-cols-[9em_1fr] sm:items-baseline sm:gap-6 flex flex-col gap-2"
             >
               <div className="text-sm font-semibold text-ink-900">{it.role}</div>
               <div className="text-sm text-ink-500">{it.scenario}</div>
