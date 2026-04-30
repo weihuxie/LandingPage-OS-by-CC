@@ -434,7 +434,10 @@ function Hero({
       >
         {content.primaryCta}
       </a>
-      {content.secondaryCta && (
+      {/* 反馈 #5: secondaryCta 是 whitespace-only ("  ") 时之前会渲染
+          一个空白按钮（视觉是个空 rectangle）。trim 后判断真实有内容
+          才渲染。 */}
+      {content.secondaryCta?.trim() && (
         <a
           href={secondaryHref}
           target={isExt(secondaryHref) ? '_blank' : undefined}
@@ -493,6 +496,18 @@ function Hero({
   // ---- Layout: bold-stat (大数字主导) ----
   if (layout === 'bold-stat') {
     const firstBullet = content.bullets?.[0];
+    // 反馈 #5: 优先显式 statValue / statLabel；缺省时回退到从 bullet[0]
+    // 抽数字 + bullet[0] 全文（保留旧数据兼容性）。这样新页面在编辑器里
+    // 改 statValue 字段就立刻生效，不必改 bullet。
+    const statValue =
+      content.statValue?.trim() ||
+      firstBullet?.match(/[\d][\d.,×%+]*/)?.[0] ||
+      '3×';
+    const statLabel =
+      content.statLabel?.trim() ||
+      firstBullet ||
+      content.eyebrow ||
+      'OUTCOME';
     const bg = 'linear-gradient(135deg, #0b1020 0%, color-mix(in oklch, var(--brand) 70%, #0b1020) 100%)';
     return (
       <div className="relative overflow-hidden text-white" style={{ background: bg }}>
@@ -502,10 +517,10 @@ function Hero({
               className={`font-extrabold leading-none ${mobile ? 'text-6xl' : 'text-8xl md:text-9xl'}`}
               style={{ color: 'color-mix(in oklch, var(--brand) 60%, white)' }}
             >
-              {firstBullet?.match(/[\d][\d.,×%+]*/)?.[0] ?? '3×'}
+              {statValue}
             </div>
             <div className="mt-2 text-sm uppercase tracking-widest text-white/60">
-              {firstBullet ?? content.eyebrow ?? 'OUTCOME'}
+              {statLabel}
             </div>
           </div>
           <div className={mobile ? 'mt-6' : 'col-span-3'}>

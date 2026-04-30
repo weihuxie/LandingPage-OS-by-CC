@@ -336,6 +336,23 @@ function HeroEditor({
         onChange={(v) => setC({ ...c, secondaryCtaHref: v || undefined })}
       />
       <Field label={t('editor.fields.bullets')} value={c.bullets.join('\n')} onChange={(v) => setC({ ...c, bullets: v.split('\n').filter(Boolean) })} multiline helpPath="hero.bullets" />
+      {/* 反馈 #5: bold-stat layout 才用的两个字段 — 大数字 + caption。
+          其他 layout 隐藏避免输入框噪音。缺省时渲染器从 bullets[0]
+          抽数字 fallback，老数据继续工作。 */}
+      {c.layout === 'bold-stat' && (
+        <>
+          <Field
+            label="大数字 (bold-stat 显示)"
+            value={c.statValue ?? ''}
+            onChange={(v) => setC({ ...c, statValue: v || undefined })}
+          />
+          <Field
+            label="数字下方说明"
+            value={c.statLabel ?? ''}
+            onChange={(v) => setC({ ...c, statLabel: v || undefined })}
+          />
+        </>
+      )}
       <MediaField
         label={t('editor.fields.heroMedia')}
         value={c.media}

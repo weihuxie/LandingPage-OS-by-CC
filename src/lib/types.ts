@@ -100,6 +100,16 @@ export interface HeroContent {
   eyebrow: string;
   headline: string;
   subhead: string;
+  /**
+   * 反馈 #5：bold-stat layout 用大字号显示一个数字（"3×"）。原本是从
+   * `bullets[0]` 里正则抽数字，编辑器无任何字段可改。新增显式字段 —
+   * bold-stat 优先用 `statValue`，缺省时才回退到 bullets 抽取。其他
+   * layout 不渲染这个字段（不影响 split / centered / video-bg / editorial）。
+   */
+  statValue?: string;
+  /** 反馈 #5：和 statValue 配套的 label（默认渲染为小写 caption "OUTCOME"
+   *  之类）。同样仅 bold-stat 用，缺省回退到 bullets[0] / eyebrow。 */
+  statLabel?: string;
   primaryCta: string;
   /**
    * Optional click target for the primary CTA button. Defaults to
