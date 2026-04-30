@@ -1624,7 +1624,12 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               </button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          {/* 反馈 #7: narrow viewport（如 1024px 屏，多 locale tab 占一行）
+              时按钮组 width 超出可用空间，外层 flex-wrap 让整组掉到第二
+              行；但内组没 flex-wrap，按钮挤一团或溢出。加 flex-wrap +
+              justify-end 让组内按钮也能换行排列（已保存 / 引导 文字链
+              先掉一行 → 主按钮 查看 / 已发布 / ⋮ 留主行）。 */}
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {/* Persistent save-state badge. Unlike the old "flash for 1.2s
                 then disappear" design, this stays visible so the user can
                 always tell whether the server has accepted the latest edit.
