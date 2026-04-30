@@ -826,7 +826,10 @@ function Solution({
       <div className="rounded-3xl border border-ink-100 bg-gradient-to-br from-white to-ink-100/30 p-8 sm:p-12">
         <h2 className="text-3xl font-semibold tracking-tight text-ink-900">{nl2br(content.title)}</h2>
         {content.subtitle && <p className="mt-2 text-ink-500">{content.subtitle}</p>}
-        <p className="mt-4 max-w-3xl text-ink-700">{content.body}</p>
+        {/* 反馈 #3: body 用 max-w-3xl 在 max-w-6xl 卡片里看着右侧大块
+            空白。删掉 prose 限宽，让 body 占满卡片宽度。可读性轻微
+            下降（行长 > 720px），但视觉不再像 broken layout。 */}
+        <p className="mt-4 text-ink-700">{content.body}</p>
         {m && (
           <div className="mt-8">
             {isInlineLoopingVideo(m.url) ? (
@@ -1200,7 +1203,10 @@ function ProductShowcase({
           const m = resolveMedia(it.media, locale, market);
           const textFirst = i % 2 === 0;
           return (
-            <div key={i} className="grid items-center gap-8 md:grid-cols-2">
+            // 反馈 #15: items-center 让短文字对齐到大图的垂直中点，文字
+            // 像悬浮在中间。改 items-start，文字与图顶部对齐，视觉锚定
+            // 一致。
+            <div key={i} className="grid items-start gap-8 md:grid-cols-2">
               <div className={textFirst ? '' : 'md:order-2'}>
                 <h3 className="text-xl font-semibold">{it.title}</h3>
                 <p className="mt-2 text-ink-500">{it.body}</p>

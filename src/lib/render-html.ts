@@ -180,7 +180,7 @@ function serializeModule(
       const solMediaHtml = solMedia
         ? `<div style="margin-top:24px">${renderMediaHtml(solMedia.url, solMedia.alt, c.media?.kind, c.media?.poster)}</div>`
         : '';
-      return `<section class="section"><div class="wrap card"><h2>${escapeHtmlMultiline(c.title)}</h2><p class="muted" style="max-width:720px;margin-top:8px">${escapeHtml(c.body)}</p>${solMediaHtml}</div></section>`;
+      return `<section class="section"><div class="wrap card"><h2>${escapeHtmlMultiline(c.title)}</h2><p class="muted" style="margin-top:8px">${escapeHtml(c.body)}</p>${solMediaHtml}</div></section>`;
     }
     case 'benefits':
       return `<section class="section"><div class="wrap">
