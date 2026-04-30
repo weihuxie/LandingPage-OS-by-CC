@@ -136,6 +136,16 @@ export default function PageRenderer({
               : ''
           }`}
         >
+          {/* 反馈 #4: Hero / CTA 按钮默认 href="#contact"，但 form 模块
+              section 之前只挂 id="mod-<id>"，导致 SPA 内 CTA 点了 URL
+              变 #contact 浏览器找不到锚点，看着像"按钮没反应"。
+              render-html.ts 静态导出版一直对 form 用 id="contact" 所以
+              Vercel 部署后能跳，但编辑器预览和 /p/slug 不行。这里加
+              个无视觉影响的 anchor span，#contact 仍可命中且不破坏 nav
+              的 #mod-<id> 锚点（nav 走的是 section id）。 */}
+          {m.type === 'form' && (
+            <span id="contact" aria-hidden className="block scroll-mt-20" />
+          )}
           <ModuleBody module={m} device={device} interactive={interactive} project={project} locale={locale} variant={variant} />
         </section>
       ))}
