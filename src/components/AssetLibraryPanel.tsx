@@ -722,7 +722,9 @@ function CertsTab({
   const MARKETS: MarketCode[] = ['CN', 'TW', 'JP', 'US', 'EU', 'GLOBAL'];
   return (
     <div>
-      {/* Onboarding banner — same pattern as PressTab. */}
+      {/* Onboarding banner — same pattern as PressTab. 反馈 #16:"这里
+          写了，怎么添加到页面啊" — 用户填完不知道怎么用。补一条用法
+          说明指引到模块编辑器。 */}
       <div className="mb-3 rounded-xl border border-brand-100 bg-brand-50/40 p-3 text-xs leading-relaxed text-ink-700">
         <div className="mb-1 font-medium text-brand-700">如何填写</div>
         <div>
@@ -730,6 +732,12 @@ function CertsTab({
           <br />
           示例：名称 <code className="rounded bg-white px-1">SOC 2 Type II</code>
           ，logo URL（可选），适用市场勾 <code className="rounded bg-white px-1">US / EU / GLOBAL</code>。
+        </div>
+        <div className="mt-2 rounded-md bg-white/60 px-2 py-1.5">
+          <span className="font-medium text-brand-700">→ 如何加到落地页：</span>
+          这里填好的 logo 不会自动出现在页面上。打开 <code className="rounded bg-white px-1">我的产品 → 选择产品 → 编辑器</code>，
+          在 <code className="rounded bg-white px-1">客户背书 (socialProof)</code> 模块点
+          <code className="rounded bg-white px-1">📚 从品牌资产库</code> 选取本 tab 填的认证 logo。
         </div>
       </div>
       <div className="mb-3 flex items-center justify-between">
