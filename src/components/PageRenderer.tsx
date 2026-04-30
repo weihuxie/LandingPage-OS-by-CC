@@ -1,4 +1,5 @@
 'use client';
+import { Fragment, type ReactNode } from 'react';
 import type {
   Project,
   PageModule,
@@ -56,6 +57,29 @@ type Props = {
    *  the loaded Brand record. */
   brandFontStack?: string | null;
 };
+
+/**
+ * Render a string preserving manual `\n` as `<br />`.
+ *
+ * 反馈 #9 / #11：用户在 hero headline / solution title 等大标题里手敲
+ * 换行，HTML 默认把 `\n` 折成空格 → 渲染出来一行长串。这个 helper 把
+ * `\n` 还原成 `<br />`。
+ *
+ * 只用于"用户预期能换行"的字段（hero.headline / 各 module.title）。
+ * subhead / body / quote 这种长文本段落不走这里——多段文字应该用 CSS
+ * 的 `white-space: pre-wrap` 或重构成 array，而不是塞 `<br>`。
+ */
+function nl2br(text: string | undefined | null): ReactNode {
+  if (!text) return text ?? '';
+  if (!text.includes('\n')) return text;
+  const lines = text.split('\n');
+  return lines.map((line, i) => (
+    <Fragment key={i}>
+      {line}
+      {i < lines.length - 1 && <br />}
+    </Fragment>
+  ));
+}
 
 export default function PageRenderer({
   project,
@@ -369,7 +393,7 @@ function Hero({
       } ${headlineSizeClass(content.fontScale, mobile, baseHeadlineSize)}`}
       style={{ fontWeight: 'var(--heading-weight, 600)' as any, lineHeight: 1.15 }}
     >
-      {content.headline}
+      {nl2br(content.headline)}
     </h1>
   );
 
@@ -484,7 +508,7 @@ function Hero({
               className={`mt-4 tracking-tight text-white ${headlineSizeClass(content.fontScale, mobile, mobile ? 'text-3xl' : 'text-4xl md:text-5xl')}`}
               style={{ fontWeight: 'var(--heading-weight, 600)' as any, lineHeight: 1.15 }}
             >
-              {content.headline}
+              {nl2br(content.headline)}
             </h1>
             <p className={`mt-4 text-white/70 ${mobile ? 'text-base' : 'text-lg'} max-w-2xl`}>
               {content.subhead}
@@ -635,7 +659,7 @@ function SocialProof({ content }: { content: SocialProofContent }) {
   return (
     <div className="mx-auto max-w-6xl px-6 py-12">
       <div className="text-center text-xs font-medium uppercase tracking-wider text-ink-500">
-        {content.title}
+        {nl2br(content.title)}
       </div>
       {showLogos && !scroll && (
         <div className="mt-5 grid grid-cols-3 items-center gap-4 sm:grid-cols-6">
@@ -758,7 +782,7 @@ function Pain({
 }) {
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
-      <h2 className="text-3xl font-semibold tracking-tight text-ink-900">{content.title}</h2>
+      <h2 className="text-3xl font-semibold tracking-tight text-ink-900">{nl2br(content.title)}</h2>
       {content.subtitle && <p className="mt-2 text-ink-500">{content.subtitle}</p>}
       <div className="mt-8 grid gap-4 sm:grid-cols-3 items-stretch">
         {content.items.map((it, i) => {
@@ -800,7 +824,7 @@ function Solution({
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <div className="rounded-3xl border border-ink-100 bg-gradient-to-br from-white to-ink-100/30 p-8 sm:p-12">
-        <h2 className="text-3xl font-semibold tracking-tight text-ink-900">{content.title}</h2>
+        <h2 className="text-3xl font-semibold tracking-tight text-ink-900">{nl2br(content.title)}</h2>
         {content.subtitle && <p className="mt-2 text-ink-500">{content.subtitle}</p>}
         <p className="mt-4 max-w-3xl text-ink-700">{content.body}</p>
         {m && (
@@ -846,7 +870,7 @@ function Benefits({
   if (layout === 'cards') {
     return (
       <div className="mx-auto max-w-6xl px-6 py-14">
-        <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+        <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
         <div className="mt-8 grid gap-4 sm:grid-cols-3 items-stretch">
           {content.items.map((b, i) => {
             const m = resolveMedia(b.media, locale, market);
@@ -873,7 +897,7 @@ function Benefits({
   if (layout === 'alternating') {
     return (
       <div className="mx-auto max-w-6xl px-6 py-14">
-        <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+        <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
         <div className="mt-10 space-y-14">
           {content.items.map((b, i) => {
             const textFirst = i % 2 === 0;
@@ -929,7 +953,7 @@ function Benefits({
   // ---- compact (一行一条 · icon + 标题 + 描述，信息密度高) ----
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
-      <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+      <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
       <div className="mt-6 divide-y divide-ink-100 rounded-2xl border border-ink-100 bg-white">
         {content.items.map((b, i) => (
           <div key={i} className="flex items-start gap-4 p-5">
@@ -1006,7 +1030,7 @@ function UseCases({
   if (!anyMedia) {
     return (
       <div className="mx-auto max-w-6xl px-6 py-14">
-        <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+        <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
         <div className="mt-8 space-y-3">
           {content.items.map((it, i) => (
             <div
@@ -1024,7 +1048,7 @@ function UseCases({
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
-      <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+      <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-stretch">
         {content.items.map((it, i) => {
           const m = resolveMedia(it.media, locale, market);
@@ -1057,7 +1081,7 @@ function Testimonials({
 }) {
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
-      <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+      <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
       <div className="mt-8 grid gap-4 sm:grid-cols-2 items-stretch">
         {content.items.map((it, i) => {
           const avatar = resolveMedia(it.avatar, locale, market);
@@ -1112,7 +1136,7 @@ function initialsOf(name: string): string {
 function FAQ({ content }: { content: FAQContent }) {
   return (
     <div className="mx-auto max-w-3xl px-6 py-14">
-      <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+      <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
       <dl className="mt-6 divide-y divide-ink-100 rounded-2xl border border-ink-100 bg-white">
         {content.items.map((it, i) => (
           <div key={i} className="p-5">
@@ -1139,7 +1163,7 @@ function CTA({ content }: { content: CTAContent }) {
       >
         <div>
           <h3 className={`font-semibold ${headlineSizeClass(content.fontScale, false, 'text-2xl')}`}>
-            {content.headline}
+            {nl2br(content.headline)}
           </h3>
           <p className="mt-1 text-white/80">{content.subhead}</p>
         </div>
@@ -1168,7 +1192,7 @@ function ProductShowcase({
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <div className="max-w-3xl">
-        <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+        <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
         {content.subtitle && <p className="mt-2 text-ink-500">{content.subtitle}</p>}
       </div>
       <div className="mt-10 space-y-14">
@@ -1231,7 +1255,7 @@ function VideoEmbed({
   return (
     <div className="mx-auto max-w-4xl px-6 py-14">
       <div className="max-w-2xl">
-        <h2 className="text-3xl font-semibold tracking-tight">{content.title}</h2>
+        <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
         {content.subtitle && <p className="mt-2 text-ink-500">{content.subtitle}</p>}
       </div>
       <div className="mt-6 aspect-video overflow-hidden rounded-2xl border border-ink-100 shadow-soft">

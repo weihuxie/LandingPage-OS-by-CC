@@ -84,6 +84,18 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * Escape HTML AND preserve manual `\n` as `<br>`.
+ *
+ * 反馈 #9 / #11：用户在 hero headline / solution title 等大标题里手敲
+ * 换行，HTML 默认折成空格 → 渲染为一行长串。这里 escape 之后再把
+ * `\n` 还原成 `<br>`。仅用于"用户预期能换行"的字段：headline + title。
+ * subhead / body / quote 不走这条路径。
+ */
+function escapeHtmlMultiline(s: string): string {
+  return escapeHtml(s).split('\n').join('<br>');
+}
+
 function serializeModule(
   m: any,
   locale: PageLocale,
@@ -111,7 +123,7 @@ function serializeModule(
         : '';
       return `<section class="hero"><div class="wrap">
         <span class="eyebrow">${escapeHtml(c.eyebrow)}</span>
-        <h1 class="h1">${escapeHtml(c.headline)}</h1>
+        <h1 class="h1">${escapeHtmlMultiline(c.headline)}</h1>
         <p class="sub">${escapeHtml(c.subhead)}</p>
         <a class="cta" href="${escapeHtml(pHref)}"${pAttrs}>${escapeHtml(c.primaryCta)}</a>
         ${secondaryHtml}
@@ -145,14 +157,14 @@ function serializeModule(
             .join('')}</div>`
         : '';
       return `<section class="section"><div class="wrap">
-        <div style="text-align:center;color:#5b6478;font-size:12px;text-transform:uppercase;letter-spacing:.08em">${escapeHtml(c.title)}</div>
+        <div style="text-align:center;color:#5b6478;font-size:12px;text-transform:uppercase;letter-spacing:.08em">${escapeHtmlMultiline(c.title)}</div>
         ${logosHtml}
         ${statsHtml}
       </div></section>`;
     }
     case 'pain':
       return `<section class="section"><div class="wrap">
-        <h2>${escapeHtml(c.title)}</h2>
+        <h2>${escapeHtmlMultiline(c.title)}</h2>
         <div class="grid3" style="margin-top:24px">${(c.items ?? [])
           .map((it: any) => {
             const pm = resolveMedia(it.media, locale, market);
@@ -168,11 +180,11 @@ function serializeModule(
       const solMediaHtml = solMedia
         ? `<div style="margin-top:24px">${renderMediaHtml(solMedia.url, solMedia.alt, c.media?.kind, c.media?.poster)}</div>`
         : '';
-      return `<section class="section"><div class="wrap card"><h2>${escapeHtml(c.title)}</h2><p class="muted" style="max-width:720px;margin-top:8px">${escapeHtml(c.body)}</p>${solMediaHtml}</div></section>`;
+      return `<section class="section"><div class="wrap card"><h2>${escapeHtmlMultiline(c.title)}</h2><p class="muted" style="max-width:720px;margin-top:8px">${escapeHtml(c.body)}</p>${solMediaHtml}</div></section>`;
     }
     case 'benefits':
       return `<section class="section"><div class="wrap">
-        <h2>${escapeHtml(c.title)}</h2>
+        <h2>${escapeHtmlMultiline(c.title)}</h2>
         <div class="grid3" style="margin-top:24px">${(c.items ?? [])
           .map((it: any) => {
             const bm = resolveMedia(it.media, locale, market);
@@ -191,14 +203,14 @@ function serializeModule(
       const ucItems = c.items ?? [];
       const anyMedia = ucItems.some((it: any) => resolveMedia(it.media, locale, market));
       if (!anyMedia) {
-        return `<section class="section"><div class="wrap"><h2>${escapeHtml(c.title)}</h2><div style="margin-top:24px">${ucItems
+        return `<section class="section"><div class="wrap"><h2>${escapeHtmlMultiline(c.title)}</h2><div style="margin-top:24px">${ucItems
           .map(
             (it: any) =>
               `<div class="card" style="margin-top:8px"><strong>${escapeHtml(it.role)}</strong><div class="muted">${escapeHtml(it.scenario)}</div></div>`,
           )
           .join('')}</div></div></section>`;
       }
-      return `<section class="section"><div class="wrap"><h2>${escapeHtml(c.title)}</h2><div class="grid3" style="margin-top:24px">${ucItems
+      return `<section class="section"><div class="wrap"><h2>${escapeHtmlMultiline(c.title)}</h2><div class="grid3" style="margin-top:24px">${ucItems
         .map((it: any) => {
           const um = resolveMedia(it.media, locale, market);
           const thumb = um
@@ -209,7 +221,7 @@ function serializeModule(
         .join('')}</div></div></section>`;
     }
     case 'testimonial':
-      return `<section class="section"><div class="wrap"><h2>${escapeHtml(c.title)}</h2><div class="grid3" style="margin-top:24px">${(c.items ?? [])
+      return `<section class="section"><div class="wrap"><h2>${escapeHtmlMultiline(c.title)}</h2><div class="grid3" style="margin-top:24px">${(c.items ?? [])
         .map((it: { quote: string; author: string; company: string; avatar?: MediaRef }) => {
           const avatar = resolveMedia(it.avatar, locale, market);
           const avatarHtml = avatar
@@ -219,7 +231,7 @@ function serializeModule(
         })
         .join('')}</div></div></section>`;
     case 'faq':
-      return `<section class="section"><div class="wrap" style="max-width:720px"><h2>${escapeHtml(c.title)}</h2>${(c.items ?? [])
+      return `<section class="section"><div class="wrap" style="max-width:720px"><h2>${escapeHtmlMultiline(c.title)}</h2>${(c.items ?? [])
         .map(
           (it: any) =>
             `<div class="card" style="margin-top:8px"><strong>${escapeHtml(it.q)}</strong><p class="muted">${escapeHtml(it.a)}</p></div>`,
@@ -230,7 +242,7 @@ function serializeModule(
       const bHref = (c.buttonHref?.trim() || '#contact') as string;
       const bExt = /^https?:\/\//i.test(bHref);
       const bAttrs = bExt ? ' target="_blank" rel="noopener noreferrer"' : '';
-      return `<section class="section"><div class="wrap"><div style="background:linear-gradient(135deg,var(--brand),color-mix(in oklch,var(--brand) 60%,#0b1020));color:#fff;padding:56px;border-radius:calc(var(--radius,16px) * 1.5);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><h3 style="font-size:28px">${escapeHtml(c.headline)}</h3><p style="opacity:.8;margin-top:8px">${escapeHtml(c.subhead)}</p></div><a href="${escapeHtml(bHref)}"${bAttrs} style="background:#fff;color:#0b1020;padding:14px 22px;border-radius:var(--radius);text-decoration:none;font-weight:500">${escapeHtml(c.button)}</a></div></div></section>`;
+      return `<section class="section"><div class="wrap"><div style="background:linear-gradient(135deg,var(--brand),color-mix(in oklch,var(--brand) 60%,#0b1020));color:#fff;padding:56px;border-radius:calc(var(--radius,16px) * 1.5);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><h3 style="font-size:28px">${escapeHtmlMultiline(c.headline)}</h3><p style="opacity:.8;margin-top:8px">${escapeHtml(c.subhead)}</p></div><a href="${escapeHtml(bHref)}"${bAttrs} style="background:#fff;color:#0b1020;padding:14px 22px;border-radius:var(--radius);text-decoration:none;font-weight:500">${escapeHtml(c.button)}</a></div></div></section>`;
     }
     case 'form': {
       const mode = c.mode ?? 'inline';
@@ -242,9 +254,9 @@ function serializeModule(
       if (mode === 'external') {
         const href = c.externalUrl && typeof c.externalUrl === 'string' ? c.externalUrl : '#contact';
         const isExternal = /^https?:\/\//i.test(href);
-        return `<section class="section" id="contact"><div class="wrap" style="max-width:720px"><div class="card" style="padding:40px;text-align:center"><h3>${escapeHtml(c.title)}</h3><p class="muted">${escapeHtml(c.subtitle)}</p><a class="cta" href="${escapeHtml(href)}"${isExternal ? ' target="_blank" rel="noopener"' : ''} style="margin-top:20px">${escapeHtml(c.submitLabel)}</a></div></div></section>`;
+        return `<section class="section" id="contact"><div class="wrap" style="max-width:720px"><div class="card" style="padding:40px;text-align:center"><h3>${escapeHtmlMultiline(c.title)}</h3><p class="muted">${escapeHtml(c.subtitle)}</p><a class="cta" href="${escapeHtml(href)}"${isExternal ? ' target="_blank" rel="noopener"' : ''} style="margin-top:20px">${escapeHtml(c.submitLabel)}</a></div></div></section>`;
       }
-      return `<section class="section" id="contact"><div class="wrap" style="max-width:720px"><div class="card" style="padding:40px"><h3>${escapeHtml(c.title)}</h3><p class="muted">${escapeHtml(c.subtitle)}</p><p class="muted" style="margin-top:16px">(此导出版为静态 HTML。实际提交请接入你的表单服务或改用托管发布。)</p></div></div></section>`;
+      return `<section class="section" id="contact"><div class="wrap" style="max-width:720px"><div class="card" style="padding:40px"><h3>${escapeHtmlMultiline(c.title)}</h3><p class="muted">${escapeHtml(c.subtitle)}</p><p class="muted" style="margin-top:16px">(此导出版为静态 HTML。实际提交请接入你的表单服务或改用托管发布。)</p></div></div></section>`;
     }
     default:
       return '';

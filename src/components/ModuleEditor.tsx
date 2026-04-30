@@ -1112,7 +1112,7 @@ function SolutionEditor({ c, setC }: { c: SolutionContent; setC: (c: SolutionCon
   const t = useTranslations();
   return (
     <>
-      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} helpPath="solution.title" aiPath="solution.title" />
+      <Field label={t('editor.fields.title')} value={c.title} onChange={(v) => setC({ ...c, title: v })} multiline helpPath="solution.title" aiPath="solution.title" />
       <Field label={t('editor.fields.subtitle')} value={c.subtitle} onChange={(v) => setC({ ...c, subtitle: v })} helpPath="solution.subtitle" aiPath="solution.subtitle" />
       <Field label={t('editor.fields.body')} value={c.body} onChange={(v) => setC({ ...c, body: v })} multiline helpPath="solution.body" aiPath="solution.body" />
       <MediaField
