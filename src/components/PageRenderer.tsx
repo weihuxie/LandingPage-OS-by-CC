@@ -1115,7 +1115,10 @@ function Testimonials({
   return (
     <div className="mx-auto max-w-6xl px-6 py-14">
       <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
-      <div className="mt-8 grid gap-4 sm:grid-cols-2 items-stretch">
+      {/* 反馈 #13: 用户报"字数要差不多才能整齐"。默认 grid auto-rows
+          让每行高度跟着该行最高 item，row 之间高度可能不一。改 auto-rows-fr
+          强制所有行均高，整体视觉节奏更整齐。 */}
+      <div className="mt-8 grid gap-4 sm:grid-cols-2 items-stretch auto-rows-fr">
         {content.items.map((it, i) => {
           const avatar = resolveMedia(it.avatar, locale, market);
           return (
@@ -1123,11 +1126,15 @@ function Testimonials({
               <p className="flex-1 text-ink-700">“{it.quote}”</p>
               <footer className="mt-3 flex items-center gap-3 text-sm text-ink-500">
                 {avatar ? (
+                  // 反馈 #14b: 头像 default object-position center 裁掉头顶。
+                  // 头像照片普遍是上中部位置（眼睛 + 微笑）；改 25% Y 让
+                  // 圆形 mask 偏上方裁切，头顶不被切。
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={avatar.url}
                     alt={avatar.alt ?? it.author}
                     className="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-ink-100"
+                    style={{ objectPosition: '50% 25%' }}
                   />
                 ) : (
                   <span
