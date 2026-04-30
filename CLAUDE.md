@@ -529,3 +529,66 @@ Step 6/8: 这是 自动保存指示器
 - [ ] 选 driver.js：通过本节"三个条件全部满足"的硬门槛——满足不了改回 IntroCard
 - [ ] 字段级解释 → 加 HelpTip + 在 `field-tooltips.ts` 写一句 `short` + 例子
 - [ ] 重看入口：本页有 IntroCard 时，要确保 **🎯 引导** 按钮在工具栏或顶部可见（dashboard / editor 已经接好；新页面参考它们的位置）
+
+### 7.3 Commit 行为规范（> 50 行 diff 必过一遍）
+
+**为什么有这条规则**：2026-04 大批量铺 UX 改进时，复盘发现自己反复触三种坑：（1）顺手改无关代码，把"用户的 ask"和"我的洁癖"混进同一 commit；（2）默认走 over-engineering（最小可行版可以解决，做成了"做满"）；（3）`tsc` 通过 ≠ 用户路径正确，picker 渲染空白这种 bug `tsc` 拦不住。本节是把这三条做成 commit-level checklist，跟 §7.1 的 CRUD 检查单同款，强约束力。
+
+适用范围：> 50 行 diff 或 > 2 个文件改动的 commit。本仓库是直接 push main 的工作流，没有 PR 评审环节，所以这套自检的责任在写 commit 的人（含 AI 协作者）自己身上。
+
+**Surgical（每行 diff 都能追溯到用户的 ask）**
+- [ ] 这次 diff 每一行都能直接对到用户原话或显式 follow-up？
+- [ ] 有"顺手改"的部分吗（重命名变量、统一 className、修注释）？
+       → 有 → 拆出去做单独 commit，不和主改动混
+- [ ] 改了 X 文件，是因为 X 真的需要改，还是因为"既然在这里就一起做了"？
+
+**真实例子（违反 + 正例）**：
+- ❌ commit `040dc42`：i18n 字段标签换成 `t()` 同时把 `<div className="label">` 改成 `inline-flex items-center`——后者跟 i18n 无关，应单独 commit
+- ❌ commit `c399aa2`：用户问"对齐"，顺手把内联 alt 输入框删了——越权决策，先问再做
+- ✅ commit `43d1432`：CTA 工具栏重排只动 1 个文件 24 行，没顺手优化
+
+**Minimum-viable**
+- [ ] 写一句"最小可行版是什么"——记在 PR 描述或 commit message 里
+- [ ] 选了的版本是不是最小可行版？不是的话 → 上一档（更小）能 ship 吗？
+- [ ] 加的抽象有具体使用方吗？只有一处用 → 用 inline 代替抽象
+
+**真实例子**：
+- ❌ `c9258e3`（IntroCard 系统）：自定义事件 + 全局 listener。最小可行版 = React Context provider + 计数器。多了 50% 代码
+- ❌ `60af114`（A↔B 镜像）：新增 `body.mirror` 字段做服务端原子双 cell 写。最小可行版 = 客户端发两次 PATCH。多了 80%
+- ❌ `f769cc5`（LogoEntry schema）：一次性引入 MediaRef + showIn + label + id 四个特性。最小可行版 = 先加 showIn，等真有视频需求再加 MediaRef
+
+**测试覆盖（tsc 是必要不充分）**
+- [ ] 改动包含**用户能看到的新交互**？（新按钮 / 新 modal / 新页面 / 渲染逻辑变化）
+       → 是 → 必须有 Playwright e2e 或截图测试覆盖一条 happy path
+       → 否 → 单元测覆盖纯函数即可
+- [ ] `tsc --noEmit` 通过？
+- [ ] **`/api/health` 验证生产 build 成功**（`deployedAt` == 最新 commit short hash）
+       注：本地 `npm run build` 因 next/font 拉 Google Fonts 在限网环境会假阳性失败，**不要把本地 build pass 当成生产 OK 的证据**。Vercel 实际部署 + `/api/health` 才是真。
+
+**真实例子**：
+- ❌ `f769cc5` 后接连出三条 bug（feishu URL 不渲染 / 私链无反馈 / 点击产生空行）—— 全是 `tsc` 拦不住的渲染层问题，没 e2e 就完全靠用户截图反馈
+- ✅ `6941954`（diagnostics）：纯函数 11 条单元测覆盖每条规则
+- ✅ `60af114`（variant-sync）：8 条单元测，filter 黑名单/白名单都覆盖
+
+**Schema 改动**
+- [ ] 改了 KV blob 形态？
+       → 是 → 必须写 coercion 函数 + 至少一条迁移 unit test（旧 shape → 新 shape，幂等）
+       → 老数据不能在新代码下 crash
+- [ ] coercion 写在 storage 层还是 lib 纯函数层？
+       → 必须能脱离 KV 单独测，所以写在 lib 层（参 [`asset-shape.ts`](src/lib/asset-shape.ts)）
+
+**真实例子**：
+- ✅ `f769cc5`：`coerceAssetsShape` 拆到 `asset-shape.ts`，15 条单元测覆盖 string[] / 半迁移 / 完整 / 垃圾数据 / 幂等
+- ❌ 反例（不在本仓库）：直接在 `readAssets()` 里 inline 转换 → 测试要起 KV，CI 跑不动
+
+**通用兜底**
+- [ ] commit message 写明"用户原话 / 改了什么 / 最小可行版"三段（HEREDOC 多行体）
+- [ ] 不要在反思 / 复盘性质的对话中"顺手"改代码——反思只能让下次的判断变好，不能改已 ship 的工作产物（违反 Surgical）
+
+**这条规则 working 的判据**：
+未来 5 个超 50 行 commit 看回头：
+- 0 个 commit message 出现 "顺手 / 同时 / 一并" 这种词
+- 0 次出现 "tsc 通过 → push → 用户截图发现渲染 bug" 这条链
+- 每个 schema 改动都有对应的 `*-shape.spec.ts` 单元测
+
+如果出现，回到本节重读，下次 commit 重新过 checklist。
