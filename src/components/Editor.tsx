@@ -655,6 +655,29 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
     touch();
   };
 
+  // 反馈 #2："同一个模块无法复制。如我想复制出来一个模块用左右交替形式
+  // 介绍功能点"。复制策略：紧跟原模块插一份副本，content 深拷贝，id
+  // 重新生成。新模块自动选中，便于立即编辑。
+  // 注意：原本"每种 type 只能有 1 个"的隐含约束（unusedTypes 计算和
+  // addModule 的 + 按钮过滤）依然存在 — 复制不绕过这条，但同一 type
+  // 多实例确实是合理需求。如果未来要彻底放开重复，需要同步动 PageRenderer
+  // 和 render-html 的 module 渲染按 id 而非 type 索引。
+  const duplicate = (id: string) => {
+    setProject((p) => {
+      const idx = p.modules.findIndex((m) => m.id === id);
+      if (idx < 0) return p;
+      const original = p.modules[idx];
+      // Deep clone via JSON to break ref identity for media / items / etc.
+      const clonedContent = JSON.parse(JSON.stringify(original.content));
+      const newId = `${original.type}-${Math.random().toString(36).slice(2, 10)}`;
+      const copy = { ...original, id: newId, content: clonedContent };
+      const next = [...p.modules];
+      next.splice(idx + 1, 0, copy);
+      return { ...p, modules: next };
+    });
+    touch();
+  };
+
   const addModule = async (type: ModuleType) => {
     const seed = await fetch('/api/seed-module', {
       method: 'POST',
@@ -1428,6 +1451,15 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
                   className="opacity-50 hover:opacity-100 text-ink-500 hover:text-ink-900"
                 >
                   ↓
+                </button>
+                {/* 反馈 #2：复制按钮。hover 才显，跟 × 同样的 reveal 节奏，
+                    避免常驻分散视线（毕竟真正常用的是 ↑↓ 调位） */}
+                <button
+                  title="复制此模块"
+                  onClick={() => duplicate(m.id)}
+                  className="opacity-0 group-hover:opacity-100 text-ink-500 hover:text-brand-600"
+                >
+                  ⎘
                 </button>
                 <button
                   title={t('editor.deleteModule')}
