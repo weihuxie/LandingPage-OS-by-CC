@@ -279,22 +279,27 @@ function FieldRow({
       // Renderer placeholder only — send-code button is disabled until
       // the SMS provider lands (S2). Tooltip explains the gap so QA
       // doesn't file it as a broken button.
+      // 反馈 #6 (2026-04): 用户报"发不了验证码" — 之前的 disabled 视觉
+      // (border-ink-100 bg-ink-100/40 text-ink-400) 不够明显，看上去
+      // 像普通按钮。加 cursor-not-allowed + opacity-60 + 🔒 图标让"残
+      // 疾"一眼可见。同时 input 也给"敬请期待"提示让用户不必费心填。
       return (
         <div className="flex gap-2">
           <input
-            className="input flex-1"
-            placeholder={placeholder}
+            className="input flex-1 cursor-not-allowed bg-ink-50"
+            placeholder={`${placeholder}（功能上线中）`}
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            required={required}
+            disabled
           />
           <button
             type="button"
             disabled
-            title="S2 上线后可用"
-            className="shrink-0 rounded-lg border border-ink-100 bg-ink-100/40 px-3 py-2 text-xs text-ink-400"
+            title="短信验证码功能 S2 上线后启用，当前不影响你提交表单"
+            aria-label="发送验证码 (S2 上线后启用)"
+            className="shrink-0 cursor-not-allowed rounded-lg border border-ink-100 bg-ink-100/40 px-3 py-2 text-xs text-ink-400 opacity-60"
           >
-            {L.sendSms}
+            🔒 {L.sendSms}
           </button>
         </div>
       );
