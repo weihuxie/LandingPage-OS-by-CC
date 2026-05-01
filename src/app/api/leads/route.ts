@@ -8,6 +8,7 @@ import {
   saveLandingPage,
 } from '@/lib/storage';
 import { requireUserApi } from '@/lib/server-auth';
+import { isHoneypotTriggered } from '@/lib/lead-spam';
 import type { Lead, PageLocale, NarrativeVariant } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -29,6 +30,11 @@ const PHONE_RE = /^\+?[\d\s\-()]{7,20}$/;
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
+  // Honeypot: a hidden form field bots auto-fill. Drop silently with
+  // 200 so the bot doesn't learn the field is monitored. See lead-spam.ts.
+  if (isHoneypotTriggered(body)) {
+    return NextResponse.json({ ok: true });
+  }
   const { slug, name, email, company, phone, message, locale, variant } = body;
   if (!slug) return NextResponse.json({ error: 'slug required' }, { status: 400 });
   const page = await getLandingPageBySlug(slug);

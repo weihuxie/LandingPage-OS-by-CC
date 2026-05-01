@@ -28,6 +28,11 @@ export default function LeadFormClient({
   const [consent, setConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  // Honeypot — invisible to real users (positioned off-screen + aria-hidden
+  // + tabindex=-1), but bots that auto-fill every input in the DOM will
+  // populate it. Any non-empty value is dropped server-side. See
+  // src/lib/lead-spam.ts.
+  const [honeypot, setHoneypot] = useState('');
   // Inline validation errors. MVP silently disabled the submit button
   // whenever `!consent`, so users who skipped the checkbox saw a grayed
   // button with no explanation and reported "点了没反应" (Feishu #9).
@@ -122,7 +127,7 @@ export default function LeadFormClient({
     await fetch('/api/leads', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ slug, locale, variant, ...form }),
+      body: JSON.stringify({ slug, locale, variant, company_url: honeypot, ...form }),
     });
     fetch('/api/events', {
       method: 'POST',
@@ -149,6 +154,26 @@ export default function LeadFormClient({
           </div>
         ) : (
           <form className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2" onSubmit={onSubmit}>
+            {/* Honeypot — see comment on `honeypot` state above. Hidden
+                from sighted users (off-screen), screen readers (aria-hidden),
+                and keyboard users (tabIndex=-1). */}
+            <input
+              type="text"
+              name="company_url"
+              tabIndex={-1}
+              autoComplete="off"
+              aria-hidden="true"
+              value={honeypot}
+              onChange={(e) => setHoneypot(e.target.value)}
+              style={{
+                position: 'absolute',
+                left: '-9999px',
+                width: '1px',
+                height: '1px',
+                opacity: 0,
+                pointerEvents: 'none',
+              }}
+            />
             {schema.map((spec) => (
               <FieldRow
                 key={spec.key}
