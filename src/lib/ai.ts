@@ -586,8 +586,8 @@ export function generateVariants(
     tintHeroForVariant(b, 'B', inputs);
     applyStrategyToModules(a, strategy);
     applyStrategyToModules(b, strategy);
-    applyContextToModules(a, context);
-    applyContextToModules(b, context);
+    applyContextToModules(a, context, inputs.locale);
+    applyContextToModules(b, context, inputs.locale);
     return { A: a, B: b };
   }
 
@@ -595,13 +595,13 @@ export function generateVariants(
   const a = reorder(baseA, ['hero', 'socialProof', 'pain', 'solution', 'benefits', 'useCase', 'testimonial', 'faq', 'cta', 'form']);
   tintHeroForVariant(a, 'A', inputs);
   applyStrategyToModules(a, strategy);
-  applyContextToModules(a, context);
+  applyContextToModules(a, context, inputs.locale);
 
   // Variant B — benefit-first (skip pain, lead with social proof + benefits)
   const b = reorder(baseB, ['hero', 'socialProof', 'benefits', 'useCase', 'solution', 'testimonial', 'faq', 'cta', 'form']);
   tintHeroForVariant(b, 'B', inputs);
   applyStrategyToModules(b, strategy);
-  applyContextToModules(b, context);
+  applyContextToModules(b, context, inputs.locale);
 
   return { A: a, B: b };
 }
@@ -685,7 +685,7 @@ function buildEnterpriseB2BStack(base: PageModule[], inputs: ProductInputs): Pag
  * real named customers, replace placeholder metrics with real numbers, replace
  * hero bullets with feature phrases extracted from the user's materials.
  */
-function applyContextToModules(modules: PageModule[], context?: ExtractedContext) {
+function applyContextToModules(modules: PageModule[], context?: ExtractedContext, locale: PageLocale = 'zh-CN') {
   if (!context) return;
 
   // Social proof: a page may have multiple socialProof modules with
@@ -704,7 +704,7 @@ function applyContextToModules(modules: PageModule[], context?: ExtractedContext
   }
   if (context.metrics.length >= 2) {
     const stats = context.metrics.slice(0, 3).map((m) => ({
-      label: inferLabelFromMetric(m),
+      label: inferLabelFromMetric(m, locale),
       value: m,
     }));
     for (const sp of socialProofs) {
@@ -737,13 +737,38 @@ function applyContextToModules(modules: PageModule[], context?: ExtractedContext
   }
 }
 
-function inferLabelFromMetric(metric: string): string {
-  if (/ROI|倍/i.test(metric)) return 'ROI';
-  if (/hour|hr|时|小时|時間/i.test(metric)) return '每周节省';
-  if (/%/i.test(metric)) return '提升';
-  if (/team|customers|用户|团队/i.test(metric)) return '客户';
-  if (/\$|¥/i.test(metric)) return '节省';
-  return '';
+/**
+ * Heuristic stats-card label from a metric string (Audit Wave 1 #G).
+ *
+ * Old version: hardcoded Chinese labels ('每周节省 / 提升 / 客户 / 节省')
+ * sprayed into all locales, plus a wrong `$|¥ → 节省` mapping (saved $$$,
+ * but `$2.4M ARR` is not "saved" — it's revenue/contract value). Empty
+ * default also rendered as a label-less stats card that looks broken.
+ *
+ * Current: per-locale label table for the same 5 categories. The dollar
+ * pattern now maps to a neutral "result/业绩" label instead of "saved",
+ * and the default falls back to a neutral "data/数据" label rather than ''.
+ *
+ * Still heuristic — Gemini-extracted metrics rarely fit cleanly. The
+ * label is auxiliary; the metric value carries the semantic. Future
+ * upgrade path is per-locale LLM labeling, but that's gated on the
+ * golden-eval infrastructure (Wave 4).
+ */
+const METRIC_LABELS: Record<PageLocale, { roi: string; time: string; growth: string; customers: string; result: string; generic: string }> = {
+  'zh-CN': { roi: 'ROI', time: '节省时间', growth: '提升', customers: '客户', result: '业绩', generic: '数据' },
+  'zh-TW': { roi: 'ROI', time: '節省時間', growth: '提升', customers: '客戶', result: '業績', generic: '數據' },
+  ja:      { roi: 'ROI', time: '削減時間', growth: '向上率', customers: '顧客', result: '業績', generic: 'データ' },
+  en:      { roi: 'ROI', time: 'Time saved', growth: 'Growth', customers: 'Customers', result: 'Result', generic: 'Stat' },
+};
+
+function inferLabelFromMetric(metric: string, locale: PageLocale): string {
+  const t = METRIC_LABELS[locale];
+  if (/ROI|倍/i.test(metric)) return t.roi;
+  if (/hour|hr|时|小时|時間/i.test(metric)) return t.time;
+  if (/%/i.test(metric)) return t.growth;
+  if (/team|customers|用户|团队/i.test(metric)) return t.customers;
+  if (/\$|¥|￥/i.test(metric)) return t.result;
+  return t.generic;
 }
 
 /**
