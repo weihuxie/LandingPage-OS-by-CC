@@ -59,6 +59,11 @@ export async function generateStrategyViaProvider(
   context?: ExtractedContext,
   onTrace?: TraceCallback,
 ): Promise<StrategySummary> {
+  // Audit Wave 2 #D: capture actual model used by the adapter (may differ
+  // from step.model when DeepSeek runtime-swaps to RUNTIME_FALLBACK_MODEL
+  // on tool_choice rejection).
+  let actualModelUsed: string | undefined;
+  const captureModel = (m: string) => { actualModelUsed = m; };
   const outcome = await executeScenario(
     'strategy',
     inputs.locale,
@@ -67,7 +72,7 @@ export async function generateStrategyViaProvider(
         return generateStrategyViaClaude(inputs, context, step.model);
       }
       if (step.provider === 'deepseek') {
-        return generateStrategyViaDeepseek(inputs, context, step.model);
+        return generateStrategyViaDeepseek(inputs, context, step.model, captureModel);
       }
       throw new LLMCallError(
         step.provider === 'gemini' ? 'gemini' : 'gpt',
@@ -88,7 +93,10 @@ export async function generateStrategyViaProvider(
       primary: primary.provider,
       primaryModel: primary.model,
       used: outcome.usedStep.provider,
-      usedModel: outcome.usedStep.model,
+      // Prefer the actual model reported by the adapter; fall back to the
+      // configured step.model if the adapter didn't report (e.g. Claude
+      // — which doesn't runtime-swap models).
+      usedModel: actualModelUsed ?? outcome.usedStep.model,
       hops: outcome.hops,
     });
   }
@@ -107,6 +115,9 @@ export async function regenerateModuleViaProvider(
   variant?: NarrativeVariant,
   onTrace?: TraceCallback,
 ): Promise<Partial<ClaudeModuleContent> | null> {
+  // Audit Wave 2 #D: see comment in generateStrategyViaProvider above.
+  let actualModelUsed: string | undefined;
+  const captureModel = (m: string) => { actualModelUsed = m; };
   const outcome = await executeScenario(
     'copy',
     locale,
@@ -115,7 +126,7 @@ export async function regenerateModuleViaProvider(
         return regenerateModuleViaClaude(type, inputs, strategy, tone, locale, variant, step.model);
       }
       if (step.provider === 'deepseek') {
-        return regenerateModuleViaDeepseek(type, inputs, strategy, tone, locale, variant, step.model);
+        return regenerateModuleViaDeepseek(type, inputs, strategy, tone, locale, variant, step.model, captureModel);
       }
       throw new LLMCallError(
         step.provider === 'gemini' ? 'gemini' : 'gpt',
@@ -135,7 +146,7 @@ export async function regenerateModuleViaProvider(
       primary: primary.provider,
       primaryModel: primary.model,
       used: outcome.usedStep.provider,
-      usedModel: outcome.usedStep.model,
+      usedModel: actualModelUsed ?? outcome.usedStep.model,
       hops: outcome.hops,
     });
   }

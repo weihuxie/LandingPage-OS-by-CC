@@ -227,6 +227,11 @@ export async function generateStrategyViaDeepseek(
   inputs: ProductInputs,
   context?: ExtractedContext,
   modelOverride?: string,
+  // Audit Wave 2 #D: optional callback so callers (provider layer) can
+  // surface the *actual* model used after any silent runtime swaps
+  // (V4 → V3 fallback on tool_choice rejection, etc.). Without this, the
+  // trace shown to admins was the REQUESTED model, masking swaps.
+  onModelUsed?: (model: string) => void,
 ): Promise<StrategySummary> {
   if (!hasDeepseekKey()) {
     throw new LLMRequiredError('strategy', 'DEEPSEEK_API_KEY');
@@ -406,7 +411,12 @@ Verbatim rules:
   let lastErr: unknown = undefined;
   for (let tryN = 1; tryN <= MAX_ATTEMPTS; tryN++) {
     try {
-      return await attempt();
+      const result = await attempt();
+      // Audit Wave 2 #D: report the actually-used model. `model` may have
+      // been swapped to RUNTIME_FALLBACK_MODEL inside attempt() if the
+      // configured model rejected tool_choice at runtime.
+      onModelUsed?.(model);
+      return result;
     } catch (e: any) {
       lastErr = e;
       if (e instanceof LLMCallError || e instanceof LLMRequiredError) break;
@@ -470,6 +480,8 @@ export async function regenerateModuleViaDeepseek(
   locale: PageLocale,
   variant?: NarrativeVariant,
   modelOverride?: string,
+  // Audit Wave 2 #D: see comment on generateStrategyViaDeepseek.
+  onModelUsed?: (model: string) => void,
 ): Promise<Partial<ClaudeModuleContent> | null> {
   if (!hasDeepseekKey()) {
     throw new LLMRequiredError('module-regen', 'DEEPSEEK_API_KEY');
@@ -625,7 +637,11 @@ export async function regenerateModuleViaDeepseek(
   let lastErr: unknown = undefined;
   for (let tryN = 1; tryN <= MAX_ATTEMPTS; tryN++) {
     try {
-      return await attempt();
+      const result = await attempt();
+      // Audit Wave 2 #D: report the actually-used model (may have been
+      // swapped to RUNTIME_FALLBACK_MODEL inside attempt()).
+      onModelUsed?.(model);
+      return result;
     } catch (e: any) {
       lastErr = e;
       if (e instanceof LLMCallError || e instanceof LLMRequiredError) break;
