@@ -93,9 +93,15 @@ export default function JudgePanel({
     setError(null);
     setReport(null);
     setCardStates({});
+    // Bug fix: without an AbortSignal, a hung backend leaves the user
+    // staring at "正在评估…" forever. 70s gives the backend's 60s
+    // maxDuration room + 10s network margin; if we hit our own timeout
+    // it surfaces a useful error.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 70_000);
     try {
       const url = `/api/pages/${pageId}/evaluate?locale=${encodeURIComponent(locale)}&variant=${variant}`;
-      const res = await fetch(url, { method: 'POST' });
+      const res = await fetch(url, { method: 'POST', signal: controller.signal });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(body?.message ?? body?.error ?? `评估失败 (${res.status})`);
@@ -103,8 +109,13 @@ export default function JudgePanel({
       }
       setReport(body.report as JudgeReport);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '评估失败 (网络错误)');
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        setError('评估超时 (>70s)。可能是 LLM 服务慢或页面内容过大，请稍后重试或简化页面。');
+      } else {
+        setError(e instanceof Error ? e.message : '评估失败 (网络错误)');
+      }
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   }, [pageId, locale, variant]);

@@ -149,29 +149,54 @@ function hashContent(modules: JudgeInput['pageModules']): string {
 // extracts the tool_use input. Returns the raw suggestions array (NOT
 // validated yet — the orchestrator runs validateJudgeSuggestions).
 
+// Bug fix: SDK default timeout is 10 min — far longer than the route's
+// maxDuration=60s. Without an explicit AbortSignal the user just sees
+// an infinite spinner. 50s leaves 10s margin under maxDuration so we
+// throw a useful error before Vercel kills the function.
+const JUDGE_SDK_TIMEOUT_MS = 50_000;
+
+// Lowered from 4096 to 2048: judge output is ≤8 suggestions × ~150
+// tokens each + rulesChecked ≈ 1500 tokens. 4096 was over-allocated
+// and slowed completion — Claude tries to fill the budget.
+const JUDGE_MAX_TOKENS = 2048;
+
 async function callClaudeJudge(
   systemPrompt: string,
   userPrompt: string,
   model: string,
 ): Promise<{ suggestions: unknown[]; rulesChecked: unknown[] }> {
   const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY']! });
-  const response = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userPrompt }],
-    tools: [
+  const t0 = Date.now();
+  console.warn(`[judge] claude call start (model=${model}, system=${systemPrompt.length}ch, user=${userPrompt.length}ch, max_tokens=${JUDGE_MAX_TOKENS})`);
+  let response;
+  try {
+    response = await client.messages.create(
       {
-        name: JUDGE_TOOL_NAME,
-        description: 'Emit independent-reader judgment of the landing page',
-        input_schema: JUDGE_TOOL_SCHEMA as Anthropic.Tool['input_schema'],
+        model,
+        max_tokens: JUDGE_MAX_TOKENS,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+        tools: [
+          {
+            name: JUDGE_TOOL_NAME,
+            description: 'Emit independent-reader judgment of the landing page',
+            input_schema: JUDGE_TOOL_SCHEMA as Anthropic.Tool['input_schema'],
+          },
+        ],
+        tool_choice: { type: 'tool', name: JUDGE_TOOL_NAME },
       },
-    ],
-    tool_choice: { type: 'tool', name: JUDGE_TOOL_NAME },
-  });
+      { timeout: JUDGE_SDK_TIMEOUT_MS },
+    );
+  } catch (e) {
+    const dt = Date.now() - t0;
+    console.error(`[judge] claude FAILED after ${dt}ms:`, e instanceof Error ? e.message : e);
+    throw e;
+  }
+  const dt = Date.now() - t0;
+  console.warn(`[judge] claude call done in ${dt}ms (stop_reason=${response.stop_reason})`);
   const toolUse = response.content.find((b) => b.type === 'tool_use');
   if (!toolUse || toolUse.type !== 'tool_use') {
-    throw new LLMCallError('claude', 'module-regen', undefined, 'Judge: Claude returned no tool_use block');
+    throw new LLMCallError('claude', 'module-regen', undefined, `Judge: Claude returned no tool_use block (stop=${response.stop_reason}, content blocks=${response.content.map((b) => b.type).join(',')})`);
   }
   const input = toolUse.input as { suggestions?: unknown[]; rulesChecked?: unknown[] };
   return {
@@ -188,30 +213,42 @@ async function callDeepseekJudge(
   const client = new OpenAI({
     apiKey: process.env['DEEPSEEK_API_KEY']!,
     baseURL: 'https://api.deepseek.com',
+    timeout: JUDGE_SDK_TIMEOUT_MS,
   });
-  const resp = await client.chat.completions.create({
-    model,
-    max_tokens: 4096,
-    temperature: 0.3,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    tools: [
-      {
-        type: 'function',
-        function: {
-          name: JUDGE_TOOL_NAME,
-          description: 'Emit independent-reader judgment of the landing page',
-          parameters: JUDGE_TOOL_SCHEMA,
+  const t0 = Date.now();
+  console.warn(`[judge] deepseek call start (model=${model}, system=${systemPrompt.length}ch, user=${userPrompt.length}ch, max_tokens=${JUDGE_MAX_TOKENS})`);
+  let resp;
+  try {
+    resp = await client.chat.completions.create({
+      model,
+      max_tokens: JUDGE_MAX_TOKENS,
+      temperature: 0.3,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: JUDGE_TOOL_NAME,
+            description: 'Emit independent-reader judgment of the landing page',
+            parameters: JUDGE_TOOL_SCHEMA,
+          },
         },
-      },
-    ],
-    tool_choice: { type: 'function', function: { name: JUDGE_TOOL_NAME } },
-  });
+      ],
+      tool_choice: { type: 'function', function: { name: JUDGE_TOOL_NAME } },
+    });
+  } catch (e) {
+    const dt = Date.now() - t0;
+    console.error(`[judge] deepseek FAILED after ${dt}ms:`, e instanceof Error ? e.message : e);
+    throw e;
+  }
+  const dt = Date.now() - t0;
+  console.warn(`[judge] deepseek call done in ${dt}ms (finish=${resp.choices[0]?.finish_reason})`);
   const toolCall = resp.choices[0]?.message?.tool_calls?.[0];
   if (!toolCall || toolCall.type !== 'function') {
-    throw new LLMCallError('deepseek', 'module-regen', undefined, 'Judge: DeepSeek returned no tool_call');
+    throw new LLMCallError('deepseek', 'module-regen', undefined, `Judge: DeepSeek returned no tool_call (finish=${resp.choices[0]?.finish_reason})`);
   }
   const parsed = JSON.parse(toolCall.function.arguments) as { suggestions?: unknown[]; rulesChecked?: unknown[] };
   return {
@@ -229,7 +266,11 @@ async function callDeepseekJudge(
  * Caller (the route) maps these to 503 / 502 respectively.
  */
 export async function evaluatePageWithJudge(input: JudgeInput): Promise<JudgeReport> {
+  const tStart = Date.now();
   const choice = await pickJudgeProvider(input.generatorProvider, input.locale);
+  console.warn(
+    `[judge] evaluate start (page=${input.pageId}, locale=${input.locale}, modules=${input.pageModules.length}, generator=${input.generatorProvider ?? 'unknown'}, judge=${choice.provider}/${choice.model}, sameFamily=${choice.sameFamilyWarning})`,
+  );
 
   const systemPrompt = buildJudgeSystemPrompt(input.locale);
   const userPrompt = buildJudgeUserPrompt(input.pageModules, input.inputs, input.context);
@@ -285,6 +326,11 @@ export async function evaluatePageWithJudge(input: JudgeInput): Promise<JudgeRep
     provider: generatorProvider,
     model: copyPrimary?.model ?? modelForProvider(cfg, generatorProvider),
   };
+
+  const totalMs = Date.now() - tStart;
+  console.warn(
+    `[judge] evaluate done in ${totalMs}ms (kept=${result.kept.length}, dropped=${result.dropped.length}, rulesChecked=${rulesChecked.length})`,
+  );
 
   return {
     contentHash: hashContent(input.pageModules),
