@@ -26,7 +26,15 @@ export async function GET(req: NextRequest) {
   }
   const tenants = await listTenantsForUser(userId);
   return NextResponse.json({
-    user: { id: user.id, email: user.email, displayName: user.displayName },
+    // displayLocale exposed so the header badge can highlight the active
+    // language in its switcher (2026-05). May be undefined for legacy
+    // users — client falls back to the URL locale.
+    user: {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      displayLocale: user.displayLocale,
+    },
     tenants: tenants.map((t) => ({ id: t.id, name: t.name, ownerId: t.ownerId })),
   });
 }

@@ -19,9 +19,35 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+type AdminLocale = 'zh-CN' | 'ja' | 'en';
+
 interface SessionView {
-  user: { id: string; email: string; displayName?: string } | null;
+  user: {
+    id: string;
+    email: string;
+    displayName?: string;
+    displayLocale?: AdminLocale;
+  } | null;
   tenants: Array<{ id: string; name: string; ownerId: string }>;
+}
+
+const LOCALE_LABELS: Record<AdminLocale, string> = {
+  'zh-CN': '简体中文',
+  ja: '日本語',
+  en: 'English',
+};
+
+/**
+ * Strip the leading /<locale>/ prefix from a path so we can re-prefix
+ * with a different locale. If the path doesn't start with a known admin
+ * locale (e.g. /app, /login), returns it unchanged — the redirect will
+ * still work because middleware passes those through unlocalized.
+ */
+function pathWithoutLocale(pathname: string, currentLocale: string): string {
+  const prefix = `/${currentLocale}`;
+  if (pathname === prefix) return '/';
+  if (pathname.startsWith(`${prefix}/`)) return pathname.slice(prefix.length);
+  return pathname;
 }
 
 export default function HeaderAuthBadge({ locale }: { locale: string }) {
@@ -76,6 +102,39 @@ export default function HeaderAuthBadge({ locale }: { locale: string }) {
     );
   }
 
+  // Active locale for the switcher: prefer the user's persisted choice,
+  // fall back to the current URL locale (so the indicator matches what
+  // the user is actually seeing pre-save).
+  const activeLocale: AdminLocale =
+    (session.user.displayLocale as AdminLocale | undefined) ??
+    (locale as AdminLocale);
+
+  const onLocaleChange = async (next: AdminLocale): Promise<void> => {
+    if (next === activeLocale) {
+      setOpen(false);
+      return;
+    }
+    // Optimistic UX: navigate immediately; the PATCH happens in
+    // parallel. If PATCH fails the user still sees the new locale
+    // because middleware reads the cookie set by /api/auth/profile.
+    // Worst case the cookie wasn't set → next cold load reverts.
+    try {
+      await fetch('/api/auth/profile', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ displayLocale: next }),
+      });
+    } catch {
+      // Network failure — proceed with navigation anyway. The user
+      // ends up on the new locale URL even without the cookie; if
+      // they reload from a no-prefix path later they may revert.
+    }
+    const cur = window.location.pathname;
+    const stripped = pathWithoutLocale(cur, locale);
+    const target = stripped === '/' ? `/${next}` : `/${next}${stripped}`;
+    window.location.assign(target + window.location.search + window.location.hash);
+  };
+
   return (
     <div ref={wrapRef} className="relative">
       <button
@@ -92,10 +151,36 @@ export default function HeaderAuthBadge({ locale }: { locale: string }) {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-md border border-ink-200 bg-white py-1 shadow-lg"
+          className="absolute right-0 top-full z-50 mt-1 w-60 overflow-hidden rounded-md border border-ink-200 bg-white py-1 shadow-lg"
         >
           <div className="px-3 py-2 text-[11px] text-ink-500">
             登录身份：{session.user.email}
+          </div>
+          <div className="border-t border-ink-100" />
+          {/* Admin UI language switcher (2026-05). Disambiguated from
+              page locale in the section header — users already think
+              about page-level locale tabs in the editor, this is a
+              separate concept. */}
+          <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-ink-400">
+            管理界面语言
+          </div>
+          {(['zh-CN', 'ja', 'en'] as const).map((l) => (
+            <button
+              key={l}
+              type="button"
+              role="menuitemradio"
+              aria-checked={activeLocale === l}
+              onClick={() => onLocaleChange(l)}
+              className={`flex w-full items-center justify-between px-3 py-1.5 text-xs hover:bg-ink-50 ${
+                activeLocale === l ? 'text-ink-900 font-medium' : 'text-ink-700'
+              }`}
+            >
+              <span>{LOCALE_LABELS[l]}</span>
+              {activeLocale === l && <span aria-hidden className="text-emerald-600">✓</span>}
+            </button>
+          ))}
+          <div className="px-3 pb-2 pt-0.5 text-[10px] text-ink-400">
+            落地页 locale 独立 · 不受影响
           </div>
           <div className="border-t border-ink-100" />
           <a href="/app" className="block px-3 py-1.5 text-xs text-ink-700 hover:bg-ink-50">
