@@ -22,6 +22,8 @@ import ModuleEditor from './ModuleEditor';
 import LocalizationPreviewModal from './LocalizationPreviewModal';
 import DiagnosticsBanner from './DiagnosticsBanner';
 import { findIssues, type Issue } from '@/lib/page-diagnostics';
+import JudgePanel from './JudgePanel';
+import { applyFieldPath } from '@/lib/field-path';
 import { AIRewriteContext, type FieldSuggestion, type SuggestRequest } from './AIRewriteButton';
 import IntroCard, { restartAllIntros } from './IntroCard';
 import {
@@ -245,6 +247,9 @@ const ALL_TYPES: ModuleType[] = [
 export default function Editor({ locale, initialProject, initialLeads, initialPage }: Props) {
   const t = useTranslations();
   const [project, setProject] = useState<Project>(initialProject);
+  // Phase 3 of judge agent: drawer open state. Drawer self-fetches
+  // /api/pages/[id]/evaluate when opened (see JudgePanel.useEffect).
+  const [judgeOpen, setJudgeOpen] = useState(false);
   const [page, setPage] = useState<LandingPage | undefined>(initialPage);
   const [editingLocale, setEditingLocale] = useState<PageLocale>(
     (initialPage?.defaultLocale ?? initialProject.inputs.locale) as PageLocale,
@@ -1365,6 +1370,34 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
         />
       )}
       <DiagnosticsBanner issues={diagnosticsIssues} onAct={handleIssueAction} />
+      {/* Phase 3 of judge agent: independent-reader evaluation drawer.
+          Mounted at top so the fixed-position drawer (right side) overlays
+          the entire editor. Only renders when open=true. */}
+      {page && (
+        <JudgePanel
+          open={judgeOpen}
+          onClose={() => setJudgeOpen(false)}
+          pageId={page.id}
+          locale={editingLocale}
+          variant={(project.activeVariant ?? 'A') as 'A' | 'B'}
+          modules={project.modules}
+          onApply={(moduleId, fieldPath, value) => {
+            const target = project.modules.find((m) => m.id === moduleId);
+            if (!target) return false;
+            const newContent = applyFieldPath(
+              target.content as unknown as Record<string, unknown>,
+              fieldPath,
+              value,
+            );
+            if (!newContent) return false;
+            updateModule(moduleId, { content: newContent as unknown as PageModule['content'] });
+            // Also surface the targeted module in the editor so the user
+            // can see the change immediately + manually tweak / undo.
+            setSelectedModuleId(moduleId);
+            return true;
+          }}
+        />
+      )}
       {/* 编辑器自身的 IntroCard — 给"🎯 引导"按钮一个真正能"重新展示"
           的目标，否则点了在编辑器里毫无视觉反应（用户反馈 2026-04）。
           内容覆盖编辑器六个核心心智：模块列表 / locale tabs / A/B 方案
@@ -1712,6 +1745,19 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
             >
               🎯 引导
             </button>
+            {/* Phase 3 of judge agent: chip opens the independent-reader
+                evaluation drawer. Only available when we have the v2
+                LandingPage record (page) — judge route is page-scoped. */}
+            {page && (
+              <button
+                type="button"
+                onClick={() => setJudgeOpen(true)}
+                className="whitespace-nowrap flex-shrink-0 px-2 py-1.5 text-xs text-ink-500 underline-offset-2 hover:text-brand-600 hover:underline"
+                title="独立 LLM 模拟读者反应（不阻塞发布，仅供参考）"
+              >
+                📊 评估
+              </button>
+            )}
             <a
               className="btn btn-secondary whitespace-nowrap flex-shrink-0 px-3 py-1.5 text-xs"
               href={viewUrl}
