@@ -221,5 +221,10 @@
   },
   "langSwitch": {
     "label": "语言"
+  },
+  "feedback": {
+    "label": "反馈",
+    "title": "提交问题或建议",
+    "aria": "打开反馈表单"
   }
 }

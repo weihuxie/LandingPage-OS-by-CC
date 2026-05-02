@@ -6,6 +6,7 @@ import Link from 'next/link';
 import LocaleHtml from '@/components/LocaleHtml';
 import HeaderAuthBadge from '@/components/HeaderAuthBadge';
 import LLMStatusFlash from '@/components/LLMStatusFlash';
+import FeedbackButton from '@/components/FeedbackButton';
 
 export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
@@ -68,6 +69,13 @@ export default async function LocaleLayout({
       {/* Floating "which LLM answered" toast — fed by dispatchLLMTrace()
           calls in the editor / wizard fetch handlers. */}
       <LLMStatusFlash />
+      {/* Bottom-right feedback button (2026-05). Hits a Feishu form
+          with prefill query string carrying user.email / page URL /
+          deploy commit / submit time. See FeedbackButton.tsx for the
+          architecture rationale (form vs API direct write). */}
+      <FeedbackButton
+        deployedAt={process.env['VERCEL_GIT_COMMIT_SHA']?.slice(0, 7) ?? 'local'}
+      />
     </NextIntlClientProvider>
   );
 }

@@ -217,5 +217,10 @@
   },
   "langSwitch": {
     "label": "Language"
+  },
+  "feedback": {
+    "label": "Feedback",
+    "title": "Report an issue or suggestion",
+    "aria": "Open feedback form"
   }
 }
