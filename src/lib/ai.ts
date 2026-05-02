@@ -1192,7 +1192,23 @@ export async function regenerateModule(
   return regenerateModuleTemplated(module, inputs, tone);
 }
 
-/** Template-only regen, kept for tests and as fallback. */
+/**
+ * Template-only regen. Used for:
+ *   1. Test seeds (jest / playwright fixtures)
+ *   2. Type-routing fallback in regenerateModule() — when the module type
+ *      is OUTSIDE the Claude-handled set (form / testimonial / socialProof
+ *      / faq / useCase), regenerateModuleViaProvider returns null and we
+ *      synthesize a templated module. This is NOT a silent fallback for
+ *      LLM failures — actual LLM call errors propagate to the route
+ *      handler for 502/503. See regenerateModule's docstring above.
+ *   3. Explicit user opt-in via /api/strategy?mode=template (wizard
+ *      "use template strategy" path, surfaces a visible "模板策略" badge).
+ *
+ * Audit Wave 2 #N (2026-05): the old "as fallback" wording in this
+ * docstring was ambiguous enough that an audit pass flagged it as a
+ * potential silent-degradation hot path. Renamed/expanded the doc to
+ * make the three call paths explicit.
+ */
 export function regenerateModuleTemplated(
   module: PageModule,
   inputs: ProductInputs,
