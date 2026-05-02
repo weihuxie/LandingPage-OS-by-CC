@@ -868,8 +868,24 @@ export async function regenerateModuleViaClaude(
     } catch (e: any) {
       lastErr = e;
       // Our own LLMCallError from schema/parse failure — don't retry.
-      // Claude produced a response, it just didn't match our tool schema;
-      // retrying with the same prompt gets the same shape back.
+      //
+      // Audit Wave 3 #L (2026-05): considered adding "error-feedback retry"
+      // here (re-prompt with "your previous response was X, schema requires
+      // Y, please correct"). Decided NOT to implement because:
+      //   1. Anthropic's tool-use API server-side validates input against
+      //      the tool's input_schema before returning. A response that
+      //      reaches us as "wrong shape" is rare and usually means
+      //      truncation / stop-sequence at an odd offset — neither of
+      //      which a re-prompt with feedback would fix; the model would
+      //      mostly hit the same boundary.
+      //   2. The downstream template-fingerprint check (ai.ts hydrate) +
+      //      Wave 2 #A null-patch retry already give us a per-type
+      //      retry path that re-rolls the prompt. Adding a third retry
+      //      layer here just multiplies cost without measurable lift.
+      //   3. If empirical telemetry later shows schema mismatches happen
+      //      enough to matter, this is the right place to add it — but
+      //      do that ONLY when we have data, not preemptively.
+      // Tldr: same-prompt retry doesn't help; multi-retry is downstream.
       if (e instanceof LLMCallError || e instanceof LLMRequiredError) break;
       const status: number | undefined = e?.status;
       const isRetryable = !status /* network */ || RETRYABLE_STATUSES.has(status);
