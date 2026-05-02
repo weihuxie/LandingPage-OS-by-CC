@@ -1277,17 +1277,21 @@ export async function hydrateModulesViaClaude(
     }),
   ]);
 
+  // Audit Wave 2 #A: null patches USED to be silently kept as template +
+  // a console.warn — relying on findTemplateModules to catch them later.
+  // That's brittle: if the user's product inputs reshape the templated
+  // content so it no longer matches a fingerprint, the null-patch silent
+  // degradation ships unchecked. CLAUDE.md §2.1 explicitly forbids
+  // "silent template degradation". So we now track null patches as a
+  // first-class signal and feed them into the retry/throw pipeline below.
   const neutralPatchByType = new Map<ModuleType, Record<string, unknown>>();
+  const nullPatchNeutralTypes = new Set<ModuleType>();
   for (const [t, r] of neutralRewrites as Array<readonly [ModuleType, unknown]>) {
-    // r === null means the adapter doesn't handle this type. For NEUTRAL_TYPES
-    // (pain/benefits/solution/cta) Claude handles all 4, so null here would
-    // be a programming error (adapter + orchestrator out of sync). Log and
-    // skip the patch rather than crashing — downstream render still works
-    // with the templated content for that module.
     if (r && typeof r === 'object') {
       neutralPatchByType.set(t, r as Record<string, unknown>);
     } else {
-      console.warn(`[hydrate] Claude returned null patch for type=${t}; keeping template for that module.`);
+      console.warn(`[hydrate] Claude returned null patch for type=${t}; will retry once.`);
+      nullPatchNeutralTypes.add(t);
     }
   }
 
@@ -1295,10 +1299,16 @@ export async function hydrateModulesViaClaude(
     heroA && typeof heroA === 'object' ? (heroA as Record<string, unknown>) : null;
   let heroPatchB: Record<string, unknown> | null =
     heroB && typeof heroB === 'object' ? (heroB as Record<string, unknown>) : null;
-  if (!heroPatchA) console.warn(`[hydrate] Claude returned null patch for hero variant=A; keeping tinted template.`);
-  if (!heroPatchB) console.warn(`[hydrate] Claude returned null patch for hero variant=B; keeping tinted template.`);
+  const nullHeroA = !heroPatchA;
+  const nullHeroB = !heroPatchB;
+  if (nullHeroA) console.warn(`[hydrate] Claude returned null patch for hero variant=A; will retry once.`);
+  if (nullHeroB) console.warn(`[hydrate] Claude returned null patch for hero variant=B; will retry once.`);
 
-  if (!heroPatchA && !heroPatchB && neutralPatchByType.size === 0) return variants;
+  // Removed: `if (!heroPatchA && !heroPatchB && neutralPatchByType.size === 0) return variants;`
+  // That short-circuit was the silent fallback path — all 6 LLM calls
+  // returning null meant the page shipped pure template, no banner, no
+  // hydrationFailed flag. Now we always run validation/retry below; if
+  // every retry also fails, the throw at the end will set hydrationFailed.
 
   const applyForVariant = (
     mods: PageModule[],
@@ -1337,14 +1347,25 @@ export async function hydrateModulesViaClaude(
   // hydrationFailed=true and the editor banner lists the failing types.
   const templatesA = findTemplateModules(hydratedA, inputs.name);
   const templatesB = findTemplateModules(hydratedB, inputs.name);
-  if (templatesA.length > 0 || templatesB.length > 0) {
+  // Audit Wave 2 #A: union template-fingerprint types with null-patch types.
+  // A null patch means "the LLM call returned without a usable patch" — even
+  // if the fallback templated content doesn't match a known fingerprint, we
+  // still want a retry rather than silent ship.
+  const needsRetry =
+    templatesA.length > 0 ||
+    templatesB.length > 0 ||
+    nullHeroA ||
+    nullHeroB ||
+    nullPatchNeutralTypes.size > 0;
+  if (needsRetry) {
     const aTypes = new Set(templatesA.map((r) => r.type));
     const bTypes = new Set(templatesB.map((r) => r.type));
-    const retryHeroA = aTypes.has('hero');
-    const retryHeroB = bTypes.has('hero');
+    const retryHeroA = aTypes.has('hero') || nullHeroA;
+    const retryHeroB = bTypes.has('hero') || nullHeroB;
     const neutralRetryTypes = new Set<ModuleType>();
     for (const t of aTypes) if (NEUTRAL_TYPES.includes(t)) neutralRetryTypes.add(t);
     for (const t of bTypes) if (NEUTRAL_TYPES.includes(t)) neutralRetryTypes.add(t);
+    for (const t of nullPatchNeutralTypes) neutralRetryTypes.add(t);
 
     const retryLabels = [
       ...(retryHeroA ? ['hero(A)'] : []),
@@ -1397,27 +1418,40 @@ export async function hydrateModulesViaClaude(
 
     const stillA = findTemplateModules(hydratedA, inputs.name);
     const stillB = findTemplateModules(hydratedB, inputs.name);
-    if (stillA.length > 0 || stillB.length > 0) {
-      // Still template after per-type retry. Product inputs are too thin
-      // to ground the LLM, OR the strategy summary lacks anchors. Throw
-      // with the exact list so the banner can tell the user WHICH
-      // modules need attention. `provider` reflects which backend is
-      // actually in use for this locale — messaging shouldn't say
-      // "Claude" when routing sent the calls to DeepSeek. v2: read from
-      // the chain[0] of the 'copy' scenario.
+    // Audit Wave 2 #A: also detect patches still null after retry.
+    // (template-fingerprint may not match if user inputs reshape the
+    // templated content — null-after-retry is its own failure signal.)
+    const stillNull: string[] = [];
+    if (retryHeroA && !heroPatchA) stillNull.push('hero(A)');
+    if (retryHeroB && !heroPatchB) stillNull.push('hero(B)');
+    for (const t of nullPatchNeutralTypes) {
+      if (!neutralPatchByType.has(t)) stillNull.push(t);
+    }
+
+    if (stillA.length > 0 || stillB.length > 0 || stillNull.length > 0) {
+      // Still template OR null after per-type retry. Product inputs are too
+      // thin to ground the LLM, OR the strategy summary lacks anchors, OR
+      // the LLM is mis-configured. Throw with the exact list so the banner
+      // can tell the user WHICH modules need attention. `provider` reflects
+      // which backend is actually in use for this locale — messaging
+      // shouldn't say "Claude" when routing sent the calls to DeepSeek.
       const { LLMCallError } = await import('./errors');
       const { readLLMConfig, policyFor } = await import('./llm-config');
       const cfg = await readLLMConfig();
       const policy = policyFor(cfg, 'copy', locale);
       const provider = (policy.chain[0]?.provider ?? 'claude') as 'claude' | 'deepseek' | 'gpt' | 'gemini';
-      const badTypes = [
+      const templateTypes = [
         ...new Set([...stillA.map((r) => r.type), ...stillB.map((r) => r.type)]),
-      ].join(' / ');
+      ];
+      const allBad = [...new Set([...templateTypes, ...stillNull])].join(' / ');
+      const reasonParts: string[] = [];
+      if (templateTypes.length > 0) reasonParts.push(`匹配模板指纹: ${templateTypes.join(', ')}`);
+      if (stillNull.length > 0) reasonParts.push(`两次调用仍 null patch: ${stillNull.join(', ')}`);
       throw new LLMCallError(
         provider,
         'module-hydrate',
         undefined,
-        `模块 ${badTypes} 两次调用后仍匹配模板指纹（${locale}）。通常说明产品输入（name / tagline / value）过于通用，模型抓不到产品特定锚点。建议在 wizard 里补充更具体的产品描述后重新生成。`,
+        `模块 ${allBad} 在 ${locale} hydrate 失败（${reasonParts.join(' · ')}）。常见原因：产品输入（name / tagline / value）过于通用，或 ${provider} adapter 配置/网络异常。请补充更具体的产品描述后重试。`,
       );
     }
   }
