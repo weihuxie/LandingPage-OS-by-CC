@@ -167,7 +167,10 @@ async function resolveModel(modelOverride?: string): Promise<string> {
  * Exported so the diagnostic probe can exercise the same code path.
  */
 export function extractJsonObject<T = unknown>(text: string): T | null {
-  if (!text) return null;
+  if (!text) {
+    console.warn('[extractJsonObject] empty input — return null');
+    return null;
+  }
   // 1. direct parse
   try {
     return JSON.parse(text) as T;
@@ -181,7 +184,15 @@ export function extractJsonObject<T = unknown>(text: string): T | null {
   }
   // 3. outermost balanced {...} — scan for first "{" then count braces
   const start = text.indexOf('{');
-  if (start < 0) return null;
+  if (start < 0) {
+    // Audit Wave 2 #E: log the full text length + first/last 200 chars so
+    // ops can see "no { found in 8KB of prose" without having to enable
+    // verbose Anthropic SDK logging.
+    console.warn(
+      `[extractJsonObject] no '{' in ${text.length}-char text. head=${JSON.stringify(text.slice(0, 200))} tail=${JSON.stringify(text.slice(-200))}`,
+    );
+    return null;
+  }
   let depth = 0;
   let inString = false;
   let escape = false;
@@ -207,12 +218,33 @@ export function extractJsonObject<T = unknown>(text: string): T | null {
         const candidate = text.slice(start, i + 1);
         try {
           return JSON.parse(candidate) as T;
-        } catch {
+        } catch (e) {
+          // Audit Wave 2 #E: surface the actual parse error + position
+          // hint so ops can locate the broken byte. The caller log used
+          // to truncate at 400 chars, often clipping past the error site.
+          const msg = e instanceof Error ? e.message : String(e);
+          // V8's SyntaxError message includes "at position N" for top-level
+          // text — but here the candidate is text.slice(start, i+1), so
+          // the position is candidate-relative. We extract it for the log.
+          const posMatch = msg.match(/position (\d+)/);
+          const pos = posMatch ? parseInt(posMatch[1], 10) : null;
+          const ctx =
+            pos !== null
+              ? `…${candidate.slice(Math.max(0, pos - 80), pos)}⟪HERE⟫${candidate.slice(pos, pos + 80)}…`
+              : candidate.slice(0, 400);
+          console.warn(
+            `[extractJsonObject] balanced-{} candidate (${candidate.length} chars) failed JSON.parse: ${msg}. context=${JSON.stringify(ctx)}`,
+          );
           return null;
         }
       }
     }
   }
+  // Reached end with depth > 0 — unmatched braces.
+  // Audit Wave 2 #E: tell ops the input had unbalanced braces (vs no { at all).
+  console.warn(
+    `[extractJsonObject] unbalanced braces from start=${start} (final depth=${depth}, text length=${text.length}). head=${JSON.stringify(text.slice(start, start + 200))}`,
+  );
   return null;
 }
 
