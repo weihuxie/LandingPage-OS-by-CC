@@ -898,6 +898,25 @@ function benefitSubhead(inputs: ProductInputs): string {
 
 // --- Module generator ---------------------------------------------------
 
+/**
+ * Per-locale stats labels for the seeded socialProof block (Audit Wave 1 #F).
+ *
+ * Was a nested ternary `inputs.locale === 'en' ? ... : 'ja' ? ... : '团队'`
+ * — zh-TW hit the zh-CN default branch, leaking 简体 into 繁體 output.
+ * Now an explicit Record<PageLocale, ...> table; missing-locale would be
+ * a TS error at compile time.
+ *
+ * Kept inline here (not in the L object) because: (a) only this seeded
+ * block uses it, (b) future LLM-grounded gen will replace these labels
+ * outright via hydrate, so the lifetime of this lookup is bounded.
+ */
+const STATS_LABELS_BY_LOCALE: Record<PageLocale, { teams: string; avgRoi: string; timeSaved: string }> = {
+  'zh-CN': { teams: '团队', avgRoi: '平均 ROI', timeSaved: '每周节省' },
+  'zh-TW': { teams: '團隊', avgRoi: '平均 ROI', timeSaved: '每週節省' },
+  ja:      { teams: 'チーム', avgRoi: '平均 ROI', timeSaved: '週あたり削減時間' },
+  en:      { teams: 'Teams', avgRoi: 'Avg ROI', timeSaved: 'Time saved / wk' },
+};
+
 export function generateModules(
   inputs: ProductInputs,
   tone: ToneKey,
@@ -915,6 +934,11 @@ export function generateModules(
   const bulletCap = inputs.locale === 'en' ? 60 : 24;
   const safeHeadlineValue = firstSentence(inputs.value, headlineCap);
   const safeBulletValue = firstSentence(inputs.value, bulletCap);
+
+  // Stats labels — explicit per-locale lookup (was: nested ternary that hit
+  // the zh-CN default for zh-TW too, leaking 简体 into 繁體 output).
+  // Audit Wave 1 #F.
+  const statsLabels = STATS_LABELS_BY_LOCALE[inputs.locale];
 
   const modules: PageModule[] = [
     {
@@ -938,9 +962,9 @@ export function generateModules(
         title: T.trustTitle,
         logos: ['Acme', 'Globex', 'Hooli', 'Initech', 'Soylent', 'Umbrella'],
         stats: [
-          { label: inputs.locale === 'en' ? 'Teams' : inputs.locale === 'ja' ? 'チーム' : '团队', value: '1,200+' },
-          { label: inputs.locale === 'en' ? 'Avg ROI' : inputs.locale === 'ja' ? '平均 ROI' : '平均 ROI', value: '3.8×' },
-          { label: inputs.locale === 'en' ? 'Time saved / wk' : inputs.locale === 'ja' ? '週あたり削減時間' : '每周节省', value: '11h' },
+          { label: statsLabels.teams, value: '1,200+' },
+          { label: statsLabels.avgRoi, value: '3.8×' },
+          { label: statsLabels.timeSaved, value: '11h' },
         ],
       },
     },
