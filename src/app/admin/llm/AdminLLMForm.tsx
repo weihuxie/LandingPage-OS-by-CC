@@ -90,7 +90,7 @@ export default function AdminLLMForm({
   );
 
   function updatePolicy(
-    path: ['strategy'] | ['copy'] | ['localize'] | ['extract'],
+    path: ['strategy'] | ['copy'] | ['localize'] | ['extract'] | ['judge'],
     next: ScenarioPolicy,
   ): void {
     setConfig((prev) => {
@@ -217,6 +217,27 @@ export default function AdminLLMForm({
         <PolicyEditor
           policy={config.scenarios.extract}
           onChange={(p) => updatePolicy(['extract'], p)}
+          modelOptions={modelOptions}
+          providerStatus={providerStatus}
+          showModeToggle={false}
+        />
+      </ScenarioCard>
+
+      {/* Judge — independent-reader evaluation. Phase 1 supports
+          claude + deepseek as judge adapters; openai/gemini in chain
+          are silently skipped. Default chain (claude → deepseek) is
+          opposite of the default copy chain (deepseek → claude) so
+          out-of-the-box runs cross-family. */}
+      <ScenarioCard
+        title="独立评审 (judge)"
+        hint="编辑器顶部 📊 评估按钮触发。建议跨家配置（generator 是 deepseek 时 judge 用 claude，反之亦然）— 同家会显示红条警告但不阻塞。当前只有 claude + deepseek 有 judge adapter，链里加 openai/gemini 会被跳过。"
+        modelOptions={modelOptions}
+        providerStatus={providerStatus}
+        showModeToggle={false}
+      >
+        <PolicyEditor
+          policy={config.scenarios.judge}
+          onChange={(p) => updatePolicy(['judge'], p)}
           modelOptions={modelOptions}
           providerStatus={providerStatus}
           showModeToggle={false}

@@ -32,37 +32,41 @@ test.afterEach(() => {
   else delete process.env.DEEPSEEK_API_KEY;
 });
 
-test.describe('API-JUDGE-ROUTE · cross-family judge picking', () => {
-  test('API-JUDGE-ROUTE-001 · generator=claude + both keys → judge=deepseek (cross)', async () => {
-    setKeys(true, true);
-    const choice = await pickJudgeProvider('claude', 'zh-CN');
-    expect(choice.provider).toBe('deepseek');
-    expect(choice.sameFamilyWarning).toBe(false);
-    expect(choice.model.length).toBeGreaterThan(0);
-  });
-
-  test('API-JUDGE-ROUTE-002 · generator=deepseek + both keys → judge=claude (cross)', async () => {
+test.describe('API-JUDGE-ROUTE · admin-chain-driven judge picking', () => {
+  // DEFAULT_LLM_CONFIG.scenarios.judge.chain = [claude, deepseek]
+  // (opposite of copy default = [deepseek, claude]) — so the default
+  // out-of-the-box behavior is cross-family vs default copy.
+  test('API-JUDGE-ROUTE-001 · gen=deepseek + default chain (claude first) → cross to claude', async () => {
     setKeys(true, true);
     const choice = await pickJudgeProvider('deepseek', 'zh-CN');
     expect(choice.provider).toBe('claude');
     expect(choice.sameFamilyWarning).toBe(false);
   });
 
-  test('API-JUDGE-ROUTE-101 · generator=claude + only claude key → same-family warning', async () => {
+  test('API-JUDGE-ROUTE-002 · gen=claude + default chain (claude first) → same-family WARNING (admin can flip in /admin/llm)', async () => {
+    setKeys(true, true);
+    const choice = await pickJudgeProvider('claude', 'zh-CN');
+    // Admin chose claude as primary; we honor that even when gen=claude.
+    // The warning surfaces in the editor drawer so admin sees the cost.
+    expect(choice.provider).toBe('claude');
+    expect(choice.sameFamilyWarning).toBe(true);
+  });
+
+  test('API-JUDGE-ROUTE-101 · gen=claude + only claude key → falls to claude with warning', async () => {
     setKeys(true, false);
     const choice = await pickJudgeProvider('claude', 'zh-CN');
     expect(choice.provider).toBe('claude');
     expect(choice.sameFamilyWarning).toBe(true);
   });
 
-  test('API-JUDGE-ROUTE-102 · generator=deepseek + only deepseek key → same-family warning', async () => {
+  test('API-JUDGE-ROUTE-102 · gen=deepseek + only deepseek key → chain promotes past claude (no key) to deepseek', async () => {
     setKeys(false, true);
     const choice = await pickJudgeProvider('deepseek', 'zh-CN');
     expect(choice.provider).toBe('deepseek');
     expect(choice.sameFamilyWarning).toBe(true);
   });
 
-  test('API-JUDGE-ROUTE-103 · generator=claude + only deepseek key → cross still works (no warning)', async () => {
+  test('API-JUDGE-ROUTE-103 · gen=claude + only deepseek key → chain promotes to deepseek (cross, no warning)', async () => {
     setKeys(false, true);
     const choice = await pickJudgeProvider('claude', 'zh-CN');
     expect(choice.provider).toBe('deepseek');
@@ -74,10 +78,11 @@ test.describe('API-JUDGE-ROUTE · cross-family judge picking', () => {
     await expect(pickJudgeProvider('claude', 'zh-CN')).rejects.toThrow(LLMRequiredError);
   });
 
-  test('API-JUDGE-ROUTE-301 · generator unknown + both keys → falls back to copy primary cross', async () => {
+  test('API-JUDGE-ROUTE-301 · gen unknown + default chain → uses chain[0] (claude); generator inferred from copy (deepseek) → cross', async () => {
     setKeys(true, true);
-    // copy primary in DEFAULT_LLM_CONFIG is deepseek (chain[0]); cross is claude.
     const choice = await pickJudgeProvider(undefined, 'zh-CN');
+    // gen unknown → look up copy.chain[0] = deepseek. judge.chain[0] = claude.
+    // claude != deepseek → cross-family.
     expect(choice.provider).toBe('claude');
     expect(choice.sameFamilyWarning).toBe(false);
   });

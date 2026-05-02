@@ -87,41 +87,71 @@ function modelForProvider(
   return 'gemini-3.0-pro';
 }
 
+/**
+ * Walk the admin-configured judge chain and return the first step whose
+ * provider has both (a) a configured API key, AND (b) a judge adapter
+ * implementation in this file. Phase 1 implements claude + deepseek;
+ * openai/gemini chain entries are silently skipped (admin can put them
+ * for forward-compat without breakage).
+ *
+ * sameFamilyWarning is computed against the actual page generator,
+ * regardless of admin choice — admin may override the routing but the
+ * UI still flags loss of independence.
+ */
 export async function pickJudgeProvider(
   generatorProvider: LLMProvider | undefined,
   locale: string,
 ): Promise<JudgeProviderChoice> {
   const cfg = await readLLMConfig();
+  const judgePolicy = policyFor(cfg, 'judge', locale);
   const claudeOk = hasClaudeKey();
   const deepseekOk = hasDeepseekKey();
 
+  if (!judgePolicy.enabled) {
+    throw new LLMRequiredError('module-regen', 'any-llm', 'Judge scenario is disabled in /admin/llm');
+  }
   if (!claudeOk && !deepseekOk) {
-    // Neither judge-capable adapter has a key. Phase 1 supports only
-    // claude + deepseek as judges (see file header comment).
+    // No judge-capable key configured. Even if admin chained openai/gemini,
+    // those have no judge adapter in Phase 1.
     throw new LLMRequiredError('module-regen', 'any-llm', 'Judge requires ANTHROPIC_API_KEY or DEEPSEEK_API_KEY');
   }
 
-  // If we don't know the generator, look it up from the copy policy
-  // for this locale. The copy chain[0].provider is the page's actual
-  // generator under normal operation.
+  // Resolve generator (informational + sameFamilyWarning calc).
   let actualGenerator = generatorProvider;
   if (!actualGenerator) {
-    const policy = policyFor(cfg, 'copy', locale);
-    actualGenerator = policy.chain[0]?.provider;
+    const copyPolicy = policyFor(cfg, 'copy', locale);
+    actualGenerator = copyPolicy.chain[0]?.provider;
   }
 
-  // Preferred cross-family pick.
-  if (actualGenerator === 'claude' && deepseekOk) {
-    return { provider: 'deepseek', model: modelForProvider(cfg, 'deepseek'), sameFamilyWarning: false };
+  // Walk the configured judge chain top-down, skip steps whose provider
+  // (a) lacks a key, or (b) doesn't have a judge adapter in this file.
+  for (const step of judgePolicy.chain) {
+    const supportable =
+      (step.provider === 'claude' && claudeOk) ||
+      (step.provider === 'deepseek' && deepseekOk);
+    if (!supportable) continue;
+    return {
+      provider: step.provider,
+      model: step.model,
+      sameFamilyWarning: !!actualGenerator && step.provider === actualGenerator,
+    };
   }
-  if (actualGenerator === 'deepseek' && claudeOk) {
-    return { provider: 'claude', model: modelForProvider(cfg, 'claude'), sameFamilyWarning: false };
-  }
-  // Fall back: same family used for judging (only one key configured).
+
+  // Admin chain unusable end-to-end (e.g. all entries are openai/gemini
+  // without adapter). Fall back to ANY usable adapter, marking same-family
+  // if it matches the generator.
   if (claudeOk) {
-    return { provider: 'claude', model: modelForProvider(cfg, 'claude'), sameFamilyWarning: actualGenerator === 'claude' };
+    return {
+      provider: 'claude',
+      model: modelForProvider(cfg, 'claude'),
+      sameFamilyWarning: actualGenerator === 'claude',
+    };
   }
-  return { provider: 'deepseek', model: modelForProvider(cfg, 'deepseek'), sameFamilyWarning: actualGenerator === 'deepseek' };
+  return {
+    provider: 'deepseek',
+    model: modelForProvider(cfg, 'deepseek'),
+    sameFamilyWarning: actualGenerator === 'deepseek',
+  };
 }
 
 /**

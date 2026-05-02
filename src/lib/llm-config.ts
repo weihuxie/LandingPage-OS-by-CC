@@ -31,7 +31,7 @@ import { StorageRequiredError } from './errors';
 
 export type LLMProvider = 'claude' | 'deepseek' | 'openai' | 'gemini';
 
-export type LLMScenario = 'strategy' | 'copy' | 'localize' | 'extract';
+export type LLMScenario = 'strategy' | 'copy' | 'localize' | 'extract' | 'judge';
 
 export type TriggerClass = '429-quota' | '429-rate' | '5xx';
 
@@ -75,6 +75,18 @@ export interface LLMConfig {
     copy: ScenarioPolicy;
     localize: ScenarioPolicy;
     extract: ScenarioPolicy;
+    /**
+     * Independent-reader judge agent. The chain[0] picks the provider that
+     * critiques the page; cross-family separation from `copy` is enforced
+     * structurally — see pickJudgeProvider in src/lib/judge.ts. The chain
+     * is walked just like other scenarios on trigger-matching errors.
+     *
+     * Default: claude → deepseek (claude first because the default `copy`
+     * is deepseek; this gives natural cross-family judging out of the box).
+     * Admin can flip the order — same-family configs surface a red banner
+     * in the editor's evaluation drawer, they don't refuse to run.
+     */
+    judge: ScenarioPolicy;
   };
 }
 
@@ -126,6 +138,16 @@ export const DEFAULT_LLM_CONFIG: LLMConfig = {
       enabled: true,
       // Single adapter today. No useful fallback yet.
       chain: chainFor(['gemini', GEMINI_MODEL_DEFAULT]),
+      triggers: [...DEFAULT_TRIGGERS],
+    },
+    judge: {
+      enabled: true,
+      // Default opposite of copy → cross-family by default. Admin can
+      // flip; same-family configs warn but don't block.
+      chain: chainFor(
+        ['claude', CLAUDE_MODEL_DEFAULT],
+        ['deepseek', DEEPSEEK_MODEL_DEFAULT],
+      ),
       triggers: [...DEFAULT_TRIGGERS],
     },
   },
@@ -211,6 +233,9 @@ export function validateLLMConfig(cfg: unknown): string | null {
   if (!isPolicy((s as any).copy)) return 'scenarios.copy invalid';
   if (!isPolicy(s.localize)) return 'scenarios.localize invalid';
   if (!isPolicy(s.extract)) return 'scenarios.extract invalid';
+  // judge added 2026-05; tolerate absence on read (mergeWithDefaults
+  // seeds it) but require valid shape if present.
+  if (s.judge !== undefined && !isPolicy(s.judge)) return 'scenarios.judge invalid';
   return null;
 }
 
@@ -309,6 +334,16 @@ export function migrateOldConfig(legacy: LegacyV1Config): LLMConfig {
             )
           : policy(buildChainFromLegacy(legacy, loc), true),
       extract: policy([{ provider: ext, model: modelForProvider(legacy, ext) }], true),
+      // Judge wasn't a v1 concept — seed with the v2 default. Cross-family
+      // ordering vs the migrated copy chain is approximate here; admin can
+      // tune in /admin/llm after migration if it ends up same-family.
+      judge: policy(
+        [
+          { provider: 'claude', model: modelForProvider(legacy, 'claude') },
+          { provider: 'deepseek', model: modelForProvider(legacy, 'deepseek') },
+        ],
+        true,
+      ),
     },
   };
 }
@@ -404,6 +439,8 @@ function mergeWithDefaults(stored: Partial<LLMConfig>): LLMConfig {
       copy: pickStrategyOrCopy(stored.scenarios?.copy, DEFAULT_LLM_CONFIG.scenarios.copy),
       localize: stored.scenarios?.localize ?? DEFAULT_LLM_CONFIG.scenarios.localize,
       extract: stored.scenarios?.extract ?? DEFAULT_LLM_CONFIG.scenarios.extract,
+      // Forward-compat: pre-judge KV blobs lack this key — seed defaults.
+      judge: stored.scenarios?.judge ?? DEFAULT_LLM_CONFIG.scenarios.judge,
     },
   };
 }
