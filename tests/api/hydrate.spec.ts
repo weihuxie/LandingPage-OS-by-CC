@@ -173,29 +173,16 @@ test.describe('API-HYD · Hydrate', () => {
    * 默默退化回 "A/B 相同"，而 LLM 端的用例又贵又慢没法每次跑。这条不走 HTTP，
    * 所以秒跑不需要 LLM key，永远开着。
    */
-  test('API-HYD-005 · variantHintForModule 纯函数：A vs B 必有区别、只作用于 hero', async () => {
-    const a = variantHintForModule('hero', 'A', 'zh-CN');
-    const b = variantHintForModule('hero', 'B', 'zh-CN');
-    expect(a).toBeTruthy();
-    expect(b).toBeTruthy();
-    expect(a).not.toBe(b);
-    // A 应强调 "cost/loss"，B 应强调 "outcome/gain"
-    expect(a).toMatch(/COST|cost|loss/);
-    expect(b).toMatch(/OUTCOME|outcome|gain|ROI/);
-
-    // pain / benefits / solution / cta 暂时不走 variant-aware（模块顺序
-    // 已经承载 A/B 差异）。如果未来扩展到这些类型，这里会红 —— 是提醒，
-    // 不是坏事，顺手把 ai.ts 里 NEUTRAL_TYPES 里移走 + 补断言即可。
-    expect(variantHintForModule('pain', 'A', 'zh-CN')).toBeNull();
-    expect(variantHintForModule('benefits', 'A', 'zh-CN')).toBeNull();
-    expect(variantHintForModule('solution', 'A', 'zh-CN')).toBeNull();
-    expect(variantHintForModule('cta', 'A', 'zh-CN')).toBeNull();
-
-    // 不同 locale 的 eyebrow 例子要跟着变 —— 保证提示里引用的示例文字
-    // 是目标语言的，不会让 LLM 拿英文示例原样抄进中文 hero。
-    const aJa = variantHintForModule('hero', 'A', 'ja');
-    const aEn = variantHintForModule('hero', 'A', 'en');
-    expect(aJa).toContain('現状のコスト');
-    expect(aEn).toContain('THE HIDDEN COST');
+  test('API-HYD-005 · variantHintForModule hero + non-hero variants (Wave 4 #M)', async () => {
+    // Hero has eyebrow examples + locale-specific stuff; verified in the
+    // dedicated tests/api/variant-hint-extended.spec.ts file (no server
+    // needed). This test stays here so the existing hydrate suite still
+    // mentions variantHintForModule by name — anyone removing the hint
+    // function will see two test files break, not one.
+    const heroA = variantHintForModule('hero', 'A', 'zh-CN');
+    const heroB = variantHintForModule('hero', 'B', 'zh-CN');
+    expect(heroA).toBeTruthy();
+    expect(heroB).toBeTruthy();
+    expect(heroA).not.toBe(heroB);
   });
 });

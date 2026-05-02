@@ -89,28 +89,78 @@ export function variantHintForModule(
   variant: NarrativeVariant,
   locale: PageLocale,
 ): string | null {
-  if (type !== 'hero') return null;
-  const eyebrowExamples: Record<PageLocale, { a: string; b: string }> = {
-    'en': { a: 'THE HIDDEN COST', b: 'OUTCOME FIRST' },
-    'zh-CN': { a: '隐性成本', b: '确定的结果' },
-    'zh-TW': { a: '隱性成本', b: '確定的結果' },
-    'ja': { a: '現状のコスト', b: '成果の約束' },
-  };
-  const ey = eyebrowExamples[locale] ?? eyebrowExamples.en;
-  if (variant === 'A') {
+  // Audit Wave 4 #M: extended from hero-only to also cover benefits /
+  // solution / cta. Old behavior shared one patch across A and B for
+  // these three types — users switching A/B tabs saw byte-identical
+  // benefits/solution/cta copy. This violated PRD §4.3's A/B
+  // differentiation premise.
+
+  if (type === 'hero') {
+    const eyebrowExamples: Record<PageLocale, { a: string; b: string }> = {
+      'en': { a: 'THE HIDDEN COST', b: 'OUTCOME FIRST' },
+      'zh-CN': { a: '隐性成本', b: '确定的结果' },
+      'zh-TW': { a: '隱性成本', b: '確定的結果' },
+      'ja': { a: '現状のコスト', b: '成果の約束' },
+    };
+    const ey = eyebrowExamples[locale] ?? eyebrowExamples.en;
+    if (variant === 'A') {
+      return [
+        'Variant: A (Pain-Agitate-Solve).',
+        'LEAD WITH COST. Headline must quantify what the visitor is LOSING by NOT solving the problem — hours wasted, revenue leaked, errors missed, time-to-market stretched. Prefer a concrete loss number; avoid the word "solution" in the headline.',
+        `Eyebrow should signal "hidden cost" in the target locale. Example for ${locale}: "${ey.a}". NOT a generic category label.`,
+        'Subhead: one sentence bridging from the cost back to what the product returns (timeframe + scope).',
+      ].join(' ');
+    }
     return [
-      'Variant: A (Pain-Agitate-Solve).',
-      'LEAD WITH COST. Headline must quantify what the visitor is LOSING by NOT solving the problem — hours wasted, revenue leaked, errors missed, time-to-market stretched. Prefer a concrete loss number; avoid the word "solution" in the headline.',
-      `Eyebrow should signal "hidden cost" in the target locale. Example for ${locale}: "${ey.a}". NOT a generic category label.`,
-      'Subhead: one sentence bridging from the cost back to what the product returns (timeframe + scope).',
+      'Variant: B (Benefit-Focused).',
+      'LEAD WITH OUTCOME. Headline must quantify the GAIN from the solution — ROI multiplier, hours saved, speed-up factor, percentage improvement. Concrete and dated ("by week one" / "in 30 days") beats vague ("faster", "better").',
+      `Eyebrow should signal "outcome first" in the target locale. Example for ${locale}: "${ey.b}". NOT a generic category label.`,
+      'Subhead: one sentence naming who the product serves plus a proof point (customer count, industry scale).',
     ].join(' ');
   }
-  return [
-    'Variant: B (Benefit-Focused).',
-    'LEAD WITH OUTCOME. Headline must quantify the GAIN from the solution — ROI multiplier, hours saved, speed-up factor, percentage improvement. Concrete and dated ("by week one" / "in 30 days") beats vague ("faster", "better").',
-    `Eyebrow should signal "outcome first" in the target locale. Example for ${locale}: "${ey.b}". NOT a generic category label.`,
-    'Subhead: one sentence naming who the product serves plus a proof point (customer count, industry scale).',
-  ].join(' ');
+
+  if (type === 'benefits') {
+    if (variant === 'A') {
+      return [
+        'Variant: A (Pain-Agitate-Solve framing).',
+        'Frame each benefit as RELIEF from a specific pain. Use "no more X", "finally Y", "stop losing Z" patterns. The opening title and each item title should signal cost-avoidance, not aspiration.',
+        'Each benefit body is one sentence: name the cost being eliminated + a concrete shape of the relief (number, timeframe, or named scenario).',
+      ].join(' ');
+    }
+    return [
+      'Variant: B (Benefit-Focused framing).',
+      'Frame each benefit as QUANTIFIED GAIN. Use "X faster", "Y× more", "in N days", "by Z%" patterns. Title and item titles signal achievement, not relief.',
+      'Each benefit body is one sentence: state the outcome + a concrete proof shape (number, customer scale, or before/after).',
+    ].join(' ');
+  }
+
+  if (type === 'solution') {
+    if (variant === 'A') {
+      return [
+        'Variant: A — solution as ANTIDOTE to the pain in the prior pain section.',
+        'Title should answer "how do I stop losing X?" — direct, concrete. Body explains WHAT to do differently, naming the friction it removes (manual entry / context switching / waiting / etc.).',
+      ].join(' ');
+    }
+    return [
+      'Variant: B — solution as PATH to the outcome promised in hero.',
+      'Title should answer "how do I get the X result?" — direct, concrete. Body explains WHAT the product DOES that gets there, naming the mechanism (automation / templates / integrations / etc.).',
+    ].join(' ');
+  }
+
+  if (type === 'cta') {
+    if (variant === 'A') {
+      return [
+        'Variant: A — final urgency rooted in COST AVOIDANCE.',
+        'Headline drives "stop the bleed" framing — "Stop losing X", "Reclaim your week", "Don\'t leave Y on the table". Subhead names the conversion-friendly first step (book demo / start trial).',
+      ].join(' ');
+    }
+    return [
+      'Variant: B — final urgency rooted in OUTCOME ACQUISITION.',
+      'Headline drives "start gaining" framing — "Get X starting today", "Save Y hours next week", "See Z by month-end". Subhead names the proof-of-results path (free trial → measurable wins).',
+    ].join(' ');
+  }
+
+  return null;
 }
 
 export function hasClaudeKey(): boolean {
