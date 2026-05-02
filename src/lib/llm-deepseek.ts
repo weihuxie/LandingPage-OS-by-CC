@@ -313,7 +313,12 @@ Verbatim rules:
         function: { name: STRATEGY_TOOL_NAME },
       },
     });
-  try {
+
+  // Audit Wave 2 #J: extracted into inner attempt() to mirror module-regen's
+  // retry pattern. Old code was single-pass — DeepSeek returning 502/503
+  // once jumped straight to the fallback chain (Claude), wasting transient
+  // retry potential.
+  const attempt = async (): Promise<StrategySummary> => {
     let response;
     try {
       response = await callApi(model);
@@ -391,15 +396,37 @@ Verbatim rules:
       );
     }
     return parsed;
-  } catch (e: any) {
-    if (e instanceof LLMCallError || e instanceof LLMRequiredError) throw e;
-    console.error(
-      '[deepseek] strategy generation failed:',
-      e?.status ?? '',
-      e?.message ?? e,
-    );
-    throw new LLMCallError('deepseek', 'strategy', e);
+  };
+
+  // Audit Wave 2 #J: same retry policy as module-regen below. 429 + 5xx
+  // are transient; 4xx is the prompt's fault. LLMCallError / LLMRequiredError
+  // are our own — don't retry, they're deterministic.
+  const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+  const MAX_ATTEMPTS = 2;
+  let lastErr: unknown = undefined;
+  for (let tryN = 1; tryN <= MAX_ATTEMPTS; tryN++) {
+    try {
+      return await attempt();
+    } catch (e: any) {
+      lastErr = e;
+      if (e instanceof LLMCallError || e instanceof LLMRequiredError) break;
+      const status: number | undefined = e?.status;
+      const isRetryable = !status || RETRYABLE_STATUSES.has(status);
+      if (tryN === MAX_ATTEMPTS || !isRetryable) break;
+      const delay = 400 + Math.random() * 300;
+      console.warn(
+        `[deepseek] strategy attempt ${tryN} failed (status=${status ?? 'network'}); retrying in ${delay.toFixed(0)}ms`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
   }
+  if (lastErr instanceof LLMCallError || lastErr instanceof LLMRequiredError) throw lastErr;
+  console.error(
+    `[deepseek] strategy generation failed after ${MAX_ATTEMPTS} attempts:`,
+    (lastErr as any)?.status ?? '',
+    (lastErr as any)?.message ?? lastErr,
+  );
+  throw new LLMCallError('deepseek', 'strategy', lastErr);
 }
 
 // ====================================================================
