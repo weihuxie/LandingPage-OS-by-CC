@@ -237,6 +237,68 @@ Return a SINGLE JSON object matching the same schema as the input content. No ma
  *   - LLMCallError('gpt', 'localize-gpt', cause) on empty response,
  *     malformed JSON, or SDK errors.
  */
+/**
+ * Length-sensitive array fields per module type (Audit Wave 3 #B).
+ *
+ * If GPT's localized response returns a SHORTER array than the source
+ * for any of these fields, we keep the source array and log a warning
+ * — the shallow merge would otherwise drop the missing item silently
+ * and the rendered page would show e.g. 2 bullets instead of 3.
+ *
+ * Why per-type: the schema names differ (hero.bullets vs benefits.items).
+ * Centralizing the table in one place keeps the merge logic mechanical.
+ */
+const LENGTH_SENSITIVE_FIELDS: Partial<Record<ModuleType, readonly string[]>> = {
+  hero: ['bullets'],
+  pain: ['items'],
+  benefits: ['items'],
+  useCase: ['items'],
+  testimonial: ['items'],
+  faq: ['items'],
+  form: ['fields'],
+  socialProof: ['logos', 'stats'],
+  productShowcase: ['items'],
+};
+
+export interface LocalizeMergeResult {
+  content: Record<string, unknown>;
+  /** Field names where GPT's array was shorter; source array kept. */
+  preservedFields: string[];
+}
+
+/**
+ * Pure merge function for localize output. Shallow-merges source +
+ * parsed, but for length-sensitive arrays falls back to source if GPT's
+ * version is shorter. Returns both the merged content and the list of
+ * preserved fields so the caller can log the discrepancy.
+ *
+ * Equal length and longer (e.g. GPT split a long bullet into two) are
+ * accepted — only shrinkage is treated as a loss.
+ */
+export function mergeLocalizedContent(
+  type: ModuleType,
+  source: Record<string, unknown>,
+  parsed: Record<string, unknown>,
+): LocalizeMergeResult {
+  const fields = LENGTH_SENSITIVE_FIELDS[type] ?? [];
+  const preserved: string[] = [];
+  const safeParsed: Record<string, unknown> = { ...parsed };
+  for (const f of fields) {
+    const srcVal = source[f];
+    const newVal = safeParsed[f];
+    if (Array.isArray(srcVal) && Array.isArray(newVal) && newVal.length < srcVal.length) {
+      // GPT shrank the array — keep source's longer version, drop the
+      // shorter from the merge so the spread below preserves source.
+      delete safeParsed[f];
+      preserved.push(f);
+    }
+  }
+  return {
+    content: { ...source, ...safeParsed },
+    preservedFields: preserved,
+  };
+}
+
 export async function localizeModuleViaGpt(
   module: PageModule,
   toLocale: PageLocale,
@@ -300,10 +362,28 @@ export async function localizeModuleViaGpt(
     }
 
     // Merge — preserve fields GPT might not have returned (media, layout,
-    // bullets arrays if they came back wrong length, etc.)
+    // bullets arrays if they came back wrong length, etc.).
+    // Audit Wave 3 #B: also defend against GPT returning a SHORTER array
+    // for length-sensitive fields (bullets / items / logos / stats /
+    // fields). The shallow-merge would otherwise replace [A,B,C] with
+    // [A,C] silently, losing one bullet/item from the localized page.
+    const merged = mergeLocalizedContent(
+      module.type,
+      module.content as unknown as Record<string, unknown>,
+      parsed as Record<string, unknown>,
+    );
+    if (merged.preservedFields.length > 0) {
+      // Audit Wave 3 #B: GPT returned a shorter array for these fields.
+      // We kept source's longer version. Logged but not fatal — output
+      // is still locale-native (un-localized array values are placeholders
+      // the user can re-translate inline if needed).
+      console.warn(
+        `[openai] localize ${module.type} → ${toLocale}: preserved source array(s) [${merged.preservedFields.join(', ')}] (GPT response was shorter — would have dropped item(s)).`,
+      );
+    }
     return {
       ...module,
-      content: { ...(module.content as any), ...parsed },
+      content: merged.content as unknown as PageModule['content'],
     };
   } catch (e: any) {
     if (e instanceof LLMCallError || e instanceof LLMRequiredError) throw e;
