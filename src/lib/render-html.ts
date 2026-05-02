@@ -15,8 +15,6 @@ import {
   loomEmbedUrl,
 } from './media';
 import { STYLE_PRESETS, cssVarsForStyle } from './styles';
-import { resolveNavItems } from './nav-resolver';
-import type { HeroContent } from './types';
 
 /**
  * Serialize a Project to a self-contained static HTML document.
@@ -34,26 +32,11 @@ export function renderProjectHtml(project: Project): string {
 
   const locale = project.inputs.locale as PageLocale;
   const market = project.inputs.market as MarketCode;
-  // 反馈：nav 锚点用 #mod-<id>。serializeModule 默认 section 没 id 属性，
-  // 这里在外层 section 标签注入 id="mod-${m.id}"。form 模块保留原有
-  // id="contact"（CTA 默认 href），但额外加 id 走不通——HTML 同元素只
-  // 能一个 id。所以 form 走特殊：nav anchor 直接用 #contact，其他模块
-  // 用 #mod-<id>（resolveNavItems 仍返回 moduleId，但 nav-html 渲染时
-  // 对 form 类型用 #contact）。
+  // form 模块在 serializeModule 内部已经写了 id="contact"（hero CTA 默认
+  // href="#contact"，必须能命中）。其他模块不需要 id，nav 已撤销 (2026-05)。
   const modulesHtml = project.modules
-    .map((m) => {
-      const html = serializeModule(m, locale, market);
-      // form already has id="contact"; don't double-stamp id.
-      if (m.type === 'form') return html;
-      return html.replace(/^<section\b/, `<section id="mod-${m.id}"`);
-    })
+    .map((m) => serializeModule(m, locale, market))
     .join('\n');
-
-  // 反馈：静态导出（render-html.ts）也要带 nav。复用 PageRenderer 的
-  // nav-resolver 拿到 ≤5 项 + locale label 一致。
-  // 静态版限制：没 IntersectionObserver active 检测（要纯 HTML），
-  // 但 anchor link 工作 + 视觉跟 PageRenderer 一致 (pill style)。
-  const navHtml = renderNavHtml(project, locale);
 
   return `<!doctype html>
 <html lang="${project.inputs.locale}">
@@ -81,65 +64,18 @@ h1, h2, h3 { line-height: 1.25; margin: 0; font-weight: var(--heading-weight); }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .card { border: 1px solid #e6e9f0; border-radius: var(--radius); padding: 20px; background: #fff; }
 .muted { color: #5b6478; font-size: 14px; margin-top: 4px; }
-/* 反馈：nav (Pill 风格) — 与 PageRenderer 视觉一致；overflow-wrap:normal
-   避免被 body 的 anywhere 继承导致中文 nav 项每字断行。 */
-.nav-bar { position: sticky; top: 0; z-index: 40; border-bottom: 1px solid #e6e9f0; background: rgba(244,246,250,0.85); backdrop-filter: blur(6px); overflow-wrap: normal; word-break: normal; }
-.nav-bar .wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; padding-bottom: 10px; }
-.nav-brand { font-size: 14px; font-weight: 600; color: #0b1020; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nav-list { display: flex; align-items: center; gap: 4px; list-style: none; padding: 0; margin: 0; min-width: 0; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; }
-.nav-list::-webkit-scrollbar { display: none; }
-.nav-list li { flex-shrink: 0; }
-.nav-list a { display: inline-block; white-space: nowrap; padding: 6px 12px; border-radius: 9999px; font-size: 13px; font-weight: 500; color: #5b6478; text-decoration: none; transition: background 0.15s, color 0.15s; }
-.nav-list a:hover { background: #eef1f8; color: #0b1020; }
-.nav-cta { flex-shrink: 0; white-space: nowrap; padding: 6px 16px; border-radius: 9999px; font-size: 13px; font-weight: 500; color: #fff; background: var(--brand); text-decoration: none; box-shadow: 0 1px 2px rgba(0,0,0,0.05); transition: opacity 0.15s; }
-.nav-cta:hover { opacity: 0.9; }
 @media (max-width: 720px) {
   .hero { padding: 56px 0; }
   .h1 { font-size: 32px; }
   .grid3 { grid-template-columns: 1fr; }
-  .nav-list, .nav-cta { display: none; }
 }
 </style>
 </head>
 <body>
-${navHtml}
 ${modulesHtml}
 <footer style="border-top:1px solid #e6e9f0;padding:24px 0;text-align:center;color:#aab1c0;font-size:12px;">© ${new Date().getFullYear()} ${escapeHtml(project.inputs.name)} · Built with LandingPage OS by CC</footer>
 </body>
 </html>`;
-}
-
-function renderNavHtml(project: Project, locale: PageLocale): string {
-  if (!project.nav?.enabled) return '';
-  const items = resolveNavItems(project.modules, project.nav.items, locale);
-  if (items.length === 0) return '';
-
-  const heroModule = project.modules.find((m) => m.type === 'hero');
-  const heroContent = heroModule?.content as HeroContent | undefined;
-  const ctaLabel = heroContent?.primaryCta || '联系';
-  const ctaHrefRaw = heroContent?.primaryCtaHref?.trim() || '#contact';
-  const ctaIsExt = /^https?:\/\//i.test(ctaHrefRaw);
-  const ctaAttrs = ctaIsExt ? ' target="_blank" rel="noopener noreferrer"' : '';
-
-  // form 模块对应的 nav anchor 用 #contact (与 hero CTA 一致)，其他模块
-  // 走 #mod-<id>。form 在 modulesHtml 已经渲染为 id="contact"。
-  const formIds = new Set(
-    project.modules.filter((m) => m.type === 'form').map((m) => m.id),
-  );
-  const itemsHtml = items
-    .map((it) => {
-      const href = formIds.has(it.moduleId)
-        ? '#contact'
-        : `#mod-${escapeHtml(it.moduleId)}`;
-      return `<li><a href="${href}">${escapeHtml(it.label)}</a></li>`;
-    })
-    .join('');
-
-  return `<nav class="nav-bar"><div class="wrap">
-    <div class="nav-brand">${escapeHtml(project.inputs.name)}</div>
-    <ul class="nav-list">${itemsHtml}</ul>
-    <a class="nav-cta" href="${escapeHtml(ctaHrefRaw)}"${ctaAttrs}>${escapeHtml(ctaLabel)}</a>
-  </div></nav>`;
 }
 
 function escapeHtml(s: string): string {

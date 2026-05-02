@@ -1,5 +1,5 @@
 'use client';
-import { Fragment, useEffect, useState, type ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import type {
   Project,
   PageModule,
@@ -25,7 +25,6 @@ import type {
 import { resolveSocialProofLogo } from '@/lib/types';
 import { STYLE_PRESETS, cssVarsForStyle } from '@/lib/styles';
 import { resolveFontStack, type FontPresetId } from '@/lib/font-presets';
-import { resolveNavItems } from '@/lib/nav-resolver';
 import {
   resolveMedia,
   detectVideoHost,
@@ -35,11 +34,6 @@ import {
   isInlineLoopingVideo,
 } from '@/lib/media';
 
-type NavConfig = {
-  enabled: boolean;
-  items?: Array<{ moduleId: string; label: string }>;
-};
-
 type Props = {
   project: Project;
   device: 'desktop' | 'mobile';
@@ -48,7 +42,6 @@ type Props = {
   interactive?: boolean; // true only on public page
   locale?: string;
   variant?: 'A' | 'B';
-  nav?: NavConfig; // Feishu #10 — sticky anchor nav when nav.enabled
   /** Font selection from the editor's settings modal. When set this
    *  takes precedence over Brand / Product / market-default font
    *  stacks. See src/lib/font-presets.ts for the precedence chain. */
@@ -90,7 +83,6 @@ export default function PageRenderer({
   interactive,
   locale,
   variant,
-  nav,
   fontPresetId,
   brandFontStack,
 }: Props) {
@@ -109,16 +101,6 @@ export default function PageRenderer({
   });
 
   const activeModules = project.modules.filter((m) => m.enabled !== false);
-  const navItems = nav?.enabled ? resolveNavItems(activeModules, nav.items, pageLocale) : [];
-  // 反馈：nav 重设方案 C — 右侧加 brand-color CTA。文案/链接复用 hero
-  // 主 CTA（用户最熟悉的转化承诺），缺省回退到 #contact。
-  const heroForNav = activeModules.find((m) => m.type === 'hero');
-  const navCta = heroForNav
-    ? {
-        label: (heroForNav.content as HeroContent).primaryCta || '联系',
-        href: ((heroForNav.content as HeroContent).primaryCtaHref?.trim() || '#contact'),
-      }
-    : undefined;
 
   return (
     <div
@@ -135,13 +117,6 @@ export default function PageRenderer({
       }}
       data-style={styleId}
     >
-      {nav?.enabled && navItems.length > 0 && (
-        <Nav
-          items={navItems}
-          productName={project.inputs.name}
-          cta={navCta}
-        />
-      )}
       {activeModules.map((m) => (
         <section
           key={m.id}
@@ -153,13 +128,10 @@ export default function PageRenderer({
               : ''
           }`}
         >
-          {/* 反馈 #4: Hero / CTA 按钮默认 href="#contact"，但 form 模块
-              section 之前只挂 id="mod-<id>"，导致 SPA 内 CTA 点了 URL
-              变 #contact 浏览器找不到锚点，看着像"按钮没反应"。
-              render-html.ts 静态导出版一直对 form 用 id="contact" 所以
-              Vercel 部署后能跳，但编辑器预览和 /p/slug 不行。这里加
-              个无视觉影响的 anchor span，#contact 仍可命中且不破坏 nav
-              的 #mod-<id> 锚点（nav 走的是 section id）。 */}
+          {/* 反馈 #4: Hero / CTA 按钮默认 href="#contact"，form 模块需
+              要一个无视觉影响的 #contact 锚点，否则 SPA 内点 CTA 看着像
+              "按钮没反应"。render-html.ts 静态导出版的 form 也用同样的
+              id 命名保持一致。 */}
           {m.type === 'form' && (
             <span id="contact" aria-hidden className="block scroll-mt-20" />
           )}
@@ -173,122 +145,9 @@ export default function PageRenderer({
   );
 }
 
-/**
- * Sticky top navigation (Feishu #10).
- *
- * 2026-04 重设：方案 C "Pill 高亮"
- *   - bg-ink-50/85 浅灰底 + backdrop-blur，跟白页面对比明显
- *   - nav 项 rounded-full pill，hover 加 bg-ink-100
- *   - 当前可视 section 对应的 nav 项 → 实心 brand-color pill 高亮
- *     用 IntersectionObserver 检测，rootMargin 偏上 30% 让"刚滚到"
- *     就高亮，不必滚到正中
- *   - 右侧 CTA 按钮（brand-color 实心），文案/链接复用 hero 的 primaryCta
- *   - 字体不写死，跟随页面 fontFamily 继承
- */
-function Nav({
-  items,
-  productName,
-  cta,
-}: {
-  items: Array<{ moduleId: string; label: string }>;
-  productName: string;
-  cta?: { label: string; href: string };
-}) {
-  const [activeId, setActiveId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || items.length === 0) return;
-    // rootMargin '-30% 0 -50% 0' 创建一条接近顶部 1/3 的"激活带"。
-    // section 顶边进入这条带就成为 active；过了带就让位给下一个。
-    // 多 section 同时部分可见时，最靠上的进入带的优先（靠 entries 顺序）。
-    const observer = new IntersectionObserver(
-      (entries) => {
-        // 取所有 isIntersecting 的，按 boundingClientRect.top 升序，最靠上的优先
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible.length > 0) {
-          const id = visible[0].target.id.replace(/^mod-/, '');
-          setActiveId(id);
-        }
-      },
-      { rootMargin: '-30% 0px -50% 0px', threshold: 0 },
-    );
-
-    const els: HTMLElement[] = [];
-    for (const it of items) {
-      const el = document.getElementById(`mod-${it.moduleId}`);
-      if (el) {
-        observer.observe(el);
-        els.push(el);
-      }
-    }
-    return () => {
-      els.forEach((el) => observer.unobserve(el));
-      observer.disconnect();
-    };
-  }, [items]);
-
-  const isExt = cta?.href ? /^https?:\/\//i.test(cta.href) : false;
-
-  return (
-    // 反馈："每个汉字单独一行" — 根 div 的 overflow-wrap:anywhere（修
-    // testimonial 长串溢出加的）会让 nav 项数挤窄时 per-character 断行。
-    // 在 nav 上重置回 normal，再给每个 link 加 whitespace-nowrap 双保险。
-    <nav
-      className="sticky top-0 z-40 border-b border-ink-100 bg-ink-50/85 backdrop-blur"
-      style={{ overflowWrap: 'normal', wordBreak: 'normal' }}
-    >
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-6 py-2.5">
-        <div className="truncate text-sm font-semibold text-ink-900">
-          {productName}
-        </div>
-        {/* min-w-0 + overflow-x-auto 让 nav 在窄宽度下能横向滚（触控板/
-            滚轮/swipe 触发），但 [scrollbar-*] 把系统 scrollbar 完全
-            隐藏——视觉上 nav 像永远干净，只在真挤不下时悄悄可滚。 */}
-        <ul
-          className="hidden min-w-0 items-center gap-1 overflow-x-auto text-sm sm:flex [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        >
-          {items.map((it) => {
-            const active = activeId === it.moduleId;
-            return (
-              <li key={it.moduleId} className="shrink-0">
-                <a
-                  href={`#mod-${it.moduleId}`}
-                  aria-current={active ? 'true' : undefined}
-                  className={`whitespace-nowrap rounded-full px-3 py-1.5 text-[13px] font-medium transition ${
-                    active
-                      ? 'text-white shadow-sm'
-                      : 'text-ink-600 hover:bg-ink-100 hover:text-ink-900'
-                  }`}
-                  style={
-                    active ? { backgroundColor: 'var(--brand)' } : undefined
-                  }
-                >
-                  {it.label}
-                </a>
-              </li>
-            );
-          })}
-        </ul>
-        {cta && (
-          <a
-            href={cta.href}
-            target={isExt ? '_blank' : undefined}
-            rel={isExt ? 'noopener noreferrer' : undefined}
-            className="hidden shrink-0 whitespace-nowrap rounded-full px-4 py-1.5 text-[13px] font-medium text-white shadow-sm transition hover:opacity-90 sm:inline-flex"
-            style={{ backgroundColor: 'var(--brand)' }}
-          >
-            {cta.label}
-          </a>
-        )}
-      </div>
-    </nav>
-  );
-}
-
-// nav 标签 / 白名单 / resolveNavItems 已抽到 src/lib/nav-resolver.ts
-// 以便从 Node 单元测试 import 不必加载 React 组件。
+// nav 渲染已撤销 (2026-05) — 落地页是单一转化漏斗，sticky nav 给访客
+// "逃跑路径"且抢 hero 的 50px 视口。pure function `resolveNavItems` +
+// 测试保留在 src/lib/nav-resolver.ts，下次想恢复直接接回来即可。
 
 function ModuleBody({
   module,

@@ -1854,7 +1854,6 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               device={device}
               onSelectModule={(id) => setSelectedModuleId(id)}
               selectedId={selectedModuleId}
-              nav={page?.nav}
               fontPresetId={page?.fontPresetId as any}
             />
           </div>
@@ -1958,22 +1957,6 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
               body: JSON.stringify({ fontPresetId: presetId }),
             });
           } catch {
-            // Same approach as nav: keep optimistic flip on failure; next
-            // autosave round-trips it cleanly.
-          }
-        }}
-        navEnabled={page?.nav?.enabled ?? false}
-        onToggleNav={async (enabled) => {
-          if (!page) return;
-          const nextNav = { enabled, items: page.nav?.items };
-          setPage((prev) => (prev ? { ...prev, nav: nextNav } : prev));
-          try {
-            await fetch(`/api/pages/${page.id}`, {
-              method: 'PATCH',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ nav: nextNav }),
-            });
-          } catch {
             // Keep UI state flipped even if the network call fails; the
             // next autosave cycle will either succeed or surface the
             // error via the main save state badge.
@@ -2034,8 +2017,6 @@ function SettingsModal({
   pageId,
   fontPresetId,
   onChangeFontPreset,
-  navEnabled,
-  onToggleNav,
   tones,
   onChangeStyle,
   onChangeTone,
@@ -2049,8 +2030,6 @@ function SettingsModal({
   pageId?: string;
   fontPresetId?: string;
   onChangeFontPreset: (presetId: string | null) => void;
-  navEnabled: boolean;
-  onToggleNav: (enabled: boolean) => void;
   tones: ToneKey[];
   onChangeStyle: (id: StyleId) => void;
   onChangeTone: (t: ToneKey) => void;
@@ -2261,22 +2240,6 @@ function SettingsModal({
               />
             </div>
           </div>
-          {pageId && (
-            <div className="rounded-xl border border-ink-100 p-3">
-              <div className="label mb-1.5">页面导航</div>
-              <label className="flex items-center gap-2 text-xs text-ink-700">
-                <input
-                  type="checkbox"
-                  checked={navEnabled}
-                  onChange={(e) => onToggleNav(e.target.checked)}
-                />
-                显示顶部导航栏（锚点跳转到各模块）
-              </label>
-              <p className="mt-1.5 text-[11px] leading-relaxed text-ink-500">
-                开启后页面顶部会固定一条导航条，自动列出 hero 以外的启用模块。
-              </p>
-            </div>
-          )}
           <div className="rounded-xl border border-ink-100 p-3 text-xs text-ink-500">
             <div className="font-medium text-ink-700">AI {tLabels.strategyPanel}</div>
             <ul className="mt-2 space-y-1.5">

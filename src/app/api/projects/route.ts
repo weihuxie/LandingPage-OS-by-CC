@@ -200,11 +200,6 @@ async function postImpl(req: NextRequest) {
     },
     published: false,
     deploy: null,
-    // 反馈 #1：用户期待页面顶部默认有导航条。Hero 上方的空白被读成"应
-    // 该有导航"。把新页面的 nav.enabled 默认开 ON，items 留空让
-    // PageRenderer 的 resolveNavItems 按模块顺序自动生成（hero 不入
-    // 列）。老页面（已存在的 LandingPage）不动。
-    nav: { enabled: true },
     stats: {
       views: 0,
       leads: 0,

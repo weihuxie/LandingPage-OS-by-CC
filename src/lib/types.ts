@@ -397,15 +397,6 @@ export interface Project {
   variants: ProjectVariants; // PRD §4.3 — A and B narratives
   activeVariant: NarrativeVariant; // currently selected in editor
   publishMode: 'single' | 'ab-split'; // PRD §6
-  /**
-   * 反馈：静态导出（render-html.ts）也要带 nav。projectViewFromV2 从
-   * page.nav 透传过来，render-html 在 body 顶部渲染一份纯静态 nav
-   * （无 IntersectionObserver active 检测，但 anchor link 工作）。
-   */
-  nav?: {
-    enabled: boolean;
-    items?: Array<{ moduleId: string; label: string }>;
-  };
   theme: {
     primary: string;
     secondary?: string;
@@ -766,18 +757,6 @@ export interface LandingPage {
    * compare against potentially drift-prone fontStack values.
    */
   fontPresetId?: string;
-
-  /**
-   * Top-of-page navigation (Feishu #10 "页面无导航"). When `enabled` is
-   * true, PageRenderer prepends a sticky nav bar with anchor links to
-   * each active non-hero module. Default false for old pages so nothing
-   * changes silently. `items` is optional — if omitted the renderer
-   * auto-derives labels from module types + locale.
-   */
-  nav?: {
-    enabled: boolean;
-    items?: Array<{ moduleId: string; label: string }>;
-  };
 
   published: boolean;
   publishedAt?: number;

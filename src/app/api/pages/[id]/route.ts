@@ -70,8 +70,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (body.publishMode) page.publishMode = body.publishMode;
   if (body.theme) page.theme = { ...page.theme, ...body.theme };
   if (body.name) page.name = body.name;
-  // Feishu #10 — top-of-page anchor nav toggle + item overrides
-  if (body.nav !== undefined) page.nav = body.nav;
   // Per-page font picker (see src/lib/font-presets.ts). Empty/null clears
   // the override; the renderer falls through to brand → product → market.
   if ('fontPresetId' in body) {

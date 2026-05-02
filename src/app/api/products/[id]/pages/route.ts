@@ -178,9 +178,6 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
     published: false,
     deploy: null,
 
-    // 反馈 #1：默认开导航；老页面不动。同 /api/projects/route.ts。
-    nav: { enabled: true },
-
     stats: {
       views: 0,
       leads: 0,
