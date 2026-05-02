@@ -123,6 +123,31 @@ export function userCookieHeader(value: string, opts: { clear?: boolean } = {}):
   return `${COOKIE_NAME}=${opts.clear ? '' : value}; Path=/; HttpOnly; ${secure}SameSite=Lax; Max-Age=${maxAge}`;
 }
 
+// --- Display-locale cookie (2026-05) -----------------------------------
+//
+// Carries the user's preferred admin-UI language so the middleware can
+// redirect no-locale-prefix paths (`/`, `/dashboard`, etc.) to the user's
+// preference without doing a KV lookup on every request.
+//
+// HttpOnly = false: middleware reads it, but the client also reads it
+// (to know which locale link is "current" in a switcher). Plain cookie,
+// not signed — worst case a tampered cookie sends the user to a different
+// locale they could've reached anyway via URL prefix.
+
+export const DISPLAY_LOCALE_COOKIE_NAME = 'lp_display_locale';
+
+export function displayLocaleCookieHeader(
+  locale: 'zh-CN' | 'ja' | 'en' | null,
+): string {
+  // eslint-disable-next-line dot-notation
+  const isProd = process.env['VERCEL'] === '1' || process.env['NODE_ENV'] === 'production';
+  const secure = isProd ? 'Secure; ' : '';
+  if (locale === null) {
+    return `${DISPLAY_LOCALE_COOKIE_NAME}=; Path=/; ${secure}SameSite=Lax; Max-Age=0`;
+  }
+  return `${DISPLAY_LOCALE_COOKIE_NAME}=${locale}; Path=/; ${secure}SameSite=Lax; Max-Age=${MAX_AGE_SECONDS}`;
+}
+
 // --- Token generation for magic links and invites ----------------------
 
 /**

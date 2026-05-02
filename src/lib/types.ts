@@ -863,6 +863,22 @@ export interface User {
   displayName?: string;
   createdAt: number;
   lastLoginAt?: number;
+  /**
+   * Preferred admin-UI language. One of i18n.ts `locales` (currently
+   * 'zh-CN' | 'ja' | 'en'). When set, middleware redirects no-prefix
+   * paths to this locale instead of defaultLocale, and the verify
+   * route bakes a `lp_display_locale` cookie at login so the
+   * preference works across devices.
+   *
+   * Optional: legacy users (and freshly minted users until they pick
+   * a preference) leave this undefined → middleware uses defaultLocale.
+   *
+   * NOTE: this is the admin UI language only. The landing page locale
+   * (LandingPage.defaultLocale / project.inputs.locale) is independent
+   * and still supports 4 langs — a user can prefer 'en' admin UI and
+   * still create a 'zh-TW' page.
+   */
+  displayLocale?: 'zh-CN' | 'ja' | 'en';
   // OAuth bindings come in S3. Keep the shape open so we don't migrate
   // users when we add Google/Microsoft providers.
   oauth?: {

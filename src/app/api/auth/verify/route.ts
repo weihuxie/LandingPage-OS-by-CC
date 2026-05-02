@@ -14,7 +14,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { consumeMagicLink, getUserByEmail, saveUser, newId } from '@/lib/auth-storage';
-import { signUserCookie, userCookieHeader } from '@/lib/user-auth';
+import { signUserCookie, userCookieHeader, displayLocaleCookieHeader } from '@/lib/user-auth';
 import type { User } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -57,5 +57,14 @@ export async function GET(req: NextRequest) {
   const redirectTo = link.returnTo || '/app';
   const resp = NextResponse.redirect(new URL(redirectTo, req.nextUrl.origin), { status: 303 });
   resp.headers.set('Set-Cookie', userCookieHeader(cookie));
+  // 2026-05: also bake the user's preferred admin-UI language into a
+  // cookie so the middleware can redirect across devices without a KV
+  // round-trip per request. Skipped (no header) when user hasn't picked
+  // a preference — middleware falls back to defaultLocale.
+  // Use .append() not a 2nd .set() — multiple Set-Cookie headers must
+  // ride as distinct headers, not a comma-joined value.
+  if (user.displayLocale) {
+    resp.headers.append('Set-Cookie', displayLocaleCookieHeader(user.displayLocale));
+  }
   return resp;
 }

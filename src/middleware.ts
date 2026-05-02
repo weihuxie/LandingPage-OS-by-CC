@@ -121,6 +121,31 @@ export default async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // --- User display-locale redirect (2026-05) ---------------------------
+  // If the user has chosen an admin-UI language (lp_display_locale cookie,
+  // baked at login from User.displayLocale) AND the current path has NO
+  // locale prefix yet, redirect to their preference instead of letting
+  // intlMiddleware send them to defaultLocale.
+  //
+  // Paths that DO have a locale prefix (e.g. user clicked a /ja/dashboard
+  // link explicitly) pass through unchanged — the URL wins over the
+  // preference so multi-locale links + manual URL editing keep working.
+  const userLocaleCookie = req.cookies.get('lp_display_locale')?.value;
+  const userLocale =
+    userLocaleCookie && (locales as readonly string[]).includes(userLocaleCookie)
+      ? (userLocaleCookie as (typeof locales)[number])
+      : null;
+  if (userLocale && userLocale !== defaultLocale) {
+    const pathHasLocale = (locales as readonly string[]).some(
+      (l) => pathname === `/${l}` || pathname.startsWith(`/${l}/`),
+    );
+    if (!pathHasLocale) {
+      const url = req.nextUrl.clone();
+      url.pathname = pathname === '/' ? `/${userLocale}` : `/${userLocale}${pathname}`;
+      return NextResponse.redirect(url);
+    }
+  }
+
   // --- Everything else → next-intl --------------------------------------
   return intlMiddleware(req);
 }
