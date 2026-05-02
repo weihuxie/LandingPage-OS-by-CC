@@ -37,6 +37,16 @@ export default defineConfig({
       use: { baseURL: BASE_URL },
     },
     {
+      // Audit Wave 4 ★ — golden eval set (property-based regression for
+      // LLM gen pipeline). Calls real LLM, gated on ANTHROPIC_API_KEY /
+      // DEEPSEEK_API_KEY. Per-test test.skip() handles the no-key case.
+      // Long timeout because hydrate makes 6+ LLM calls in parallel.
+      name: 'eval',
+      testDir: './tests/eval',
+      timeout: 180_000,
+      use: { baseURL: BASE_URL },
+    },
+    {
       name: 'e2e',
       testDir: './tests/e2e',
       // Next.js dev server 第一次编译 /zh-CN/projects/[id] 这条路由可能吃 20-40s
