@@ -584,8 +584,8 @@ export function generateVariants(
     const b = buildEnterpriseB2BStack(baseB, inputs);
     tintHeroForVariant(a, 'A', inputs);
     tintHeroForVariant(b, 'B', inputs);
-    applyStrategyToModules(a, strategy);
-    applyStrategyToModules(b, strategy);
+    applyStrategyToModules(a, strategy, inputs.locale);
+    applyStrategyToModules(b, strategy, inputs.locale);
     applyContextToModules(a, context, inputs.locale);
     applyContextToModules(b, context, inputs.locale);
     return { A: a, B: b };
@@ -594,13 +594,13 @@ export function generateVariants(
   // Variant A — pain-first
   const a = reorder(baseA, ['hero', 'socialProof', 'pain', 'solution', 'benefits', 'useCase', 'testimonial', 'faq', 'cta', 'form']);
   tintHeroForVariant(a, 'A', inputs);
-  applyStrategyToModules(a, strategy);
+  applyStrategyToModules(a, strategy, inputs.locale);
   applyContextToModules(a, context, inputs.locale);
 
   // Variant B — benefit-first (skip pain, lead with social proof + benefits)
   const b = reorder(baseB, ['hero', 'socialProof', 'benefits', 'useCase', 'solution', 'testimonial', 'faq', 'cta', 'form']);
   tintHeroForVariant(b, 'B', inputs);
-  applyStrategyToModules(b, strategy);
+  applyStrategyToModules(b, strategy, inputs.locale);
   applyContextToModules(b, context, inputs.locale);
 
   return { A: a, B: b };
@@ -782,7 +782,7 @@ function inferLabelFromMetric(metric: string, locale: PageLocale): string {
  *   - narrative → Hero bullets (use narrative hooks)
  *   - local → tone adjustments (caps/no-caps, icon density)
  */
-function applyStrategyToModules(modules: PageModule[], strategy?: StrategySummary) {
+function applyStrategyToModules(modules: PageModule[], strategy?: StrategySummary, locale: PageLocale = 'zh-CN') {
   if (!strategy) return;
 
   // Form length from goal text
@@ -796,19 +796,24 @@ function applyStrategyToModules(modules: PageModule[], strategy?: StrategySummar
     }
   }
 
-  // Surface objection questions from audience into FAQ top
+  // Surface objection questions from audience into FAQ top.
+  // Audit Wave 1 #H: previously the answer was hardcoded Chinese, so an
+  // EN audience producing EN `?`-ending questions still got Chinese
+  // answers in the FAQ. Both the keyword fallback and the default answer
+  // now go through per-locale dispatch.
   const audienceText = strategy.audience.join(' ');
   const faqMod = modules.find((m) => m.type === 'faq');
   if (faqMod) {
     const c = faqMod.content as any;
-    const objections = extractObjections(audienceText);
+    const objections = extractObjections(audienceText, locale);
     if (objections.length && Array.isArray(c.items)) {
+      const defaultAnswer = OBJECTION_DEFAULT_ANSWER[locale];
       // Prepend up to 2 audience-derived FAQ items if they aren't already covered.
       const existingQuestions = c.items.map((it: any) => (it.q ?? '').toLowerCase());
       const fresh = objections
         .filter((o) => !existingQuestions.some((q: string) => q.includes(o.slice(0, 6).toLowerCase())))
         .slice(0, 2)
-        .map((q) => ({ q, a: '我们可以在 demo 中具体演示。' }));
+        .map((q) => ({ q, a: defaultAnswer }));
       c.items = [...fresh, ...c.items];
     }
   }
@@ -826,11 +831,36 @@ function applyStrategyToModules(modules: PageModule[], strategy?: StrategySummar
   }
 }
 
-function extractObjections(text: string): string[] {
+/**
+ * Per-locale fallback keyword patterns when the audience text contains
+ * no `?`-ending fragments (Audit Wave 1 #H). Old code only had Chinese
+ * keywords, so an EN audience like "Mid-market RevOps leaders worried
+ * about integration costs and onboarding time" would never match the
+ * fallback path on a Chinese locale audience either, but more critically
+ * an EN audience with a `?` that DID match would still get a Chinese
+ * answer template (see OBJECTION_DEFAULT_ANSWER below).
+ */
+const OBJECTION_KEYWORDS: Record<PageLocale, RegExp> = {
+  'zh-CN': /[^,;]+(?:对接|集成|成本|费用|导入|预算|规模|价格)[^,;]*/g,
+  'zh-TW': /[^,;]+(?:對接|集成|成本|費用|導入|預算|規模|價格)[^,;]*/g,
+  ja:      /[^,;、。]+(?:連携|統合|コスト|費用|導入|予算|規模|価格)[^,;、。]*/g,
+  en:      /[^,;]+(?:integrate|integration|onboarding|cost|budget|pricing|deployment|scale)[^,;]*/gi,
+};
+
+const OBJECTION_DEFAULT_ANSWER: Record<PageLocale, string> = {
+  'zh-CN': '我们可以在 demo 中具体演示。',
+  'zh-TW': '我們會在 demo 中具體演示。',
+  ja:      'デモで具体的にお見せします。',
+  en:      'We can walk you through this in the demo.',
+};
+
+function extractObjections(text: string, locale: PageLocale): string[] {
   // Pull out question-like fragments that look like objections.
+  // First pass: any `?`-ending fragment in any language (CJK ？ or ASCII ?).
+  // Second pass: per-locale keyword patterns when no questions found.
   const matches =
     text.match(/[^。.！!？?]+[？?]/g) ??
-    text.match(/[^,;]+(?:对接|集成|成本|费用|导入|预算|规模|价格)[^,;]*/g) ??
+    text.match(OBJECTION_KEYWORDS[locale]) ??
     [];
   return matches
     .map((s) => s.trim().replace(/^[：:,;\s]+/, ''))

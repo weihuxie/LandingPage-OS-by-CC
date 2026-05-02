@@ -128,3 +128,77 @@ test.describe('API-SEED-LOCALE · inferLabelFromMetric per locale (Wave 1 #G)', 
     for (const l of en) expect(l.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * Wave 1 #H — `extractObjections` had Chinese-only keyword fallback +
+ * hardcoded Chinese answer template. EN/JA pages with audience-derived
+ * FAQ items got Chinese answers regardless of locale.
+ */
+import type { StrategySummary } from '../../src/lib/types';
+
+function strategyWithAudience(audience: string[]): StrategySummary {
+  return {
+    audience,
+    goal: [],
+    narrative: [],
+    local: [],
+  };
+}
+
+function faqItemsForLocale(locale: PageLocale, audience: string[]): Array<{ q: string; a: string }> {
+  const variants = generateVariants(
+    inputsFor(locale),
+    'saas',
+    strategyWithAudience(audience),
+  );
+  const faq = variants.A.find((m) => m.type === 'faq');
+  if (!faq) throw new Error('faq module missing');
+  const c = faq.content as { items: Array<{ q: string; a: string }> };
+  return c.items;
+}
+
+test.describe('API-SEED-LOCALE · extractObjections + FAQ answer per locale (Wave 1 #H)', () => {
+  test('API-SEED-LOCALE-201 · EN audience question gets EN answer (was Chinese)', () => {
+    // Old behavior: q='How does it integrate with HubSpot?', a='我们可以在 demo 中具体演示。'
+    // Audience entries kept short: extractObjections drops fragments > 60 chars.
+    const items = faqItemsForLocale('en', [
+      'How does it integrate with HubSpot?',
+    ]);
+    const injected = items.find((it) => it.q.includes('integrate'));
+    expect(injected).toBeTruthy();
+    expect(injected!.a).toBe('We can walk you through this in the demo.');
+    expect(injected!.a).not.toMatch(/[一-鿿]/); // no Han ideographs in EN answer
+  });
+
+  test('API-SEED-LOCALE-202 · JA audience question gets JA answer', () => {
+    const items = faqItemsForLocale('ja', [
+      '中堅 SaaS の RevOps 責任者',
+      'どのように HubSpot と連携できますか？',
+    ]);
+    const injected = items.find((it) => it.q.includes('連携'));
+    expect(injected).toBeTruthy();
+    expect(injected!.a).toBe('デモで具体的にお見せします。');
+  });
+
+  test('API-SEED-LOCALE-203 · zh-TW audience question gets 繁體 answer (not 简体)', () => {
+    const items = faqItemsForLocale('zh-TW', [
+      '中型 SaaS 的 RevOps 主管',
+      '如何與 HubSpot 整合？',
+    ]);
+    const injected = items.find((it) => it.q.includes('整合'));
+    expect(injected).toBeTruthy();
+    expect(injected!.a).toBe('我們會在 demo 中具體演示。');
+  });
+
+  test('API-SEED-LOCALE-204 · EN keyword fallback fires when no `?`-fragment present', () => {
+    // No `?` in audience text — old code only matched Chinese keywords,
+    // leaving EN page without injected FAQ. Now EN keywords trigger.
+    // Audience entry kept short for the > 4 / < 60 char filter.
+    const items = faqItemsForLocale('en', [
+      'concerned about integration cost',
+    ]);
+    const injected = items.find((it) => /integration|onboarding|cost/i.test(it.q));
+    expect(injected).toBeTruthy();
+    expect(injected!.a).toBe('We can walk you through this in the demo.');
+  });
+});
