@@ -1256,9 +1256,25 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
   // errors AND the page is fully hydrated. Recomputes on every modules /
   // locale change, so editing the offending field makes the entry vanish
   // immediately. See src/lib/page-diagnostics.ts for the rule list.
+  // Wave 4 #K: pass productSurface so the forbidden-phrases rule can
+  // silence itself when the user typed the phrase verbatim into their
+  // own product inputs (legit use, not boilerplate slip).
   const diagnosticsIssues = useMemo(
-    () => findIssues(project.modules, editingLocale, project.inputs?.name ?? ''),
-    [project.modules, editingLocale, project.inputs?.name],
+    () =>
+      findIssues(project.modules, editingLocale, project.inputs?.name ?? '', {
+        name: project.inputs?.name,
+        tagline: project.inputs?.tagline,
+        category: project.inputs?.category,
+        value: project.inputs?.value,
+      }),
+    [
+      project.modules,
+      editingLocale,
+      project.inputs?.name,
+      project.inputs?.tagline,
+      project.inputs?.category,
+      project.inputs?.value,
+    ],
   );
   const handleIssueAction = (issue: Issue) => {
     if (!issue.action) return;

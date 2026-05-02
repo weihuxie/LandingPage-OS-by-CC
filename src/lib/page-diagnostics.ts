@@ -29,6 +29,7 @@
  */
 import type { ModuleType, PageLocale, PageModule } from './types';
 import { findTemplateModules } from './template-detection';
+import { findForbiddenPhrases, type ProductSurface } from './forbidden-phrases';
 
 export type IssueSeverity = 'high' | 'med' | 'low';
 
@@ -112,6 +113,10 @@ interface RuleContext {
   locale: PageLocale;
   productName: string;
   hero: PageModule | null;
+  /** Optional product surface for forbidden-phrase context (Wave 4 #K).
+   *  When the user typed a forbidden phrase verbatim into their inputs,
+   *  the rule silences itself — they own that phrase. */
+  productSurface?: ProductSurface;
 }
 
 type Rule = (ctx: RuleContext) => Issue[];
@@ -254,6 +259,42 @@ const ruleEmptyBullets: Rule = ({ hero }) => {
   return [];
 };
 
+/**
+ * R7 — forbidden default phrases (Audit Wave 4 #K).
+ *
+ * The prompt asks Claude to avoid SaaS-generic boilerplate ("ROI 计算器" /
+ * "logo wall" / "every team saves N hours/week" etc.). Claude self-checks
+ * via the prompt's "Forbidden defaults" section, but enforcement was
+ * 100% prompt-side — athlete refereeing themselves (CLAUDE.md global §5).
+ *
+ * This rule is the deterministic backstop: scan output for the exact
+ * regex patterns the LLM was told to avoid, surface a med-severity issue
+ * if any slipped through. Silenced when the user's own product input
+ * contains the phrase.
+ */
+const ruleForbiddenPhrases: Rule = ({ modules, productSurface }) => {
+  const issues: Issue[] = [];
+  for (const m of modules) {
+    const c = m.content as unknown as Record<string, unknown>;
+    // Scan string-valued top-level fields. Could recurse into items[]
+    // arrays for tighter coverage; keep MVP shallow.
+    for (const [key, val] of Object.entries(c)) {
+      if (typeof val !== 'string' || val.length === 0) continue;
+      const hits = findForbiddenPhrases(val, productSurface);
+      for (const hit of hits) {
+        issues.push({
+          id: `forbidden-${m.id}-${key}-${hit.rule.id}`,
+          severity: 'med' as const,
+          title: `${labelFor(m.type)} 命中默认套话「${hit.snippet.trim()}」`,
+          detail: hit.rule.reason,
+          action: { kind: 'select-module', moduleId: m.id },
+        });
+      }
+    }
+  }
+  return issues;
+};
+
 const RULES: Rule[] = [
   ruleTemplateModules,
   ruleValuePropSoft,
@@ -261,6 +302,7 @@ const RULES: Rule[] = [
   ruleUntranslated,
   ruleMissingSocialProof,
   ruleEmptyBullets,
+  ruleForbiddenPhrases,
 ];
 
 // ---------------------------------------------------------------------------
@@ -271,6 +313,10 @@ export function findIssues(
   modules: PageModule[],
   locale: PageLocale,
   productName: string = '',
+  // Audit Wave 4 #K: optional product surface (name/tagline/category/value)
+  // for the forbidden-phrase rule's `unless` check. When omitted, the rule
+  // still fires but never silences itself.
+  productSurface?: ProductSurface,
 ): Issue[] {
   if (!Array.isArray(modules) || modules.length === 0) return [];
   const ctx: RuleContext = {
@@ -278,6 +324,7 @@ export function findIssues(
     locale,
     productName,
     hero: firstHero(modules),
+    productSurface,
   };
   const all = RULES.flatMap((r) => {
     try {
