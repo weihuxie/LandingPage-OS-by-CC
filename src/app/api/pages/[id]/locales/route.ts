@@ -556,6 +556,26 @@ async function postImpl(req: NextRequest, { params }: { params: { id: string } }
   page.variants.B[locale] = localizedB;
   page.availableLocales = [...page.availableLocales, locale];
 
+  // Audit Wave 2 #I: persist localization-degraded flag per locale.
+  // skip-polish lands when admin's localize chain rolls past OpenAI to
+  // a step with mode='skip-polish' (returns Claude hydrate as-is, no
+  // GPT polish). Without persistence, the only signal was the response
+  // banner — closed-and-forgotten. Now editor reads page.localizationDegraded
+  // to surface a persistent amber notice.
+  {
+    const usedStep = fallbackOutcome?.usedStep;
+    const skipPolish = usedStep?.mode === 'skip-polish';
+    const cur = page.localizationDegraded ?? [];
+    if (skipPolish) {
+      if (!cur.includes(locale)) page.localizationDegraded = [...cur, locale];
+    } else {
+      // Normal-polish succeeded → clear any prior degradation flag for
+      // this locale (re-running add-locale after OpenAI recovers).
+      const next = cur.filter((l) => l !== locale);
+      page.localizationDegraded = next.length ? next : undefined;
+    }
+  }
+
   // Recompute the page-level hydrationFailed flag. It stays TRUE only
   // while EVERY available (variant, locale) cell still has template hero
   // copy — any successful Claude rewrite on any cell clears it. This

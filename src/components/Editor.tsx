@@ -1538,6 +1538,27 @@ export default function Editor({ locale, initialProject, initialLeads, initialPa
           </div>
         )}
 
+        {/* Audit Wave 2 #I: persistent amber banner when the current locale
+            was added via skip-polish (admin's localize chain promoted past
+            OpenAI to a synthetic step that returns Claude hydrate output
+            without the GPT cross-cultural polish pass). Distinct from the
+            red hydrationFailed banner above — output is locale-native, just
+            not polished. Doesn't block publish; just informs ops. */}
+        {page?.localizationDegraded?.includes(editingLocale) && (
+          <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
+            <div className="mb-1 flex items-center gap-1.5 font-medium">
+              <span aria-hidden>💡</span>
+              <span>本 locale 跳过了 GPT 跨文化润色</span>
+            </div>
+            <p className="leading-relaxed">
+              添加 <code className="rounded bg-amber-100 px-1">{editingLocale}</code> 时 OpenAI
+              不可用，已使用 Claude hydrate 阶段产出的母语版作为兜底。文案仍是 LLM 写的母语原稿，
+              但少了 GPT 的跨文化润色（JP/EU 等高语境差异市场建议人工复核）。
+              OpenAI 恢复后可在工具栏重新触发"添加语言"以替换为 polish 版。
+            </p>
+          </div>
+        )}
+
         {/* Locale tabs (Phase D) */}
         {page && (
           <div className="mb-2 flex items-center gap-1 flex-wrap">

@@ -775,6 +775,26 @@ export interface LandingPage {
   hydrationFailed?: boolean;
 
   /**
+   * Per-locale localization-degraded flag (Audit Wave 2 #I).
+   *
+   * When add-locale runs through the localize chain and lands on a
+   * `skip-polish` step (e.g. OpenAI quota exhausted, admin's fallback
+   * chain promotes to a non-polish step that returns Claude hydrate
+   * output as-is), the locale is technically usable but never received
+   * GPT's cross-cultural polish pass. Operations should know this so
+   * (a) they can re-run add-locale once OpenAI is back, and
+   * (b) high-stakes markets (JP / EU) can flag for manual review.
+   *
+   * Only the from-scratch path can mark a locale degraded — inheritance
+   * and parallel-inheritance paths refuse skip-polish (see route.ts
+   * comments).
+   *
+   * Cleared when a subsequent successful normal-polish localize for the
+   * same locale lands.
+   */
+  localizationDegraded?: PageLocale[];
+
+  /**
    * Parallel-locale instance fields (2026-04 refactor · CLAUDE.md §四 TODO #1).
    *
    * The v2 shape stored every locale inside a single LandingPage.variants.{A|B}.{locale}
