@@ -76,7 +76,10 @@ export function isHeroHeadlineTemplate(
 ): boolean {
   if (!headline) return true; // empty counts as un-hydrated
   const trimmed = headline.trim();
-  if (TEMPLATE_HERO_HEADLINES_STATIC.includes(trimmed)) return true;
+  // Audit Wave 3 #C: normalize before comparing so punctuation/space
+  // tweaks don't slip past (Claude flipping ' 11 ' → '11' was the
+  // recurring miss).
+  if (NORM_TEMPLATE_HERO_HEADLINES.has(normalizeForFingerprint(trimmed))) return true;
   if (isNameBasedDefaultHeadline(trimmed, name)) return true;
   return false;
 }
@@ -237,6 +240,42 @@ const TEMPLATE_CTA_SUBHEADS: readonly string[] = [
   'まずは 1 製品から。いつでも追加できます。',
 ];
 
+// --- Normalization for fingerprint matching (Audit Wave 3 #C) -----------
+//
+// Old per-predicate logic compared `c.title.trim()` against TEMPLATE_X
+// using exact equality. Claude flipping a punctuation mark or removing
+// a space was enough to slip past — '每周有 11 小时被吃掉。' vs
+// '每周有11小时被吃掉' would NOT match even though semantically identical.
+// Normalizing before comparison closes that gap while keeping the
+// "exact-fingerprint" intent (we still want to flag only the verbatim
+// templated copy, not anything that *resembles* it).
+
+/**
+ * Strip whitespace + CJK and ASCII punctuation, lowercase. The result
+ * isn't human-readable; only used for fingerprint identity comparison.
+ */
+export function normalizeForFingerprint(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[，。！？、；：（）「」『』《》〈〉【】,.;:!?()'"`\-—–]/g, '');
+}
+
+/** Build a normalized Set from a string list, for O(1) lookup. */
+function normalizedSet(list: readonly string[]): ReadonlySet<string> {
+  return new Set(list.map(normalizeForFingerprint));
+}
+
+const NORM_TEMPLATE_HERO_HEADLINES = normalizedSet(TEMPLATE_HERO_HEADLINES_STATIC);
+const NORM_TEMPLATE_PAIN_TITLES = normalizedSet(TEMPLATE_PAIN_TITLES);
+const NORM_TEMPLATE_PAIN_ITEM_TITLES = normalizedSet(TEMPLATE_PAIN_ITEM_TITLES);
+const NORM_TEMPLATE_SOLUTION_TITLES = normalizedSet(TEMPLATE_SOLUTION_TITLES);
+const NORM_TEMPLATE_SOLUTION_BODIES = normalizedSet(TEMPLATE_SOLUTION_BODIES);
+const NORM_TEMPLATE_BENEFITS_TITLES = normalizedSet(TEMPLATE_BENEFITS_TITLES);
+const NORM_TEMPLATE_BENEFITS_ITEM_TITLES = normalizedSet(TEMPLATE_BENEFITS_ITEM_TITLES);
+const NORM_TEMPLATE_CTA_HEADLINES = normalizedSet(TEMPLATE_CTA_HEADLINES);
+const NORM_TEMPLATE_CTA_SUBHEADS = normalizedSet(TEMPLATE_CTA_SUBHEADS);
+
 // --- Per-module predicates -----------------------------------------------
 //
 // Each returns true when the module's content still clearly matches a
@@ -249,11 +288,11 @@ const TEMPLATE_CTA_SUBHEADS: readonly string[] = [
 export function isPainTemplate(content: unknown): boolean {
   const c = content as { title?: string; items?: Array<{ title?: string }> } | null;
   if (!c) return false;
-  if (c.title && TEMPLATE_PAIN_TITLES.includes(c.title.trim())) return true;
+  if (c.title && NORM_TEMPLATE_PAIN_TITLES.has(normalizeForFingerprint(c.title))) return true;
   const items = c.items ?? [];
   if (items.length > 0) {
     const allTemplate = items.every(
-      (it) => typeof it.title === 'string' && TEMPLATE_PAIN_ITEM_TITLES.includes(it.title.trim()),
+      (it) => typeof it.title === 'string' && NORM_TEMPLATE_PAIN_ITEM_TITLES.has(normalizeForFingerprint(it.title)),
     );
     if (allTemplate) return true;
   }
@@ -263,19 +302,19 @@ export function isPainTemplate(content: unknown): boolean {
 export function isSolutionTemplate(content: unknown): boolean {
   const c = content as { title?: string; body?: string } | null;
   if (!c) return false;
-  if (c.title && TEMPLATE_SOLUTION_TITLES.includes(c.title.trim())) return true;
-  if (c.body && TEMPLATE_SOLUTION_BODIES.includes(c.body.trim())) return true;
+  if (c.title && NORM_TEMPLATE_SOLUTION_TITLES.has(normalizeForFingerprint(c.title))) return true;
+  if (c.body && NORM_TEMPLATE_SOLUTION_BODIES.has(normalizeForFingerprint(c.body))) return true;
   return false;
 }
 
 export function isBenefitsTemplate(content: unknown): boolean {
   const c = content as { title?: string; items?: Array<{ title?: string }> } | null;
   if (!c) return false;
-  if (c.title && TEMPLATE_BENEFITS_TITLES.includes(c.title.trim())) return true;
+  if (c.title && NORM_TEMPLATE_BENEFITS_TITLES.has(normalizeForFingerprint(c.title))) return true;
   const items = c.items ?? [];
   if (items.length > 0) {
     const allTemplate = items.every(
-      (it) => typeof it.title === 'string' && TEMPLATE_BENEFITS_ITEM_TITLES.includes(it.title.trim()),
+      (it) => typeof it.title === 'string' && NORM_TEMPLATE_BENEFITS_ITEM_TITLES.has(normalizeForFingerprint(it.title)),
     );
     if (allTemplate) return true;
   }
@@ -285,8 +324,8 @@ export function isBenefitsTemplate(content: unknown): boolean {
 export function isCtaTemplate(content: unknown): boolean {
   const c = content as { headline?: string; subhead?: string } | null;
   if (!c) return false;
-  if (c.headline && TEMPLATE_CTA_HEADLINES.includes(c.headline.trim())) return true;
-  if (c.subhead && TEMPLATE_CTA_SUBHEADS.includes(c.subhead.trim())) return true;
+  if (c.headline && NORM_TEMPLATE_CTA_HEADLINES.has(normalizeForFingerprint(c.headline))) return true;
+  if (c.subhead && NORM_TEMPLATE_CTA_SUBHEADS.has(normalizeForFingerprint(c.subhead))) return true;
   return false;
 }
 
