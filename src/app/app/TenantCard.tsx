@@ -13,7 +13,7 @@
  */
 import Link from 'next/link';
 import { useState } from 'react';
-import InviteModal from './InviteModal';
+import InviteModal from '@/components/InviteModal';
 
 interface Props {
   tenantId: string;
