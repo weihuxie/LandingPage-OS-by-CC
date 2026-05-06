@@ -13,7 +13,12 @@
  * lp_display_locale cookie that the PATCH bakes — so the new locale
  * sticks across reloads without waiting for the round-trip.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  avatarColors,
+  avatarLetter,
+  displayNameOf,
+} from '@/lib/avatar';
 
 type AdminLocale = 'zh-CN' | 'ja' | 'en';
 
@@ -48,15 +53,18 @@ function pathWithoutLocale(pathname: string, currentLocale: string): string {
   return pathname;
 }
 
-/** Email's first non-whitespace letter, uppercased; '?' if no email. */
-function avatarLetter(email: string): string {
-  const trimmed = email.trim();
-  return trimmed.length > 0 ? trimmed.charAt(0).toUpperCase() : '?';
-}
-
 export default function UserBadge({ user, locale }: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Stable per-email values — computed once, no re-render on dropdown
+  // open/close. Memoizing the colors specifically because the gradient
+  // string is what gets passed to inline style and React would re-eq
+  // every render otherwise (the function call is cheap; this is for
+  // referential stability of the style prop).
+  const name = displayNameOf(user);
+  const letter = avatarLetter(user);
+  const colors = useMemo(() => avatarColors(user.email), [user.email]);
 
   useEffect(() => {
     if (!open) return;
@@ -98,22 +106,50 @@ export default function UserBadge({ user, locale }: Props) {
     <div ref={wrapRef} className="relative">
       <button
         type="button"
-        className="flex h-7 w-7 items-center justify-center rounded-full bg-ink-100 text-xs font-medium text-ink-700 transition hover:bg-ink-200"
+        className="group flex items-center gap-1.5 rounded-full pl-0.5 pr-2 py-0.5 text-xs transition hover:bg-ink-100"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`用户菜单：${user.email}`}
         title={user.email}
         onClick={() => setOpen((v) => !v)}
       >
-        {avatarLetter(user.email)}
+        {/* Gradient avatar circle. Stable HSL hue per email; subtle
+            ring on hover for affordance without dropping to a "button"
+            box. */}
+        <span
+          aria-hidden
+          className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold shadow-sm ring-1 ring-black/5 transition group-hover:ring-2 group-hover:ring-brand-300"
+          style={{ background: colors.gradient, color: colors.fg }}
+        >
+          {letter}
+        </span>
+        <span className="hidden max-w-[10rem] truncate text-ink-700 sm:inline">
+          {name}
+        </span>
+        <span className="hidden text-ink-400 sm:inline" aria-hidden>
+          ▾
+        </span>
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-1 w-60 overflow-hidden rounded-md border border-ink-200 bg-white py-1 shadow-lg"
+          className="absolute right-0 top-full z-50 mt-1 w-64 overflow-hidden rounded-md border border-ink-200 bg-white py-1 shadow-lg"
         >
-          <div className="px-3 py-2 text-[11px] text-ink-500">
-            {user.email}
+          {/* Identity header — gradient avatar + name (top) + email (bottom).
+              Mirrors what the trigger shows so user recognizes "this is me"
+              before glancing at the menu items. */}
+          <div className="flex items-center gap-2.5 px-3 py-2.5">
+            <span
+              aria-hidden
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold shadow-sm ring-1 ring-black/5"
+              style={{ background: colors.gradient, color: colors.fg }}
+            >
+              {letter}
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium text-ink-900">{name}</div>
+              <div className="truncate text-[11px] text-ink-500">{user.email}</div>
+            </div>
           </div>
           <div className="border-t border-ink-100" />
           <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-ink-400">
