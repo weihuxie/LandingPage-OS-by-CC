@@ -93,6 +93,7 @@ export async function executeScenario<T>(
 
   const hops: FallbackHop[] = [];
   let firstError: unknown = null;
+  let skippedNoKeyCount = 0;
   for (let i = 0; i < policy.chain.length; i++) {
     const step = policy.chain[i];
     // Skip providers without key (except skip-polish mode which doesn't
@@ -101,6 +102,7 @@ export async function executeScenario<T>(
       console.warn(
         `[llm-fallback] ${scenario}/${locale} skipping step ${i} (${step.provider}/${step.model}) — no API key`,
       );
+      skippedNoKeyCount++;
       continue;
     }
     try {
@@ -146,6 +148,46 @@ export async function executeScenario<T>(
     `[llm-fallback] ${scenario}/${locale} chain exhausted; hops:`,
     hops.map((h) => `${h.provider}/${h.model}=${h.errorClass}`).join(' → '),
   );
+
+  // 2026-05 bug fix: when EVERY chain step was skipped because the
+  // provider lacks an API key, no step ever throws — firstError stays
+  // null and the old `throw firstError ?? new Error(...)` produced a
+  // generic Error that route handlers mapped to 500. The correct shape
+  // is LLMRequiredError → 503 + { code: 'LLM_REQUIRED' } so the
+  // editor banner can render its specific "缺 LLM key" state. This
+  // path matters for fresh installs / dev environments where the
+  // operator hasn't configured any LLM key yet.
+  if (firstError === null && skippedNoKeyCount === policy.chain.length) {
+    const feature =
+      scenario === 'extract'
+        ? 'extract'
+        : scenario === 'localize'
+          ? 'localize-gpt'
+          : scenario === 'strategy'
+            ? 'strategy'
+            : 'module-regen'; // covers 'copy' and 'judge' too
+    // Report the first chain step's expected env var as the missing
+    // one — that's the most-actionable hint for the operator (configure
+    // the primary provider's key first; fallback chain rarely needs
+    // multiple keys configured to start working).
+    const primary = policy.chain[0]?.provider;
+    const missing =
+      primary === 'claude'
+        ? 'ANTHROPIC_API_KEY'
+        : primary === 'deepseek'
+          ? 'DEEPSEEK_API_KEY'
+          : primary === 'openai'
+            ? 'OPENAI_API_KEY'
+            : primary === 'gemini'
+              ? 'GEMINI_API_KEY'
+              : 'any-llm';
+    throw new LLMRequiredError(
+      feature,
+      missing,
+      `${scenario} chain has no usable provider — every step is missing its API key (chain[0] expects ${missing})`,
+    );
+  }
+
   throw firstError ?? new Error(`${scenario} chain exhausted with no error captured`);
 }
 

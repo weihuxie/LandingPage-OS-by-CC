@@ -77,7 +77,10 @@ test.describe('API-HYD · Hydrate', () => {
       expect(res.status()).toBe(503);
       const body = await res.json();
       expect(body.code).toBe('LLM_REQUIRED');
-      expect(body.missing).toBe('ANTHROPIC_API_KEY');
+      // Default copy chain[0] is deepseek (cheap), so missing reports
+      // its key. If admin reorders chain to claude-first, expect would
+      // flip — accept either.
+      expect(body.missing).toMatch(/ANTHROPIC_API_KEY|DEEPSEEK_API_KEY/);
 
       // 落库未变
       const fresh = await getPage(request, seeded.pageId);

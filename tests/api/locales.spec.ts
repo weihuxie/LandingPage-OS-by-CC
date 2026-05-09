@@ -198,7 +198,10 @@ test.describe('API-LOC · Locales', () => {
       expect(res.status()).toBe(503);
       const body = await res.json();
       expect(body.code).toBe('LLM_REQUIRED');
-      expect(body.missing).toMatch(/ANTHROPIC_API_KEY|OPENAI_API_KEY/);
+      // Locale-add involves copy (deepseek default) → localize (openai
+      // default). First-fail reports whichever scenario's chain[0] key
+      // is missing; accept any of the involved provider keys.
+      expect(body.missing).toMatch(/ANTHROPIC_API_KEY|DEEPSEEK_API_KEY|OPENAI_API_KEY/);
 
       // 落库未污染
       const fresh = await getPage(request, seeded.pageId);
