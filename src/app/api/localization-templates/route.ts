@@ -3,6 +3,7 @@ import { readRaw, writeRaw } from '@/lib/storage-access';
 import type { LocalizationStrategy, PageLocale, MarketCode } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 interface Template {
   id: string;

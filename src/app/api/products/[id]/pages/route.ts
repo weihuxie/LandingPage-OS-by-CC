@@ -29,6 +29,7 @@ import type {
 } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 // See /api/projects route for timeout rationale — same 5-parallel-Opus
 // workload here, same Vercel timeout risk without raising maxDuration.
 export const maxDuration = 60;

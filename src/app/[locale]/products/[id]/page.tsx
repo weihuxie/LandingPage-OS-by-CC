@@ -25,19 +25,14 @@ export default async function ProductDetailPage({
     `/${params.locale}/products/${params.id}`,
   );
   noStore();
-  // readLandingPages keys off the product id, which equals params.id
-  // before the 404 check — so we can run both KV reads in parallel
-  // instead of waiting one round-trip for getProduct() to return.
-  // On warm-lambda + KV that saves ~50–100ms; on cold start it's
-  // bigger because both round-trips overlap with the cold-start
-  // latency instead of stacking on it.
-  const [product, pages] = await Promise.all([
-    getProduct(params.id),
-    readLandingPages({ tenantId: tenant.id, productId: params.id }),
-  ]);
-  // 404 covers both "no such product" and "product belongs to another
-  // tenant" — same UX, no info leak about whether the id exists.
+  // The hard tenant gate lives in layout.tsx (must run above the
+  // loading.tsx Suspense boundary so notFound() can produce a real
+  // 404 status). The page-level check below is defensive — covers
+  // hypothetical race where layout passed but the product was
+  // deleted between layout and page renders.
+  const product = await getProduct(params.id);
   if (!product || product.tenantId !== tenant.id) notFound();
+  const pages = await readLandingPages({ tenantId: tenant.id, productId: params.id });
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">

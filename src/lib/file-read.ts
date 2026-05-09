@@ -11,7 +11,14 @@ export async function extractFileText(
   const lower = filename.toLowerCase();
   try {
     if (lower.endsWith('.pdf')) {
-      const pdfParse = (await import('pdf-parse')).default;
+      // Bypass `pdf-parse`'s top-level `index.js`, which has a debug-mode
+      // `fs.readFileSync('./test/data/05-versions-space.pdf')` that fires
+      // unconditionally under ESM (`!module.parent === !undefined === true`).
+      // The deep `lib/pdf-parse.js` is the actual implementation and
+      // doesn't carry that broken module-load side-effect — the standard
+      // upstream workaround. Affects both raw-Node test environments
+      // and any non-bundled ESM consumer.
+      const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default;
       const data = await pdfParse(buffer);
       return sanitize(data.text);
     }

@@ -101,7 +101,7 @@ function getApiKey(): string | null {
   return k && k.length > 0 ? k : null;
 }
 
-function getFromAddress(): string {
+export function getFromAddress(): string {
   // eslint-disable-next-line dot-notation
   const email = process.env['MAGIC_LINK_FROM_EMAIL'] || 'onboarding@resend.dev';
   // eslint-disable-next-line dot-notation
@@ -172,7 +172,7 @@ export async function sendMagicLinkEmail(to: string, loginUrl: string): Promise<
  * remote images. Plain text fallback carries the same link — some
  * email clients (mutt, CLI clients) only render text.
  */
-function renderMagicLinkEmail(loginUrl: string): { html: string; text: string } {
+export function renderMagicLinkEmail(loginUrl: string): { html: string; text: string } {
   // Escape the URL into HTML attribute context just in case. Tokens are
   // URL-safe base64 (no HTML-special chars), but we pay nothing for the
   // defensive encode and it future-proofs against a token format change.

@@ -12,6 +12,7 @@ import { isHoneypotTriggered } from '@/lib/lead-spam';
 import type { Lead, PageLocale, NarrativeVariant } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 // GET requires auth — only the tenant's leads are exposed. POST stays
 // public (form submissions come from anonymous visitors of /p/[slug]).

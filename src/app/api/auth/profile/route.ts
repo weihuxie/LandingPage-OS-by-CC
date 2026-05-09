@@ -26,6 +26,7 @@ import { locales } from '@/i18n';
 import type { User } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 const ALLOWED_LOCALES = new Set(locales as readonly string[]);
 

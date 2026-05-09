@@ -10,6 +10,7 @@ import { requireUserApi } from '@/lib/server-auth';
 import type { LandingPage, NarrativeVariant, PageLocale } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireUserApi();

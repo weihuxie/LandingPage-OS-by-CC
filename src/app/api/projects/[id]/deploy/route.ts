@@ -13,6 +13,7 @@ import {
 import { requireUserApi } from '@/lib/server-auth';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 /**
  * Deploy a project to Vercel as a static page (PRD v5.1 §6).
