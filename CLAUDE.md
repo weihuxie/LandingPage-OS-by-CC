@@ -220,10 +220,11 @@ Admin 在 UI 里把 `copy.default` 设成 `openai` 之类**没 strategy/copy ada
 - 成功回退时，响应体带 `fallback: { scenario, primary, used, hops: [...] }` 字段，前端可渲染黄色 banner "GPT 本地化回退到 Claude（429-quota）"。
 - **定点场景：** `localize` 的回退特殊 —— 只有 OpenAI 一家有 adapter，但 hydrate 阶段 Claude 已经产出过 locale-native 输出，回退实现是**用 hydrate 的 Claude 产物跳过 polish pass**。这是有意识的"优雅降级"而不是模板 fig-leaf：输出还是 LLM 写的母语文案，只是少一轮 GPT 跨文化润色。
 
-**接入进度**（2026-04 第二轮修订）：今天 `executeWithFallback` 已经挂到 `copy` + `strategy` + `localize` 三个场景。Hydrate 不是独立 scenario —— 它内部 6 次并行调用全部走 `regenerateModuleViaProvider`（即 `copy` 通道），所以 copy 接了 fallback 就等于 hydrate 也接了，每个 hero-A / hero-B / pain / benefits / solution / cta 都独立参与 chain（happy path 零开销；某一路 quota 爆时只那一路换 provider，其他路照旧用 primary）。
-- `localize`（/api/pages/[id]/locales POST）：OpenAI 是唯一有 adapter 的 primary，回退只是跳过润色。
+**接入进度**（2026-05 第三轮修订）：`executeScenario` 已经挂到 `copy` + `strategy` + `localize` + `judge` 四个场景。Hydrate 不是独立 scenario —— 它内部 6 次并行调用全部走 `regenerateModuleViaProvider`（即 `copy` 通道），所以 copy 接了 fallback 就等于 hydrate 也接了，每个 hero-A / hero-B / pain / benefits / solution / cta 都独立参与 chain（happy path 零开销；某一路 quota 爆时只那一路换 provider，其他路照旧用 primary）。
+- `localize`（/api/pages/[id]/locales POST）：OpenAI 是唯一有 adapter 的 primary。**2026-05 加固**：回退路径如果含 `mode='skip-polish'` 步骤，连 4xx-auth / 4xx-other / 非 trigger 错误都会跳到 skip-polish 继续走（之前会直接 break，导致 OpenAI 401 时优雅降级路径不可达）。skip-polish 不调任何 LLM，与上游 auth/quota 错误正交，跳过去是安全的。
 - `copy`（module-regen，走 /api/projects/[id] PATCH 的 regenerateModuleId 分支 + hydrate 里的 per-module 重写）：Claude / DeepSeek 两家都有 adapter，回退是真的换 provider 重新跑一次。
 - `strategy`（/api/projects POST 创建页面第一步 + /api/projects/[id] PATCH 的 `regenerateStrategyAll` / `regenerateStrategyBlock` / `regenerateStrategyLine`）：Claude / DeepSeek 两家都有 adapter，primary 挂了换到另一家。
+- `judge`（/api/pages/[id]/evaluate POST，**2026-05 接入**）：Claude / DeepSeek 两家都有 judge adapter；admin chain 里允许放 openai / gemini 的 forward-compat placeholder，executor 通过 `NoAdapterSkipError` 让 walker 静默跳过这些（不计 hop）。落地之前 judge 用自己的 single-shot pickJudgeProvider，撞 Claude 空钱包会直接 502 不退到 DeepSeek —— 跟下面"全链路 Claude 空钱包自动顶住"的承诺不一致，这次填上。
 - `extract`（长文档摄取，Gemini 唯一）：没接 —— 单一 adapter，回退没意义。Gemini 挂了这条功能就短暂不可用，不会影响其他生成路径。
 
 **用户 2026-04 撞到 Anthropic 400 "credit balance too low" 后的最终 posture**：只要 admin 把 `fallback.enabled` 打开 + 把 DeepSeek 放进 chain，从"创建新页面"到"重新生成单模块"到"hydrate 整页"全链路都能在 Claude 空钱包时自动顶住。业务侧看不到 502，只在服务器日志看到 `[llm-fallback] {scenario} fell back claude → deepseek after 1 failed hop(s)`。

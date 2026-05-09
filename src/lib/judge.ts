@@ -46,6 +46,7 @@ import {
 import { hasClaudeKey } from './llm-claude';
 import { hasDeepseekKey } from './llm-deepseek';
 import { policyFor, readLLMConfig, type LLMProvider } from './llm-config';
+import { executeScenario, NoAdapterSkipError } from './llm-fallback';
 
 /**
  * Choose a cross-family judge provider.
@@ -288,35 +289,76 @@ async function callDeepseekJudge(
 }
 
 /**
- * Public entry. Picks judge provider, calls LLM, validates output,
- * returns a JudgeReport.
+ * Public entry. Walks the configured judge chain (claude/deepseek), calls
+ * the first usable provider, and falls back to the next on trigger-matching
+ * failures (e.g. claude credit-balance-too-low → deepseek). Validates the
+ * raw output and returns a JudgeReport.
  *
- * Throws LLMRequiredError when no judge-capable key is configured.
- * Throws LLMCallError on adapter failure (network / 5xx / parse).
+ * 2026-05 refactor: migrated from single-shot call to executeScenario-based
+ * chain walking. CLAUDE.md §2.5 had advertised judge as part of the
+ * fallback-enabled set ("全链路 Claude 空钱包自动顶住") but the code only
+ * picked one provider and returned 502 on failure. Now matches the
+ * documented behavior — judge falls through chain[0] → chain[N] just like
+ * strategy / copy.
+ *
+ * Throws LLMRequiredError when no judge-capable key is configured (via
+ * executeScenario's all-skipped detection).
+ * Throws LLMCallError on chain-exhausted failure (every step tried and
+ * threw a trigger-matching error).
  * Caller (the route) maps these to 503 / 502 respectively.
  */
 export async function evaluatePageWithJudge(input: JudgeInput): Promise<JudgeReport> {
   const tStart = Date.now();
+
+  // Compute the cross-family warning up-front using the chain[0]
+  // (which is what executeScenario will try first when keys allow).
+  // sameFamilyWarning is informational — not changed by which fallback
+  // step actually wins, since the warning is about admin's chain
+  // ordering choice vs the generator, not the runtime outcome.
   const choice = await pickJudgeProvider(input.generatorProvider, input.locale);
   console.warn(
-    `[judge] evaluate start (page=${input.pageId}, locale=${input.locale}, modules=${input.pageModules.length}, generator=${input.generatorProvider ?? 'unknown'}, judge=${choice.provider}/${choice.model}, sameFamily=${choice.sameFamilyWarning})`,
+    `[judge] evaluate start (page=${input.pageId}, locale=${input.locale}, modules=${input.pageModules.length}, generator=${input.generatorProvider ?? 'unknown'}, primaryJudge=${choice.provider}/${choice.model}, sameFamily=${choice.sameFamilyWarning})`,
   );
 
   const systemPrompt = buildJudgeSystemPrompt(input.locale);
   const userPrompt = buildJudgeUserPrompt(input.pageModules, input.inputs, input.context);
 
+  // Walk the judge chain. Executor dispatches by provider; openai/gemini
+  // (forward-compat placeholders) throw NoAdapterSkipError so the walker
+  // continues without recording a failed hop.
   let raw: { suggestions: unknown[]; rulesChecked: unknown[] };
+  let usedProvider: LLMProvider;
+  let usedModel: string;
   try {
-    if (choice.provider === 'claude') {
-      raw = await callClaudeJudge(systemPrompt, userPrompt, choice.model);
-    } else {
-      raw = await callDeepseekJudge(systemPrompt, userPrompt, choice.model);
+    const outcome = await executeScenario<{ suggestions: unknown[]; rulesChecked: unknown[] }>(
+      'judge',
+      input.locale,
+      async (step) => {
+        if (step.provider === 'claude') {
+          return await callClaudeJudge(systemPrompt, userPrompt, step.model);
+        }
+        if (step.provider === 'deepseek') {
+          return await callDeepseekJudge(systemPrompt, userPrompt, step.model);
+        }
+        // openai / gemini are valid LLMProvider values but no judge
+        // adapter implemented — let the walker skip past them.
+        throw new NoAdapterSkipError(step.provider, 'judge');
+      },
+    );
+    raw = outcome.result;
+    usedProvider = outcome.usedStep.provider;
+    usedModel = outcome.usedStep.model;
+    if (outcome.hops.length > 0) {
+      console.warn(
+        `[judge] chain fell through ${outcome.hops.length} hop(s) before ${usedProvider}/${usedModel}: ` +
+          outcome.hops.map((h) => `${h.provider}=${h.errorClass}`).join(' → '),
+      );
     }
   } catch (e) {
     if (e instanceof LLMCallError || e instanceof LLMRequiredError) throw e;
     const msg = e instanceof Error ? e.message : String(e);
     throw new LLMCallError(
-      choice.provider === 'claude' ? 'claude' : 'deepseek',
+      'claude', // best-effort — chain-exhausted means we don't know which
       'module-regen',
       e,
       `Judge call failed: ${msg}`,
@@ -357,19 +399,25 @@ export async function evaluatePageWithJudge(input: JudgeInput): Promise<JudgeRep
     model: copyPrimary?.model ?? modelForProvider(cfg, generatorProvider),
   };
 
+  // Recompute sameFamilyWarning against the step that actually succeeded
+  // (may differ from chain[0] if fallback fired). Surfaces the truth: if
+  // chain[0]=claude failed and we fell through to chain[1]=deepseek, but
+  // generator is also deepseek, the warning should fire.
+  const actualSameFamilyWarning = usedProvider === generatorProvider;
+
   const totalMs = Date.now() - tStart;
   console.warn(
-    `[judge] evaluate done in ${totalMs}ms (kept=${result.kept.length}, dropped=${result.dropped.length}, rulesChecked=${rulesChecked.length})`,
+    `[judge] evaluate done in ${totalMs}ms (used=${usedProvider}/${usedModel}, kept=${result.kept.length}, dropped=${result.dropped.length}, rulesChecked=${rulesChecked.length})`,
   );
 
   return {
     contentHash: hashContent(input.pageModules),
     generatedAt: Date.now(),
-    judge: { provider: choice.provider, model: choice.model },
+    judge: { provider: usedProvider, model: usedModel },
     generator,
     suggestions: result.kept,
     rulesChecked,
-    sameFamilyWarning: choice.sameFamilyWarning,
+    sameFamilyWarning: actualSameFamilyWarning,
   };
 }
 

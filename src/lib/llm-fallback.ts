@@ -11,8 +11,18 @@
  *   - LLMRequiredError bubbles unchanged (missing API key is a config
  *     problem, not a transient one to swap-around).
  *   - Non-retryable errors (4xx-auth, 4xx-other) short-circuit the
- *     chain. A bad-prompt 400 will recur on every provider; burning
- *     four quotas to confirm doesn't help.
+ *     LIVE chain. A bad-prompt 400 will recur on every provider;
+ *     burning four quotas to confirm doesn't help. EXCEPTION: if a
+ *     remaining step is `mode: 'skip-polish'`, the walker jumps to it
+ *     — skip-polish steps don't actually call an LLM (they accept the
+ *     hydrate-time output as-is), so auth/quota failures upstream are
+ *     orthogonal. See 2026-05 fix for OpenAI 401 → claude/skip-polish
+ *     path being unreachable.
+ *   - Executors can throw `NoAdapterSkipError` to declare "this step's
+ *     provider has no adapter for this scenario" — the walker treats
+ *     it like the no-key skip (continue without counting it as a
+ *     failed hop). Used by judge.ts where openai/gemini steps in the
+ *     chain are forward-compat placeholders without a real adapter.
  *   - Every hop is logged via console.warn — the admin can read why
  *     fallback ran or short-circuited from Vercel function logs.
  */
@@ -35,6 +45,24 @@ export interface FallbackHop {
   model: string;
   errorClass: '429-quota' | '429-rate' | '5xx' | '4xx-auth' | '4xx-other' | 'network';
   message: string;
+}
+
+/**
+ * Sentinel error: the executor recognized the step but has no adapter
+ * for `step.provider` in this scenario. The walker treats it like a
+ * no-key skip (no failure hop logged, just continue to the next step).
+ *
+ * Use case: judge.ts's chain may include openai/gemini entries as
+ * forward-compat placeholders, but only claude/deepseek have a real
+ * judge adapter today. Throwing this lets admin keep those entries in
+ * the chain without breaking the chain walk.
+ */
+export class NoAdapterSkipError extends Error {
+  readonly code = 'NO_ADAPTER_SKIP' as const;
+  constructor(public provider: LLMProvider, public scenario: string) {
+    super(`no ${scenario} adapter for provider=${provider}; skipping chain step`);
+    this.name = 'NoAdapterSkipError';
+  }
 }
 
 export interface FallbackOutcome<T> {
@@ -94,6 +122,17 @@ export async function executeScenario<T>(
   const hops: FallbackHop[] = [];
   let firstError: unknown = null;
   let skippedNoKeyCount = 0;
+  let skippedNoAdapterCount = 0;
+  /** Find next chain index whose step is skip-polish, or -1. Used as a
+   *  fallback target when the live chain has been declared unsuitable
+   *  (auth-bail or non-trigger error) — skip-polish steps don't call
+   *  the LLM and are orthogonal to the upstream failure. */
+  const nextSkipPolishIdx = (from: number): number => {
+    for (let j = from; j < policy.chain.length; j++) {
+      if (policy.chain[j].mode === 'skip-polish') return j;
+    }
+    return -1;
+  };
   for (let i = 0; i < policy.chain.length; i++) {
     const step = policy.chain[i];
     // Skip providers without key (except skip-polish mode which doesn't
@@ -115,6 +154,16 @@ export async function executeScenario<T>(
       return { result, usedStep: step, hops };
     } catch (err) {
       if (err instanceof LLMRequiredError) throw err;
+      // No-adapter sentinel — treat like no-key skip (silent, no hop
+      // recorded as a failure). The chain entry was forward-compat
+      // padding, not a real attempt.
+      if (err instanceof NoAdapterSkipError) {
+        console.warn(
+          `[llm-fallback] ${scenario}/${locale} skipping step ${i} (${step.provider}/${step.model}) — no ${scenario} adapter for provider`,
+        );
+        skippedNoAdapterCount++;
+        continue;
+      }
       if (firstError === null) firstError = err;
       const cls = classifyProviderError(err);
       const msg = err instanceof Error ? err.message : String(err);
@@ -134,13 +183,26 @@ export async function executeScenario<T>(
         errorClass: cls ?? 'network',
         message: msg,
       });
-      // Bail on non-retryable failures — same input across providers
-      // would just re-hit the same wall.
-      if (cls === '4xx-auth' || cls === '4xx-other') break;
-      // Non-trigger-matching failures still propagate (e.g. 429-rate
-      // without 'rate' in triggers): bail rather than burn the chain.
-      if (!isTriggered(cls, policy.triggers)) break;
-      // Else keep walking.
+      // 2026-05 fix: when a normal step bails (auth-bail or non-trigger
+      // error), check if the chain has a remaining skip-polish step
+      // before giving up entirely. Skip-polish doesn't call any LLM —
+      // it's a synthetic graceful-degrade marker — so upstream auth /
+      // quota / prompt failures don't predict it'll fail. The
+      // localize chain (openai/normal → claude/skip-polish) hits this
+      // path when OpenAI returns 401 or admin uses a non-OpenAI
+      // localize primary.
+      const shouldBail =
+        cls === '4xx-auth' ||
+        cls === '4xx-other' ||
+        !isTriggered(cls, policy.triggers);
+      if (shouldBail) {
+        const skipIdx = nextSkipPolishIdx(i + 1);
+        if (skipIdx === -1) break;
+        // Jump to the skip-polish step on the next iteration.
+        i = skipIdx - 1; // -1 because the loop will increment
+        continue;
+      }
+      // Else (trigger-matching error) keep walking.
     }
   }
 
@@ -150,14 +212,18 @@ export async function executeScenario<T>(
   );
 
   // 2026-05 bug fix: when EVERY chain step was skipped because the
-  // provider lacks an API key, no step ever throws — firstError stays
-  // null and the old `throw firstError ?? new Error(...)` produced a
-  // generic Error that route handlers mapped to 500. The correct shape
-  // is LLMRequiredError → 503 + { code: 'LLM_REQUIRED' } so the
-  // editor banner can render its specific "缺 LLM key" state. This
-  // path matters for fresh installs / dev environments where the
-  // operator hasn't configured any LLM key yet.
-  if (firstError === null && skippedNoKeyCount === policy.chain.length) {
+  // provider lacks an API key (or has no adapter for this scenario),
+  // no step ever throws — firstError stays null and the old
+  // `throw firstError ?? new Error(...)` produced a generic Error
+  // that route handlers mapped to 500. The correct shape is
+  // LLMRequiredError → 503 + { code: 'LLM_REQUIRED' } so the editor
+  // banner can render its specific "缺 LLM key" state. This path
+  // matters for fresh installs / dev environments where the operator
+  // hasn't configured any LLM key yet.
+  if (
+    firstError === null &&
+    skippedNoKeyCount + skippedNoAdapterCount === policy.chain.length
+  ) {
     const feature =
       scenario === 'extract'
         ? 'extract'
