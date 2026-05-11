@@ -39,6 +39,17 @@
  *     required, unlike Anthropic). The long system prompts here (>2k
  *     tokens each) will cache on the very first call. No code change
  *     needed to benefit from this — the API handles it transparently.
+ *
+ * Two model families, two protocols (2026-05 split):
+ *   - V3 (deepseek-chat) → tool_choice path. Forces structured JSON via
+ *     OpenAI-style function calling. ~3s avg, schema enforced server-side.
+ *     Will be deprecated 2026-07-24.
+ *   - V4 (deepseek-v4-pro / -flash) → response_format=json_object path.
+ *     V4 rejects tool_choice (DeepSeek's V4 routes through reasoner
+ *     backend internally), but supports json_mode per their official
+ *     tool_calls / json_mode docs. ~6-19s avg, schema-by-prompt rather
+ *     than server-enforced.
+ *   Dispatch via isV4Family(model) at call sites.
  */
 
 import OpenAI from 'openai';
@@ -192,6 +203,165 @@ function getClient(): OpenAI {
   return new OpenAI({ apiKey, baseURL: BASE_URL });
 }
 
+/**
+ * V4 family detector. Used to switch strategy + module-regen calls onto
+ * the response_format=json_object path, since V4 rejects the
+ * `tool_choice: { type: 'function', name: ... }` we use for V3.
+ *
+ * History: pre-2026-05 the adapter sent the same tool_choice payload to
+ * V4 and let DeepSeek 400 → runtime catch swap to V3. Net effect: admin
+ * picks V4 in the dropdown but actually receives V3 output (with a
+ * wasted ~1s round-trip on top). 2026-05 probe confirmed V4 supports
+ * `response_format=json_object` per DeepSeek's official tool_calls /
+ * json_mode docs (their example uses `model="deepseek-v4-pro"`), 15/15
+ * rounds returned schema-valid JSON. So we route V4 through json mode
+ * and admin gets actual V4 output when they ask for it.
+ *
+ * Trade-off: V4-pro avg latency ~18s vs V3 ~3s (5-6× slower). V4-flash
+ * ~5.7s (1.8× slower). Default chain stays V3-first; V4 is opt-in via
+ * /admin/llm.
+ *
+ * NOT a reasoner family — they're disjoint. isReasonerFamily catches
+ * `deepseek-r*` (reasoner / r1 / r2 etc.) and coerces to chat;
+ * isV4Family catches `deepseek-v4-*` and switches the call protocol.
+ */
+export function isV4Family(model: string): boolean {
+  if (!model) return false;
+  return /^deepseek-v4/i.test(model.trim());
+}
+
+/**
+ * Strategy path via response_format=json_object (V4 mode).
+ *
+ * DeepSeek's json_object mode requires:
+ *   1. The system or user prompt MUST contain the literal word "json"
+ *      (their server-side guard rejects requests otherwise — yes, really).
+ *   2. The prompt should describe / show the desired JSON shape so the
+ *      model knows what to emit.
+ *
+ * We satisfy both by appending a compact schema description to the
+ * system prompt. The user prompt suffix also re-states "Return as a
+ * json object" to satisfy the keyword check belt-and-suspenders.
+ */
+async function callStrategyV4JsonMode(
+  client: OpenAI,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<StrategySummary> {
+  const jsonSuffix = `
+
+OUTPUT FORMAT — V4 json mode:
+You MUST respond with a single valid json object with exactly these keys (no markdown fences, no commentary, no surrounding text):
+{
+  "audience": ["string", "string", "..."],
+  "goal": ["string", "string", "..."],
+  "narrative": ["string", "string", "..."],
+  "local": ["string", "string", "..."]
+}
+Each array contains 3-5 short declarative strings in the target locale.`;
+  const response = await client.chat.completions.create({
+    model: safeModelOrDefault(model, 'strategy:v4-json'),
+    max_tokens: MAX_TOKENS,
+    temperature: 0.4,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: systemPrompt + jsonSuffix },
+      {
+        role: 'user',
+        content:
+          userPrompt +
+          '\n\nReturn the strategy as a json object matching the schema in the system prompt.',
+      },
+    ],
+  });
+  const choice = response.choices[0];
+  const text = choice?.message?.content;
+  if (!text || typeof text !== 'string' || text.trim() === '') {
+    // DeepSeek doc warns "API 有概率返回空 content" for json_object mode.
+    // Probe was 0/15 empty across V4 pro+flash — but in case it happens,
+    // throw LLMCallError so the upper retry loop tries once more, and
+    // fallback chain catches the rest.
+    throw new LLMCallError(
+      'deepseek',
+      'strategy',
+      undefined,
+      `V4 json mode returned empty content. finish_reason=${choice?.finish_reason ?? 'unknown'}`,
+    );
+  }
+  const parsed = extractJsonObject<StrategySummary>(text);
+  if (
+    !parsed ||
+    !Array.isArray(parsed.audience) ||
+    !Array.isArray(parsed.goal) ||
+    !Array.isArray(parsed.narrative) ||
+    !Array.isArray(parsed.local)
+  ) {
+    throw new LLMCallError(
+      'deepseek',
+      'strategy',
+      undefined,
+      `V4 json mode parse failed (model=${model}). Raw (first 400): ${text.slice(0, 400)}`,
+    );
+  }
+  return parsed;
+}
+
+/**
+ * Module regen path via response_format=json_object (V4 mode).
+ * Same json_mode contract as strategy — schema embedded in system,
+ * keyword "json" present in both system and user prompts.
+ */
+async function callModuleV4JsonMode(
+  client: OpenAI,
+  model: string,
+  type: ModuleType,
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<Partial<ClaudeModuleContent>> {
+  const schema = MODULE_SCHEMAS[type];
+  const jsonSuffix = `
+
+OUTPUT FORMAT — V4 json mode:
+You MUST respond with a single valid json object matching this schema (no markdown fences, no commentary):
+${JSON.stringify(schema, null, 2)}`;
+  const response = await client.chat.completions.create({
+    model: safeModelOrDefault(model, `module-regen:${type}:v4-json`),
+    max_tokens: MAX_TOKENS,
+    temperature: 0.5,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: systemPrompt + jsonSuffix },
+      {
+        role: 'user',
+        content:
+          userPrompt +
+          `\n\nReturn the ${type} content as a json object matching the schema in the system prompt.`,
+      },
+    ],
+  });
+  const choice = response.choices[0];
+  const text = choice?.message?.content;
+  if (!text || typeof text !== 'string' || text.trim() === '') {
+    throw new LLMCallError(
+      'deepseek',
+      'module-regen',
+      undefined,
+      `V4 json mode returned empty content for ${type}. finish_reason=${choice?.finish_reason ?? 'unknown'}`,
+    );
+  }
+  const parsed = extractJsonObject<Partial<ClaudeModuleContent>>(text);
+  if (!parsed || typeof parsed !== 'object') {
+    throw new LLMCallError(
+      'deepseek',
+      'module-regen',
+      undefined,
+      `V4 json mode parse failed for ${type} (model=${model}). Raw (first 300): ${text.slice(0, 300)}`,
+    );
+  }
+  return parsed;
+}
+
 // ====================================================================
 // Strategy generation
 // ====================================================================
@@ -324,6 +494,14 @@ Verbatim rules:
   // once jumped straight to the fallback chain (Claude), wasting transient
   // retry potential.
   const attempt = async (): Promise<StrategySummary> => {
+    // 2026-05 V4 path — V4 family rejects tool_choice but supports
+    // response_format=json_object. Route here directly so admin's V4
+    // selection actually produces V4 output (pre-2026-05 the tool_choice
+    // call would 400 → runtime catch silently downgraded to V3).
+    if (isV4Family(model)) {
+      return await callStrategyV4JsonMode(client, model, STRATEGY_SYSTEM, userPrompt);
+    }
+
     let response;
     try {
       response = await callApi(model);
@@ -529,6 +707,13 @@ export async function regenerateModuleViaDeepseek(
 
   let model = await resolveModel(modelOverride);
   async function attempt(): Promise<Partial<ClaudeModuleContent> | null> {
+    // 2026-05 V4 path — see callStrategyV4JsonMode for the full rationale.
+    // Same dispatch: V4 family routes through json_object mode; V3 stays
+    // on tool_choice. Variant hint is already in userPrompt.
+    if (isV4Family(model)) {
+      return await callModuleV4JsonMode(client, model, type, MODULE_SYSTEM, userPrompt);
+    }
+
     let response;
     try {
       response = await client.chat.completions.create({

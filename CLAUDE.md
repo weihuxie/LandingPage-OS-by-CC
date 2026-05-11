@@ -245,11 +245,14 @@ Admin 在 UI 里把 `copy.default` 设成 `openai` 之类**没 strategy/copy ada
 
 **已知的 adapter 不兼容模型**（2026-04 用户踩坑后添加）：
 - `deepseek-reasoner` (DeepSeek R1)：不支持 `tool_choice`，而 strategy/module-regen 两条路径都用 `tool_choice` 强制结构化 JSON。dropdown 里已移除；若 admin 从 "自定义" 字段输入或 KV 里遗留了该值，`llm-deepseek.ts` 的 `resolveModel()` 会在 server 端 warn 并自动回退到 `deepseek-chat`，保证生产链路不挂。admin UI 检测到该值也会显示黄色兼容性警示。要真正支持 reasoner 得单独做一条 `response_format: json_object` + prompt 层 JSON 约束的代码路径，未排期。
-- `deepseek-v4-pro` / `deepseek-v4-flash`（DeepSeek V4 系列，2026-04 上市）：DeepSeek 文档宣传 V4 替代 V3 chat + reasoner 两家。但 **V4 当前不支持 tool 调用**，无论是 `/v1` 端点的 OpenAI `tool_choice` 还是 `/anthropic` 端点的 Anthropic `tool_use` 协议——两条都返 `400 deepseek-reasoner does not support this tool_choice`（错误体里写的是 reasoner 但请求送的是 v4-pro，DeepSeek 内部 V4 路由到 reasoner backend 后撞同一限制）。已用 `scripts/probe-deepseek-anthropic.ts` 实测确认 V3 ✅ V4 ❌。
-  - 默认仍用 `deepseek-chat` (V3)，弃用日 2026-07-24 前还有约 3 个月寿命
-  - dropdown 里 V3 排第一并标 "推荐 · tool_choice 稳定"，V4 在列保留但加 ⚠️ "当前 tool_choice 不可用" 警示——admin 偶尔可重测
-  - DeepSeek 接好 V4 tool 调用前重跑探针即可判断："`DEEPSEEK_API_KEY=sk-... npx tsx scripts/probe-deepseek-anthropic.ts`"，三个 model pass/fail 一目了然
-  - 真要支持 V4 之前 DeepSeek 接好，就走 `response_format: json_object` 改造（CLAUDE.md 这条上面也提过），未排期
+- `deepseek-v4-pro` / `deepseek-v4-flash`（DeepSeek V4 系列，2026-04 上市）：**2026-05 修订** —— V4 在 tool_choice 协议上确实不支持（无论 `/v1` OpenAI tool_choice 还是 `/anthropic` Anthropic tool_use 都返 `400 deepseek-reasoner does not support this tool_choice`，DeepSeek 内部 V4 路由到 reasoner backend 撞同一限制），但 **V4 支持 `response_format=json_object`**，DeepSeek 官方 tool_calls / json_mode 文档示例就是用 `model="deepseek-v4-pro"`。已用 5×3 stability probe 实测，V4-pro 5/5、V4-flash 5/5、V3 5/5 通过 schema 校验，无 empty content / parse fail。
+  - **adapter 已分流**：`isV4Family(model)` 在 `llm-deepseek.ts` 里把 strategy + module-regen 两条路径在 V4 时切到 `response_format=json_object`，schema 通过 system prompt 注入，user prompt 末尾追加"Return as json"满足 doc 硬约束（必须含 "json" 关键字 + schema 示例）。V3 仍走 tool_choice 路径不动。
+  - **延时权衡**：V4-pro avg 18s（V3 的 5-6×）、V4-flash 5.7s（V3 的 ~2×）、V3 3s baseline。**默认 chain[0] 不动**仍是 V3，V4 通过 `/admin/llm` 手动选——admin 想试 V4 输出质量自己切。
+  - **空 content 风险**：DeepSeek doc 警示"json_object 模式 API 有概率返回空 content"。adapter 在 V4 path 里 detect 到空 content 立刻抛 `LLMCallError`，触发 `executeScenario` chain fallback 退到 chain[1]（通常是 V3 或 Claude）。probe 0/15 撞到，但生产可能。监控 `[deepseek] V4 json mode returned empty content` 日志。
+  - **不再有 silent V4→V3 swap**：旧版（pre-2026-05）admin 选 V4 → adapter 发 tool_choice → DeepSeek 400 → runtime catch swap 到 V3，admin trace 显示 V3 但 dropdown 还显示 V4——**误导且浪费 1s**。新版 admin 选 V4 → 实际真用 V4。
+  - **dropdown 标签已改**：V4 行加上"走 json_mode 路径 · 比 V3 慢 X×"，去掉"tool_choice 不可用 ⚠️"（不再准确）。
+  - **schema enforcement 弱化**：tool_choice 是服务端 schema 校验，json_mode 只保证合法 JSON 不强制 schema。V4 路径靠 prompt 描述 schema + post-call 检查关键字段是否 array。运行中如果 V4 输出 schema 不符 → `LLMCallError` → chain fallback 退出。
+  - DeepSeek 修了 V4 tool_choice 之后可以把 `isV4Family` 分流去掉，回到统一 tool_choice 路径。重跑 `scripts/probe-deepseek-anthropic.ts` + 给 strategy/module 测一下 `tool_choice: specific` 看是否仍 400。
 
 **持久化（2026-04 第二轮修订）**：和 `storage.ts` 的 Projects / Products CRUD 走同一套三路决策 —— `KV_REST_API_*` 配置好走 KV；没配且 `VERCEL === '1'` 抛 `StorageRequiredError`（admin form 拿到 503，显示 "KV 未配置" 红条）；没配且在本地 dev，fs 存到 `.data/v2-llm-config.json`。第一版曾经只在 no-KV 时 `console.warn` 然后 silently return —— admin 改完点保存，PUT 返回 200，刷新又看到默认值，完全看不出哪里出了问题。现在统一按 storage.ts 的规则来，本地 dev 改的东西也能持久化（到重启 dev server 都还在）；同时 Playwright 测试能在本地完成 round-trip 验证而不需要连 Upstash。
 

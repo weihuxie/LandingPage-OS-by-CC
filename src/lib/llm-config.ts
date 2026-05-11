@@ -177,9 +177,9 @@ export const MODEL_OPTIONS: Record<
     { id: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash (旧)' },
   ],
   deepseek: [
-    { id: 'deepseek-chat', label: 'DeepSeek V3 Chat (推荐 · tool_choice 稳定 · 2026-07-24 弃用)' },
-    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (V4 旗舰 · 当前 tool_choice 不可用 ⚠️)' },
-    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (V4 轻量 · 当前 tool_choice 不可用 ⚠️)' },
+    { id: 'deepseek-chat', label: 'DeepSeek V3 Chat (推荐 · 快 · 2026-07-24 弃用)' },
+    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (V4 旗舰 · 走 json_mode 路径 · 比 V3 慢 5-6×)' },
+    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (V4 轻量 · 走 json_mode 路径 · 比 V3 慢 ~2×)' },
     // deepseek-reasoner intentionally omitted — see runtime coercion
     // in llm-deepseek.ts.
   ],
