@@ -252,7 +252,16 @@ Admin 在 UI 里把 `copy.default` 设成 `openai` 之类**没 strategy/copy ada
   - **不再有 silent V4→V3 swap**：旧版（pre-2026-05）admin 选 V4 → adapter 发 tool_choice → DeepSeek 400 → runtime catch swap 到 V3，admin trace 显示 V3 但 dropdown 还显示 V4——**误导且浪费 1s**。新版 admin 选 V4 → 实际真用 V4。
   - **dropdown 标签已改**：V4 行加上"走 json_mode 路径 · 比 V3 慢 X×"，去掉"tool_choice 不可用 ⚠️"（不再准确）。
   - **schema enforcement 弱化**：tool_choice 是服务端 schema 校验，json_mode 只保证合法 JSON 不强制 schema。V4 路径靠 prompt 描述 schema + post-call 检查关键字段是否 array。运行中如果 V4 输出 schema 不符 → `LLMCallError` → chain fallback 退出。
-  - DeepSeek 修了 V4 tool_choice 之后可以把 `isV4Family` 分流去掉，回到统一 tool_choice 路径。重跑 `scripts/probe-deepseek-anthropic.ts` + 给 strategy/module 测一下 `tool_choice: specific` 看是否仍 400。
+  - DeepSeek 修了 V4 tool_choice 之后可以把 `isV4Family` 分流去掉，回到统一 tool_choice 路径。**判定工具**：`npm run probe:deepseek -- --rounds 5` 跑 3 models × 2 protocols stability matrix（详见下），脚本末尾自带 verdict —— 输出 "V4 now supports BOTH protocols! 🎉" 时即可考虑拿掉 isV4Family。
+
+**两个 DeepSeek probe 脚本**（key 不离开本机，每次成本 ≈ $0.002）：
+- `npm run probe:deepseek [-- --rounds N --models a,b --protocols tool_choice,json_object]` ([scripts/probe-deepseek-models.ts](scripts/probe-deepseek-models.ts))
+  - 探 `/v1` 端点 OpenAI-compat 协议，矩阵化输出 pass-rate / 失败模式（empty / parse_fail / schema_miss / http_err）+ avg/p95 latency + verdict
+  - 用途：(1) admin 切 primary 前先验自己的 key 在目标 model 上是否能稳定输出；(2) 周期性 reverify "DeepSeek 修了 V4 tool_choice 没"——脚本会主动给结论
+  - 不传任何参数时默认 3 models × 2 protocols × 3 rounds = 18 calls，约 30s-60s
+- `npm run probe:deepseek:anthropic` ([scripts/probe-deepseek-anthropic.ts](scripts/probe-deepseek-anthropic.ts))
+  - 探 `/anthropic` 端点 Anthropic-dialect tool_use 协议，单轮 3 model 快速 sanity check
+  - 用途：判断"能不能改用 Anthropic SDK + /anthropic baseURL 接入 V4"——目前结论是不能（V4 在两个端点都拒 tool_choice/tool_use）
 
 **持久化（2026-04 第二轮修订）**：和 `storage.ts` 的 Projects / Products CRUD 走同一套三路决策 —— `KV_REST_API_*` 配置好走 KV；没配且 `VERCEL === '1'` 抛 `StorageRequiredError`（admin form 拿到 503，显示 "KV 未配置" 红条）；没配且在本地 dev，fs 存到 `.data/v2-llm-config.json`。第一版曾经只在 no-KV 时 `console.warn` 然后 silently return —— admin 改完点保存，PUT 返回 200，刷新又看到默认值，完全看不出哪里出了问题。现在统一按 storage.ts 的规则来，本地 dev 改的东西也能持久化（到重启 dev server 都还在）；同时 Playwright 测试能在本地完成 round-trip 验证而不需要连 Upstash。
 
