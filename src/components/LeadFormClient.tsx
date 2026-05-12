@@ -61,7 +61,7 @@ export default function LeadFormClient({
       }).catch(() => {});
     };
     return (
-      <div className="mx-auto max-w-3xl px-6 py-16" id="contact">
+      <div className="mx-auto max-w-6xl px-6 py-16" id="contact">
         <div className="rounded-3xl border border-ink-100 bg-white p-8 text-center shadow-soft sm:p-10">
           <h3 className="text-2xl font-semibold">{content.title}</h3>
           <p className="mt-2 text-ink-500">{content.subtitle}</p>
@@ -140,7 +140,7 @@ export default function LeadFormClient({
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-16" id="contact">
+    <div className="mx-auto max-w-6xl px-6 py-16" id="contact">
       <div className="rounded-3xl border border-ink-100 bg-white p-8 shadow-soft sm:p-10">
         <h3 className="text-2xl font-semibold">{content.title}</h3>
         <p className="mt-1 text-ink-500">{content.subtitle}</p>
