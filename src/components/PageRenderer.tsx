@@ -1104,7 +1104,7 @@ function initialsOf(name: string): string {
 
 function FAQ({ content }: { content: FAQContent }) {
   return (
-    <div className="mx-auto max-w-3xl px-6 py-14">
+    <div className="mx-auto max-w-6xl px-6 py-14">
       <h2 className="text-3xl font-semibold tracking-tight">{nl2br(content.title)}</h2>
       <dl className="mt-6 divide-y divide-ink-100 rounded-2xl border border-ink-100 bg-white">
         {content.items.map((it, i) => (
