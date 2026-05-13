@@ -12,7 +12,8 @@
     "test:e2e": "playwright test --project=e2e",
     "test:ui": "playwright test --ui",
     "probe:deepseek": "npx -y tsx scripts/probe-deepseek-models.ts",
-    "probe:deepseek:anthropic": "npx -y tsx scripts/probe-deepseek-anthropic.ts"
+    "probe:deepseek:anthropic": "npx -y tsx scripts/probe-deepseek-anthropic.ts",
+    "backfill:vercel-protection": "npx -y tsx scripts/backfill-vercel-protection.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.89.0",
