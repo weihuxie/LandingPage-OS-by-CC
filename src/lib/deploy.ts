@@ -13,7 +13,23 @@
  * operator knows exactly what's missing. For local-dev sanity, run against
  * a personal Vercel token rather than relying on a mock fallback.
  *
- * Docs: https://vercel.com/docs/rest-api/endpoints/deployments#create-a-new-deployment
+ * 2026-05 fix: after the deployment succeeds, PATCH the project to disable
+ * both SSO Protection (Vercel Authentication) and Password Protection.
+ * Without this, projects inherit team defaults — and Pro/Enterprise teams
+ * default to "preview deployments require team login", which makes every
+ * auto-created `lp-<slug>` landing page private to team members only.
+ * Customers / public visitors trying to view the published landing page
+ * hit Vercel's login page instead of the page (2026-05 user report:
+ * daisy.liu@hand-china.com hit Vercel SSO when opening an lp-srm-* URL).
+ *
+ * Landing pages are public by intent — they're the whole product surface.
+ * The PATCH is non-blocking: if it fails (network, perms, API drift) we
+ * log and proceed, since the deployment itself already succeeded and
+ * protection is a UX concern, not a correctness concern.
+ *
+ * Docs:
+ *   - Deploy: https://vercel.com/docs/rest-api/endpoints/deployments#create-a-new-deployment
+ *   - Update project: https://vercel.com/docs/rest-api/projects/update-an-existing-project
  */
 
 import type { DeployRecord } from './types';
@@ -87,6 +103,20 @@ export async function deployToVercel(input: DeployInput): Promise<DeployResult> 
     alias?: string[];
   };
 
+  // Fire-and-log: disable deployment protection on the newly-created (or
+  // pre-existing) project. By the time /v13/deployments returns 2xx, the
+  // project named `body.name` exists in Vercel's records and is PATCHable.
+  // Errors here don't block — the deployment itself succeeded; the user
+  // can manually disable protection in the Vercel dashboard if this PATCH
+  // failed (and we log the reason). See file header for the 2026-05
+  // context that motivated this.
+  await disableProjectProtection(body.name, token, teamId).catch((e) => {
+    console.warn(
+      `[deploy] disableProjectProtection threw unexpectedly for "${body.name}":`,
+      e instanceof Error ? e.message : e,
+    );
+  });
+
   return {
     provider: 'vercel',
     url: `https://${data.url}`,
@@ -94,4 +124,63 @@ export async function deployToVercel(input: DeployInput): Promise<DeployResult> 
     deployedAt: Date.now(),
     status: data.readyState === 'READY' ? 'ready' : 'building',
   };
+}
+
+/**
+ * PATCH a Vercel project to set both protection fields to `null`, which
+ * the Vercel API documents as "disables protection entirely":
+ *   - ssoProtection: null  → Vercel Authentication off
+ *   - passwordProtection: null → password gate off
+ *
+ * Idempotent — safe to call on every deploy. If a user manually
+ * re-enables protection in the Vercel dashboard between deploys, the
+ * next deploy will reset it. That's the intended behavior: landing
+ * pages should be public by default in this product. If someone needs a
+ * specific lp-* project to STAY protected (e.g. a confidential preview
+ * for a single client), they can fork the deploy flow.
+ *
+ * Non-throwing: errors are logged but not propagated. The deployment
+ * already succeeded by the time this runs, and protection is a
+ * UX/visibility concern, not a deployment correctness concern.
+ *
+ * @param projectName  Same name field sent to /v13/deployments. Vercel
+ *                     accepts name OR id in the PATCH path.
+ */
+async function disableProjectProtection(
+  projectName: string,
+  token: string,
+  teamId?: string,
+): Promise<void> {
+  const qs = teamId ? `?teamId=${encodeURIComponent(teamId)}` : '';
+  const url = `${VERCEL_API}/v9/projects/${encodeURIComponent(projectName)}${qs}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        ssoProtection: null,
+        passwordProtection: null,
+      }),
+    });
+  } catch (e) {
+    console.warn(
+      `[deploy] disableProjectProtection network error for "${projectName}":`,
+      e instanceof Error ? e.message : e,
+    );
+    return;
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    console.warn(
+      `[deploy] disableProjectProtection ${res.status} for "${projectName}": ${text.slice(0, 300)}`,
+    );
+    return;
+  }
+  console.warn(
+    `[deploy] disabled SSO + password protection on Vercel project "${projectName}"`,
+  );
 }
