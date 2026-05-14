@@ -387,9 +387,29 @@ function Hero({
     const bg = 'radial-gradient(80% 60% at 10% 10%, color-mix(in oklch, var(--brand) 22%, transparent), transparent 60%), linear-gradient(180deg, #fff, #f6f8ff)';
     return (
       <div className="relative overflow-hidden" style={{ background: bg }}>
-        <div className={`mx-auto px-6 ${mobile ? 'py-12' : 'max-w-6xl py-20'} ${hasMedia && !mobile ? 'grid grid-cols-2 items-center gap-10' : ''}`}>
+        {/* Force 2-col grid on desktop regardless of hasMedia — the layout
+            label is "文案左 + 截图/视频右"; collapsing to 1-col on missing
+            media hides the promise. With the placeholder filling the
+            right column, the layout intent is preserved and the user
+            sees a self-documenting empty image slot. */}
+        <div className={`mx-auto px-6 ${mobile ? 'py-12' : 'grid max-w-6xl grid-cols-2 items-center gap-10 py-20'}`}>
           <div>{eyebrow}{headline}{sub}{ctas}{bullets}</div>
-          {hasMedia && <div className="relative mt-8 md:mt-0"><HeroMedia media={content.media!} resolved={media!} device={device} /></div>}
+          {hasMedia ? (
+            <div className="relative mt-8 md:mt-0">
+              <HeroMedia media={content.media!} resolved={media!} device={device} />
+            </div>
+          ) : (
+            // 2026-05 fix: same rationale as the `centered` placeholder
+            // above — layout label promises an image on the right, so
+            // an empty right column needs to self-document instead of
+            // silently collapsing to single-column.
+            <div
+              className="relative mt-8 grid aspect-video w-full place-items-center rounded-2xl border border-dashed border-ink-200 bg-ink-100/30 px-4 text-center text-sm text-ink-400 md:mt-0"
+              aria-hidden="true"
+            >
+              📷 此布局需要"右侧截图/视频"——在右侧 MODULE 面板的「配图」字段上传 / 粘贴外链 / 选资产库
+            </div>
+          )}
         </div>
       </div>
     );
@@ -402,9 +422,24 @@ function Hero({
       <div className="relative overflow-hidden" style={{ background: bg }}>
         <div className={`mx-auto px-6 text-center ${mobile ? 'py-12' : 'max-w-5xl py-24'}`}>
           {eyebrow}{headline}{sub}{ctas}{bullets}
-          {hasMedia && (
+          {hasMedia ? (
             <div className="mx-auto mt-10 max-w-4xl">
               <HeroMedia media={content.media!} resolved={media!} device={device} />
+            </div>
+          ) : (
+            // 2026-05 fix: layout label promises "下方铺全宽截图" but the
+            // image was previously silently skipped when content.media was
+            // empty — user picks the layout, sees no image, thinks the
+            // selection didn't take (Feishu screenshot 2026-05-13).
+            // Mirror the empty-state placeholder Benefits.alternating
+            // already uses (PageRenderer.tsx ~870) so the slot
+            // self-documents "this is where the image goes" rather than
+            // looking blank.
+            <div
+              className="mx-auto mt-10 grid aspect-video max-w-4xl place-items-center rounded-2xl border border-dashed border-ink-200 bg-ink-100/30 px-4 text-center text-sm text-ink-400"
+              aria-hidden="true"
+            >
+              📷 此布局需要"下方大图"——在右侧 MODULE 面板的「配图」字段上传 / 粘贴外链 / 选资产库
             </div>
           )}
         </div>
